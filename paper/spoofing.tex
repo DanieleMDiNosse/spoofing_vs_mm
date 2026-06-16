@@ -1,0 +1,598 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm,amsfonts}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{siunitx}
+\usepackage{natbib}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\usepackage{setspace}
+\usepackage{subcaption}
+\usepackage{placeins}
+\geometry{margin=2.5cm}
+\usepackage{changepage}
+\usepackage{ulem}
+\usepackage{authblk}
+\usepackage{array}
+\usepackage[table]{xcolor}
+\usepackage{tabularx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+
+\onehalfspacing
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue,
+    pdftitle={Detecting Spoofing in Electronic Markets},
+    pdfauthor={Author Name}
+}
+
+
+\title{Market Microstructure Frameworks for Spoofing Detection: Isolating Manipulative Intent from Legitimate Liquidity Provision}
+\author[1]{Daniele Maria Di Nosse\textsuperscript{\dag}}
+\author[2]{Francesco Gigante}
+\author[2]{Antonio Russo}
+\author[1]{Fabrizio Lillo}
+
+\affil[1]{Scuola Normale Superiore, Pisa, Italy}
+\affil[2]{Consob, Rome, Italy}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\begin{center}
+  \footnotesize
+  \dag Corresponding author. Email: \texttt{daniele.dinosse@sns.it}
+\end{center}
+
+\begin{abstract}
+In this paper we detect the bad guys and we find how to tell them they are actually bad guys. Hopefully, we will be able 
+to do this without accusing the good guys of being bad guys. 
+\end{abstract}
+
+\paragraph{Keywords.}
+Spoofing detection; market manipulation; limit order book; high-frequency trading; anomaly detection; market maker; market microstructure
+
+\section{Introduction}
+\label{sec:introduction}
+The transition of global financial exchanges to fully electronic, continuous double auction matching engines has fundamentally 
+transformed the mechanics of price discovery and liquidity provision. In modern financial ecosystems, the Limit Order Book 
+(LOB) serves as the central nervous system of the market, aggregating the continuous stream of bid and ask limit orders 
+submitted by diverse market participants. While the advent of algorithmic and high-frequency trading (HFT) has undeniably 
+narrowed bid-ask spreads and enhanced short-term market efficiency, it has concurrently introduced profound vulnerabilities. 
+The microsecond latency environment allows sophisticated algorithms to exploit the structural mechanics of the LOB, 
+executing complex manipulative strategies that deceive heuristic-based trading algorithms and human traders alike.
+Among these manipulative practices, spoofing represents one of the most pervasive and challenging threats to market 
+integrity. Spoofing is a deceptive algorithmic strategy wherein a market participant places a massive, non-bona fide 
+order on one side of the LOB with the explicit intent of canceling it before execution. The presence of this immense, 
+artificial volume creates a false impression of directional market pressure. This artificial pressure manipulates the 
+micro-price and induces other market participants—particularly algorithms that rely on order book imbalance indicators—to 
+adjust their quotes or submit market orders. Once the price has been artificially driven to a favorable level, the 
+spoofer executes a smaller, bona fide order on the opposite side of the book and immediately withdraws the massive 
+deceptive orders, thereby profiting from the artificially induced price dislocation. The European Securities and Markets 
+Authority (ESMA), through the Market Abuse Regulation (MAR) \cite{EU5962014}, strictly prohibits such practices, categorizing them as 
+behaviors that disrupt the functioning of the trading system and create misleading signals regarding the supply and 
+demand of financial instruments. For regulatory and supervisory authorities such as the Commissione Nazionale per le 
+Società e la Borsa (CONSOB), the detection and prosecution of spoofing present a severe analytical challenge. The physical 
+actions comprising a spoofing strategy—posting limit orders, updating quotes, and rapidly canceling orders—are mechanically 
+indistinguishable from the legitimate actions of a bona fide market maker providing liquidity. Both spoofers and market 
+makers exhibit exceedingly high order-to-trade ratios (OTTR) and operate at high frequencies. Traditional market 
+surveillance mechanisms, which historically relied on static heuristic thresholds, volumetric alerts, or simple cancellation 
+ratios, are fundamentally inadequate in this environment. These legacy systems generate an overwhelming volume of false 
+positives, frequently flagging legitimate liquidity provision and inventory management as manipulative market abuse.
+
+\section{The Microstructural Divergence: Market Making Versus Spoofing}
+\label{sec:mm_vs_spoofing}
+To construct a mathematical model capable of detecting market manipulation, it is first necessary to rigorously define 
+the divergent objective functions that govern legitimate market making and spoofing. While both participants generate 
+massive volumes of limit order messages and cancellations, their underlying economic motivations, risk profiles, and 
+optimizations are fundamentally opposed.
+
+\subsection{The Market Maker's Problem}
+\label{subsec:market_maker}
+A market maker functions is a continuous liquidity provider, simultaneously quoting resting limit orders at the best bid 
+and the best ask. The primary objective function of a market maker is to maximize the utility of gains derived from 
+capturing the bid-ask spread across a vast number of transactions, while concurrently minimizing the variance of their 
+portfolio and strictly managing inventory risk. In market microstructure theory, the pricing dynamics of a liquidity 
+provider are governed by the interplay between the arrival rate of market orders and the accumulation of inventory.
+
+The optimization problem for a market maker is frequently modeled using stochastic control techniques and 
+Hamilton-Jacobi-Bellman (HJB) equations, where the dealer sets optimal quotes to balance the asymmetric arrival 
+of buy and sell orders. 1  If a market maker accumulates a long position (positive inventory), they are exposed 
+to the risk of the underlying asset depreciating. To mitigate this inventory risk, the rational market maker will 
+their quotes downwards—lowering their ask price to incentivize incoming buyers, and lowering their bid price to 
+dissuade incoming sellers. 2  The bid and ask prices are dynamically adjusted functions of the mid-price, the base 
+spread required for profitability, and an inventory penalty parameter that increases as the dealer's position deviates 
+from neutrality.
+
+Consequently, a market maker's high cancellation rate is entirely reactive and protective. Limit orders are rapidly 
+canceled and re-posted to reflect minute changes in the fundamental mid-price, to defend against adverse selection 
+informed traders, and to recalibrate 
+inventory penalty. The massive volume of orders and cancellations produced by a market maker is therefore characterized 
+by symmetry across the LOB and a continuous presence at the top of the book to execute trades. Their expected directional 
+gain from posting an order is near zero, as their profit is entirely derived from the spread rather than from inducing 
+a directional shift in the mid-price.
+
+\subsection{The Spoofer's Problem}
+\label{subsec:spoofing}
+In stark contrast, a spoofing agent does not seek to capture the bid-ask spread, nor do they operate as symmetric 
+liquidity provider. A spoofer's objective function is purely directional. The spoofer desires to execute a relatively 
+small, bona fide order at a highly favorable price by artificially manipulating the micro-price dynamics of the LOB.
+To execute this strategy, the spoofer deploys a massive non-bona fide order on the opposite side of the LOB. This 
+deliberate injection of spurious volume creates an extreme unbalanced environment, artificially inflating 
+the visible depth of the book. In modern electronic markets, countless algorithmic traders utilize strategies that weight 
+the volume at the bid against the volume at the ask to predict short-term price distributions. By overwhelming one side 
+of the book, the spoofer pollutes these volume imbalance metrics, causing HBL algorithms to mathematically deduce an 
+impending price shift and aggressively alter their own quoting behavior.
+
+The critical mathematical dilemma for the spoofer lies in the placement of the non-bona fide order. The spoofer must 
+balance the expected market manipulation gain against the explicit risk of unintended execution. If the spoofer places 
+the massive non-bona fide order exactly at the top of the book (the best bid or ask), they generate the maximum psychological 
+and algorithmic impact on the micro-price. However, doing so exposes the spoofer to massive adverse selection and inventory 
+risk; an incoming aggressive market order could inadvertently execute against the spoofer's massive fake order, leaving 
+the spoofer holding an enormous, unwanted position.To optimize this expected cost function, sophisticated spoofers rarely 
+post their deceptive orders at the absolute best price. Instead, they optimize the posting distance (measured in ticks 
+or basis points) deeper within the book. By placing the order at Level 2, Level 3, or beyond, the spoofer ensures the 
+volume is still visible to the matching engine's data feed—and thus factored into the volume imbalance metrics of victim 
+algorithms—while maintaining a structural buffer against immediate execution. Once the intended directional shift occurs 
+and the spoofer's small bona fide order is executed, the massive non-bona fide order is instantly canceled. The spoofer's 
+cancellation intent is not to manage inventory, but to terminate the manipulative episode the exact millisecond the cost 
+optimization concludes.
+
+\begin{table}[htbp]
+\centering
+\caption{Core Differentiators for Surveillance Models}
+\label{tab:surveillance-models}
+\renewcommand{\arraystretch}{1.4}
+\setlength{\tabcolsep}{8pt}
+\rowcolors{2}{gray!4}{white}
+
+\begin{tabularx}{\textwidth}{
+    >{\raggedright\arraybackslash\bfseries}p{0.25\textwidth}
+    >{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}X
+}
+\toprule
+\rowcolor{gray!15}
+\textbf{Microstructure Metric} & \textbf{Legitimate Market Maker} & \textbf{Manipulative Spoofing Agent} \\
+\midrule
+Primary Objective Function
+& Maximize bid--ask spread capture while minimizing inventory variance.
+& Minimize execution cost of a directional trade via artificial micro-price impact. \\
+
+Order Book Imbalance
+& Generally symmetric, adapting quotes to maintain a neutral inventory.
+& Extremely asymmetric, deliberately creating massive, sudden imbalances (\emph{unbalanced quoting}). \\
+
+Cancellation Motivation
+& Reactive: mitigating adverse selection and updating quotes to track fair value.
+& Proactive: terminating the deceptive posture immediately after a targeted execution. \\
+
+Posting Distance Optimization
+& Top of the book (Level 1) to maximize the probability of spread execution.
+& Deeper in the book (Level 2/3) to maximize visibility while minimizing execution risk. \\
+
+Expected Directional Gain
+& Zero or negative (willing to pay the spread to lay off excessive inventory risk).
+& Strictly positive (the massive order statistically subsidizes the execution of the small order). \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Existing Approaches}
+\label{sec:existing_approaches}
+The literature on spoofing detection is still relatively small, but it has moved from transparent microstructure rules
+toward sequence and graph models that try to capture richer strategic behavior. For the purpose of this paper, the most
+useful distinction is not simply between ``statistical'' and ``machine-learning'' models. It is between methods that
+identify a stylized spoofing episode from order-book mechanics, methods that monitor abnormal order-flow states, and
+methods that learn temporal or relational patterns from proprietary event data. \Cref{fig:method_taxonomy} summarizes
+this taxonomy.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[
+        font=\scriptsize,
+        root/.style={
+            draw,
+            rounded corners=2pt,
+            fill=gray!15,
+            align=center,
+            text width=0.40\textwidth,
+            minimum height=0.8cm,
+            font=\small\bfseries
+        },
+        category/.style={
+            draw,
+            rounded corners=2pt,
+            fill=gray!8,
+            align=center,
+            text width=0.16\textwidth,
+            minimum height=0.75cm,
+            font=\footnotesize\bfseries
+        },
+        detail/.style={
+            draw,
+            rounded corners=2pt,
+            fill=white,
+            align=left,
+            text width=0.17\textwidth,
+            minimum height=1.65cm
+        },
+        arrow/.style={-{Latex[length=2mm]}, thick}
+    ]
+        \node[root] (root) at (0,0) {Financial \mbox{spoofing} surveillance};
+
+        \node[category] (rules) at (-6.15,-1.45) {Rule-based\\empirical};
+        \node[category] (stat) at (-3.075,-1.45) {Statistical\\anomaly};
+        \node[category] (seq) at (0,-1.45) {Deep\\sequences};
+        \node[category] (graph) at (3.075,-1.45) {Graph-based\\learning};
+        \node[category] (expl) at (6.15,-1.45) {Explainable\\forensic};
+
+        \node[detail, below=0.25cm of rules] (rulesd) {\textbullet\ size thresholds\\\textbullet\ distance from touch\\\textbullet\ opposite-side fills\\\textbullet\ price reversal};
+        \node[detail, below=0.25cm of stat] (statd) {\textbullet\ multilevel imbalance\\\textbullet\ Wasserstein tests\\\textbullet\ physics momentum\\\textbullet\ spoofability score};
+        \node[detail, below=0.25cm of seq] (seqd) {\textbullet\ event streams\\\textbullet\ GRU early warning\\\textbullet\ short-horizon labels};
+        \node[detail, below=0.25cm of graph] (graphd) {\textbullet\ transaction graphs\\\textbullet\ community features\\\textbullet\ dynamic latent graphs};
+        \node[detail, below=0.25cm of expl] (expld) {\textbullet\ message-level views\\\textbullet\ interpretable scores\\\textbullet\ case reconstruction};
+
+        \foreach \target in {rules,stat,seq,graph,expl} {
+            \draw[arrow] (root.south) -- (\target.north);
+        }
+        \foreach \source/\target in {rules/rulesd,stat/statd,seq/seqd,graph/graphd,expl/expld} {
+            \draw[arrow] (\source.south) -- (\target.north);
+        }
+    \end{tikzpicture}
+    \caption{Method families in the spoofing-detection literature. The categories are not mutually exclusive, but they
+    highlight the main modeling choice made by each strand of work.}
+    \label{fig:method_taxonomy}
+\end{figure}
+
+Early empirical papers define spoofing through economically interpretable order-book conditions. The seminal study by
+\cite{LeeEomPark2013} identifies large orders placed far from the best quote, followed by opposite-side trading and
+subsequent withdrawal, using account-level data from the Korea Exchange. Similar surveillance logic appears in Brazilian
+equities \cite{MendoncaDeGenaro2020}, FX spot markets \cite{StenforsSusai2021}, cross-market FX settings
+\cite{StenforsEtAl2023}, and Taiwan derivatives \cite{ChenHsiehYang2026}. These studies are valuable because the alert
+logic can be explained to supervisors: suspicious activity is tied to order size, posting distance, cancellation timing,
+opposite-side execution, and short-lived price impact. Their main limitation is that thresholds are venue-specific and
+often depend on privileged message data or account identifiers.
+
+A second line develops statistical and anomaly-oriented monitoring. \cite{TaoDayLingDrapeau2022} derive spoofing
+incentives from multilevel order-book imbalance and propose Wasserstein-distance monitoring for real-time detection.
+\cite{LiPolukarovaVentre2023} use a statistical-physics representation of the order book to detect abnormal momentum in
+crypto markets. More recent explainable approaches also fall partly in this family: forensic visualization reconstructs
+message-level spoofing episodes in prosecuted cases \cite{DebieEtAl2023}, while interpretable probabilistic neural
+networks estimate the conditional gain from manipulating a centralized crypto order book \cite{FabreChallet2025}. These
+methods improve on pure threshold rules by modeling the state of the book, but many papers still report limited
+benchmark metrics or rely on non-public datasets.
+
+Machine-learning work mainly adds temporal or relational structure. \cite{TuccellaNadlerSerban2021} formulate spoofing
+as an early-warning problem and train a GRU model on cryptocurrency order-book event streams. Graph-based methods then
+move the unit of analysis from isolated orders to networks of traders and transactions, which is important for detecting
+coordinated or ``conspiracy'' spoofing \cite{KangMuNing2023,KangMuNing2024,XiangEtAl2025}. The strongest reported graph
+models combine temporal transaction graphs, community-level features, and dynamic latent representations, but their
+practical value is difficult to assess without open labels and chronological cross-market validation.
+
+Overall, the literature suggests two requirements for a robust surveillance model. First, the features should remain
+microstructure-grounded: a detector should know whether suspicious volume is large, distant from the touch, rapidly
+cancelled, and conditional on an opposite-side execution. Second, the evaluation should respect the enforcement setting:
+labels are noisy, true positives are rare, and false positives impose substantial analyst costs. This motivates the
+agent-level, spatio-temporal framework developed below, which keeps the interpretability of rule-based surveillance while
+using the full order-flow sequence available in proprietary data.
+
+\section{Data}
+\label{sec:data}
+
+\section{Model}
+\label{sec:model}
+In this section we provide the base reasoning and metrics used to distinguish between legitimate market making behaviour
+and possible spoofing strategies.
+
+% \subsection{Spoofer's timeline}
+% \label{subsec:spoofing_timeline}
+% \begin{enumerate}
+%     \item The spoofer posts a large non bona fide order far away from the best quote and, simultaneously, a small bona 
+%     fide order close to the best quote
+%     \item The spoofer's small order gets executed due to the price move induced by the artificially increased volume
+%     on the opposite side of the book
+%     \item The spoofer cancels the large non bona fide order immediately after the execution
+%     \begin{figure}[htbp]
+%     \includegraphics[width=\textwidth]{images/spoofer.pdf}
+%     \caption{Timeline of a spoofing episode}
+%     \end{figure}
+
+% \end{enumerate}
+% Let $i$ indicate the agent of interest, $V_a$ and $V_b$ represent the volumes of the agent's ask and bid orders, 
+% respectively, and $\delta_a$ and $\delta_b$ represent their posting distances from the best quote. We consider 
+% the following metric that we call distance-weighted imbalance:
+% \begin{equation}
+%     \left. \text{imb}_{t}^i = \frac{V_a \delta_a - V_b \delta_b}{V_a + V_b} \right|_i
+% \end{equation}
+% If we consider a sell intent for the spoofer, we expect $\text{imb}_{t}^i$ to be negative at step 1, to become more 
+% negative at step 2, and to return to zero at step 3. The opposite holds for a buy intent.
+% The crucial point is to distinguish this situation of imbalance between bid and ask from a rebalncing strategy of the market
+% maker. In fact, a market maker can also post a large order on one side of the book and a small order on the other side, 
+% but in this case we expect the large order to be close to the best quote and the small order to be far from the best 
+% quote, while for a spoofer we seek for the opposite. Hence, in this case the imbalance would be positive and it would move
+% towards zero more smoothly as the big order is filled, without a sharp and sudden jump as in the spoofer case.
+
+\subsection{A Spatio-Temporal Framework for Spoofing Detection}
+\label{sec:spoofer_timeline}
+
+\begin{figure}[htbp]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[
+        x=0.95cm,
+        y=0.95cm,
+        font=\small,
+        book/.style={->, very thick},
+        quote/.style={very thick},
+        bid/.style={green!65!black},
+        ask/.style={orange!85!black},
+        fake/.style={fill=green!70!black, draw=green!70!black},
+        real/.style={fill=red!80!black, draw=red!80!black},
+        distbid/.style={<->, green!65!black, very thick},
+        distask/.style={<->, orange!85!black, very thick}
+    ]
+        \foreach \xshift/\step in {0/Step 1,6.2/Step 2,12.4/Step 3} {
+            \node[font=\large\bfseries] at (\xshift+2.6,2.75) {\step};
+            \draw[book] (\xshift,0) -- (\xshift+5.2,0);
+            \draw[quote,bid] (\xshift+2.05,-0.12) -- (\xshift+2.05,0.12)
+                node[below=0.05cm, font=\bfseries] {bid};
+            \draw[quote] (\xshift+2.70,-0.10) -- (\xshift+2.70,0.10)
+                node[above=0.05cm, font=\bfseries] {mid};
+            \draw[quote,ask] (\xshift+3.45,-0.12) -- (\xshift+3.45,0.12)
+                node[below=0.05cm, font=\bfseries] {ask};
+        }
+
+        % Step 1: the spoofer posts a large visible bid-side order and a small bona fide ask-side order.
+        \draw[fake] (0.75,0) rectangle (0.95,1.65);
+        \node[left] at (0.72,1.35) {$V_b$};
+        \draw[distbid] (0.85,1.90) -- (2.05,1.90) node[midway, above] {$\delta_b$};
+
+        \draw[real] (3.85,0) rectangle (4.03,0.50);
+        \node[right] at (4.06,0.30) {$V_a$};
+        \draw[distask] (3.45,0.75) -- (3.94,0.75) node[midway, above] {$\delta_a$};
+
+        % Step 2: the small bona fide order is executed while the fake order is still visible.
+        \draw[fake] (6.95,0) rectangle (7.15,1.65);
+        \node[left] at (6.92,1.35) {$V_b$};
+        \draw[distbid] (7.05,1.90) -- (8.25,1.90) node[midway, above] {$\delta_b$};
+
+        \draw[real] (10.05,0) rectangle (10.23,0.50);
+        \node[right] at (10.26,0.30) {$V_a$};
+        \draw[distask] (9.65,0.75) -- (10.14,0.75) node[midway, above] {$\delta_a$};
+        \draw[orange!85!black, very thick] (9.85,0.08) -- (10.18,0.45);
+        \draw[orange!85!black, very thick] (10.18,0.08) -- (9.85,0.45);
+        \node[rotate=55, black!85!black, font=\normalsize\bfseries] at (10.03,0.24) {fill};
+
+        % Step 3: the non-bona fide bid-side order is cancelled immediately after the fill.
+        \draw[fake] (13.15,0) rectangle (13.35,1.65);
+        \node[left] at (13.12,1.35) {$V_b$};
+        \draw[distbid] (13.25,1.90) -- (14.45,1.90) node[midway, above] {$\delta_b$};
+        \draw[black, very thick] (12.80,0.05) -- (13.70,1.65);
+        \draw[black, very thick] (13.70,0.05) -- (12.80,1.65);
+        \node[rotate=58, black, font=\normalsize\bfseries] at (13.25,0.85) {cancel};
+    \end{tikzpicture}%
+    }
+    \caption{Timeline of a spoofing episode}
+\end{figure}
+
+To rigorously distinguish manipulative spoofing from legitimate liquidity provision, we must define the microstructural 
+signature of the strategy not merely as a spatial anomaly within the Limit Order Book (LOB), but as a spatio-temporal 
+sequence of conditional events. 
+
+We formalize the execution timeline of a spoofing agent $i$ into three distinct states:
+\begin{enumerate}
+    \item \textbf{State 1 (Deceptive Posturing):} The agent posts a massive, non-bona fide order ($V_b$) deep in the 
+    book at distance $\delta_b$ from the same-side best quote, simultaneously posting a small, bona fide order ($V_a$) 
+    at or near the best opposite quote ($\delta_a \approx 0$).
+    \item \textbf{State 2 (Execution):} The artificial volume imbalance shifts the micro-price, resulting in the 
+    execution of the bona fide order $V_a$.
+    \item \textbf{State 3 (Risk Termination):} Immediately following the execution of $V_a$, the agent cancels the 
+    massive non-bona fide order $V_b$ to neutralize execution risk.
+\end{enumerate}
+
+To capture this dynamic, we define a set of metrics that isolate the agent's spatial footprint and their conditional 
+reactivity.
+
+\subsubsection{Normalized Spatial Imbalance}
+Traditional order book imbalance metrics often fail to accurately weight deep-book liquidity. While a spoofer seeks to 
+maximize visible volume, the probability of execution—and thus the true risk borne by the agent—decays non-linearly as 
+distance from the mid-price increases. 
+
+We explicitly assume that the manipulative impact of an order is a saturating function of its distance from the best 
+quote. Let $V_a$ and $V_b$ represent the volumes of the agent's ask and bid orders, respectively. We define the 
+\textit{Normalized Distance-Weighted Imbalance} for agent $i$ at event-time $\tau$ as:
+
+\begin{equation}
+    imb_{\tau}^{i} = \frac{V_{a}(1 - e^{-\kappa \delta_{a}}) - V_{b}(1 - e^{-\kappa \delta_{b}})}{V_{a} + V_{b}}\Bigg|_{i}
+\end{equation}
+
+where $\kappa > 0$ is an asset-specific decay parameter calibrated to the instrument's typical liquidity density and 
+spread variance. The term $(1 - e^{-\kappa \delta})$ acts as an asymptotic filter, strictly bounding the distance 
+multiplier within $[0, 1)$. This guarantees that $imb_{\tau}^{i} \in [-1, 1]$, providing a way to compare imbalance 
+across different assets and time periods while emphasizing the strategic placement of orders.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[
+        x=1.55cm,
+        y=2.3cm,
+        font=\scriptsize,
+        axis/.style={->, thick},
+        spoof/.style={very thick, red!70!black},
+        maker/.style={very thick, dashed, blue!70!black},
+        event/.style={gray!70, dashed},
+        state/.style={fill=gray!8, draw=gray!45, rounded corners=2pt, align=center}
+    ]
+        \fill[gray!5] (0,-1.05) rectangle (1.7,1.05);
+        \fill[gray!10] (1.7,-1.05) rectangle (3.0,1.05);
+        \fill[gray!5] (3.0,-1.05) rectangle (4.6,1.05);
+
+        \draw[axis] (0,-1.05) -- (0,1.1) node[above] {$imb_t^i$};
+        \draw[axis] (0,-1.05) -- (4.85,-1.05) node[right] {event time};
+        \draw[gray!50] (-0.05,0) -- (4.65,0);
+
+        \foreach \y/\lab in {-1/$-1$,0/$0$,1/$1$} {
+            \draw (-0.05,\y) -- (0.05,\y) node[left=0.08cm] {\lab};
+        }
+
+        \draw[event] (1.0,-1.05) -- (1.0,1.0);
+        \draw[event] (2.2,-1.05) -- (2.2,1.0);
+        \draw[event] (3.2,-1.05) -- (3.2,1.0);
+
+        \node[state, text width=1.25cm] at (0.5,0.86) {State 1\\posturing};
+        \node[state, text width=1.15cm] at (2.0,0.86) {State 2\\fill};
+        \node[state, text width=1.25cm] at (3.9,0.86) {State 3\\cancel};
+
+        \node[align=center] at (1.0,-1.25) {$t_0$\\fake order};
+        \node[align=center] at (2.2,-1.25) {$t_e$\\small fill};
+        \node[align=center] at (3.2,-1.25) {$t_e+\Delta\tau$\\cancel};
+
+        % Sell-intent spoofing: a large bid-side fake order makes the ask-minus-bid
+        % imbalance negative; after the small ask order fills, the remaining fake bid
+        % makes the imbalance even more negative, then cancellation produces a jump to zero.
+        \draw[spoof] (0.15,0) -- (0.9,0)
+            -- (1.0,-0.55) -- (2.2,-0.55)
+            -- (2.2,-0.82) -- (3.2,-0.82)
+            -- (3.2,-0.03) -- (4.55,-0.03);
+
+        \draw[maker] (0.15,0) .. controls (1.0,-0.35) and (2.1,-0.45) .. (3.0,-0.25)
+            .. controls (3.7,-0.10) and (4.1,-0.03) .. (4.55,0);
+
+        \node[red!70!black, align=left, anchor=west] at (3.35,-0.72) {spoofing:\\sharp collapse};
+        \node[blue!70!black, align=left, anchor=west] at (3.35,0.30) {market maker:\\smooth rebalancing};
+        \node[align=center] at (2.35,-1.62) {For a buy-intent spoofing episode, the same pattern is mirrored above zero.};
+    \end{tikzpicture}
+    \caption{Stylized event-time behavior of the normalized distance-weighted imbalance. A spoofing episode produces a
+    large imbalance and, after the small opposite-side execution, a sharp return toward zero when the non-bona fide order
+    is cancelled. Inventory rebalancing by a market maker should instead evolve more smoothly.}
+    \label{fig:imbalance_dynamics}
+\end{figure}
+\FloatBarrier
+
+\subsubsection{Conditionality and Intent Isolation}
+A static imbalance metric is insufficient to isolate intent, as a legitimate market maker engaged in asymmetric 
+inventory management may temporarily exhibit extreme $imb_{\tau}^{i}$ values. The fundamental differentiator lies 
+in the conditionality of State 3. For a market maker, the cancellation of a deep resting order is driven by adverse 
+selection or mid-price momentum. For a spoofer, the cancellation is strictly conditional upon the execution of the 
+opposite-side bona fide order.
+
+Let $e$ denote the specific execution event of the small order $V_a$ at timestamp $t_e$. We define a microscopic time 
+window $\Delta \tau$ bounding the mechanical latency of the strategy. The \textit{Spoofing Conditionality Index (SCI)} 
+measures the structural collapse of the agent's LOB presence immediately surrounding the fill:
+
+\begin{equation}
+    SCI^{i}_{e} = |imb_{t^{-}_{e}}^{i} - imb_{t^{+}_{e}}^{i}|
+\end{equation}
+
+where $t^{-}_{e}$ is the state immediately preceding the fill, and $t^{+}_{e} = t_e + \Delta \tau$. An extreme 
+$SCI^{i}_{e}$ value indicates the sudden evaporation of the opposite-side massive order, a mechanical signature of 
+manipulative risk termination.
+
+To aggregate this behavior over a trading session and filter out coincidental reactive cancellations by high-frequency 
+market makers, we define the \textit{Conditional Probability Score (CPS)} for agent $i$:
+
+\begin{equation}
+    CPS^{i} = \frac{1}{N} \sum_{e=1}^{N} \mathbb{I}(SCI^{i}_{e} > \gamma)
+\end{equation}
+
+where $N$ is the total number of small-order executions for the agent, $\mathbb{I}$ is the indicator function, and 
+$\gamma$ is an empirically derived threshold representing a structural imbalance shock. A legitimate market maker's 
+$CPS^i$ will converge toward zero, whereas a systematic spoofing algorithm will exhibit a $CPS^i$ approaching unity.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[
+        x=0.72cm,
+        y=2.45cm,
+        font=\scriptsize,
+        axis/.style={->, thick},
+        threshold/.style={gray!70, dashed, thick},
+        makerpoint/.style={circle, fill=blue!70!black, draw=blue!70!black, inner sep=1.7pt},
+        spoofpoint/.style={circle, fill=red!70!black, draw=red!70!black, inner sep=1.7pt},
+        barbox/.style={draw, rounded corners=2pt, fill=gray!6}
+    ]
+        \draw[axis] (0,0) -- (10.9,0);
+        \draw[axis] (0,0) -- (0,1.25) node[above] {$SCI_e^i$};
+        \draw[threshold] (0,0.72) -- (10.6,0.72) node[right] {$\gamma$};
+        \node[align=center] at (5.35,-0.20) {execution index $e$};
+
+        \foreach \x/\lab in {1/1,5/5,10/N} {
+            \draw (\x,0.03) -- (\x,-0.03) node[below] {\lab};
+        }
+        \foreach \y/\lab in {0.72/$\gamma$,1.0/$1$} {
+            \draw (0.03,\y) -- (-0.03,\y) node[left] {\lab};
+        }
+
+        \node[blue!70!black, anchor=west] at (0.15,1.18) {market maker: rare threshold crossings};
+        \node[red!70!black, anchor=west] at (0.15,1.07) {spoofing: repeated threshold crossings};
+
+        % Event-level SCI values for a legitimate market maker: most executions remain below gamma.
+        \foreach \x/\y in {1/0.22,2/0.35,3/0.18,4/0.45,5/0.28,6/0.78,7/0.31,8/0.24,9/0.40,10/0.27} {
+            \node[makerpoint] at (\x,\y) {};
+        }
+
+        % Event-level SCI values for a systematic spoofer: most executions exceed gamma.
+        \foreach \x/\y in {1/0.82,2/0.95,3/0.88,4/0.67,5/1.02,6/0.91,7/0.76,8/0.99,9/0.85,10/0.93} {
+            \node[spoofpoint] at (\x,\y) {};
+        }
+
+        \draw[barbox] (11.55,-0.34) rectangle (14.25,1.02);
+        \draw[fill=blue!70!black] (12.00,0.08) rectangle (12.35,0.18);
+        \draw[fill=red!70!black] (13.45,0.08) rectangle (13.80,0.88);
+        \node[align=center] at (12.90,1.14) {$CPS^i$};
+        \node[blue!70!black, align=center, font=\tiny] at (12.18,-0.14) {market\\maker};
+        \node[red!70!black, align=center, font=\tiny] at (13.63,-0.14) {spoofer};
+
+        \node[align=center, text width=0.85\textwidth] at (6.4,-0.55)
+        {$CPS^i$ counts the fraction of executions for which the imbalance collapse exceeds the threshold:
+        high values indicate repeated conditional cancellation after fills.};
+    \end{tikzpicture}
+    \caption{Operational interpretation of the Conditional Probability Score. Each point is one small-order execution for
+    the agent. The score increases when many execution-level imbalance collapses $SCI_e^i$ exceed the threshold $\gamma$.}
+    \label{fig:cps_score}
+\end{figure}
+\FloatBarrier
+% We propose two agent-specific metrics based on the
+% microprice and the volume-distance correlation. 
+% \paragraph{Agent-Specific Microprice ($m_i$)} The traditional microprice is widely 
+% recognized in high-frequency trading as a robust estimator of the expected future mid-price \cite{Stoikov02122018}, uniquely synthesizing both 
+% the price and volume dimensions of the limit order book. By isolating this calculation to a single participant's resting 
+% orders, we can formulate an an agent-specific microprice ($m_i$) to quantify its personal vision of the future price::
+
+% \begin{equation}
+%     m_i = \frac{a_iV^b_i + b_i V^a_i}{V^b_i + V^a_i} = \frac{a_i + b_i}{2} + \frac{a_i-b_i}{2} \frac{V_i^b-V_i^a}{V_i^b+V_i^a} = \text{mid-price} + \frac{\text{spread}}{2} \times \text{imbalance}
+% \end{equation}
+% Where $a_i$ and $b_i$ represent the agent's ask and bid prices, and $V^a_i$ and $V^b_i$ represent their respective 
+% volumes. Legitimate market makers, constrained by inventory risk, typically maintain symmetric quotes ($V^b_i \approx V^a_i$) 
+% to capture the spread, resulting in an $m_i$ that closely tracks the fundamental mid-price. Conversely, a spoofer 
+% deliberately engineers an extreme unbalanced environment to manipulate the heuristics of victim algorithms. 
+% Consequently, a spoofer's $m_i$ will drastically diverge from the true mid-price.
+
+% \paragraph{Correlation Between Posting Distance ($\delta$) and Volume} The second metric mathematically formalizes the 
+% spoofer's optimization dilemma by measuring the correlation between an agent's order volume and their posting distance 
+% ($\delta$) from the best bid or ask. Empirical models confirm that posting distance is a critical determinant of price 
+% impact, and its omission renders LOB detection models mathematically inadequate.Because market makers seek execution to 
+% earn the bid-ask spread, their inventory management necessitates posting their largest order volumes at or adjacent to 
+% the top of the book ($\delta \approx 0$). Spoofers, conversely, optimize a strictly directional expected cost function: 
+% they must maximize the psychological and algorithmic impact of their non-bona fide volume while minimizing the risk of 
+% inadvertent execution. This is achieved by placing a small, bona fide order at a minimal distance ($\delta \approx 0$) 
+% to guarantee execution, and a massive, non-bona fide order at a significantly larger distance deeper within the opposite 
+% side of the LOB ($\delta \gg 0$) to act as a structural buffer against aggressive market orders. Thus, observing a strong 
+% correlation between massive volume and a large $\delta$ on one side of the book—paired with small volume and a minimal 
+% $\delta$ on the execution side—serves as and additional microstructural signature of a manipulative strategy.
+
+
+\bibliographystyle{abbrv}
+\bibliography{references}
+
+\end{document}
