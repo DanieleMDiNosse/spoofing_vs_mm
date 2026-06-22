@@ -327,7 +327,7 @@ and possible spoofing strategies.
 
 \begin{figure}[htbp]
     \centering
-    \resizebox{\textwidth}{!}{%
+    \resizebox{0.95\textwidth}{!}{%
     \begin{tikzpicture}[
         x=0.95cm,
         y=0.95cm,
@@ -338,88 +338,153 @@ and possible spoofing strategies.
         ask/.style={orange!85!black},
         fake/.style={fill=green!70!black, draw=green!70!black},
         real/.style={fill=red!80!black, draw=red!80!black},
-        distbid/.style={<->, green!65!black, very thick},
-        distask/.style={<->, orange!85!black, very thick}
+        layer/.style={draw=black!45, fill=gray!8, rounded corners=2pt, minimum width=0.40cm},
+        dist/.style={<->, black!70, very thick}
     ]
-        \foreach \xshift/\step in {0/Step 1,6.2/Step 2,12.4/Step 3} {
-            \node[font=\large\bfseries] at (\xshift+2.6,2.75) {\step};
-            \draw[book] (\xshift,0) -- (\xshift+5.2,0);
-            \draw[quote,bid] (\xshift+2.05,-0.12) -- (\xshift+2.05,0.12)
-                node[below=0.05cm, font=\bfseries] {bid};
-            \draw[quote] (\xshift+2.70,-0.10) -- (\xshift+2.70,0.10)
+        \foreach \xshift/\step in {0/State 1: posturing,7.0/State 2: fill,14.0/State 3: cancellation} {
+            \node[font=\large\bfseries] at (\xshift+3.0,3.15) {\step};
+            \draw[book] (\xshift,0) -- (\xshift+6.0,0);
+            \draw[quote,bid] (\xshift+2.25,-0.12) -- (\xshift+2.25,0.12)
+                node[below=0.05cm, font=\bfseries] {best bid};
+            \draw[quote] (\xshift+3.00,-0.10) -- (\xshift+3.00,0.10)
                 node[above=0.05cm, font=\bfseries] {mid};
-            \draw[quote,ask] (\xshift+3.45,-0.12) -- (\xshift+3.45,0.12)
-                node[below=0.05cm, font=\bfseries] {ask};
+            \draw[quote,ask] (\xshift+3.85,-0.12) -- (\xshift+3.85,0.12)
+                node[below=0.05cm, font=\bfseries] {best ask};
         }
 
-        % Step 1: the spoofer posts a large visible bid-side order and a small bona fide ask-side order.
-        \draw[fake] (0.75,0) rectangle (0.95,1.65);
-        \node[left] at (0.72,1.35) {$V_b$};
-        \draw[distbid] (0.85,1.90) -- (2.05,1.90) node[midway, above] {$\delta_b$};
+        % State 1: layered bid-side deceptive profile and small ask-side bona fide order.
+        \foreach \x/\h/\lab in {0.75/1.10/{$V^{i,b}_{4}$},1.10/1.55/{$V^{i,b}_{3}$},1.45/1.85/{$V^{i,b}_{2}$},1.80/0.45/{$V^{i,b}_{1}$}} {
+            \draw[fake] (\x,0) rectangle +(0.24,\h);
+            \node[above, font=\scriptsize] at (\x+0.12,\h+0.05) {\lab};
+        }
+        \draw[real] (4.22,0) rectangle +(0.24,0.45);
+        \node[right, font=\scriptsize] at (4.48,0.30) {$V^{i,a}_{1}$};
+        \node[align=center, font=\scriptsize] at (1.45,2.35) {large opposite-side\\top-$n$ profile};
+        \node[align=center, font=\scriptsize] at (4.55,1.00) {small bona fide\\order};
 
-        \draw[real] (3.85,0) rectangle (4.03,0.50);
-        \node[right] at (4.06,0.30) {$V_a$};
-        \draw[distask] (3.45,0.75) -- (3.94,0.75) node[midway, above] {$\delta_a$};
+        % State 2.
+        \foreach \x/\h in {7.75/1.10,8.10/1.55,8.45/1.85,8.80/0.45} {
+            \draw[fake] (\x,0) rectangle +(0.24,\h);
+        }
+        \draw[real] (11.22,0) rectangle +(0.24,0.45);
+        \draw[orange!85!black, very thick] (11.12,0.06) -- (11.55,0.50);
+        \draw[orange!85!black, very thick] (11.55,0.06) -- (11.12,0.50);
+        \node[rotate=45, black!85!black, font=\normalsize\bfseries] at (11.35,0.28) {fill};
 
-        % Step 2: the small bona fide order is executed while the fake order is still visible.
-        \draw[fake] (6.95,0) rectangle (7.15,1.65);
-        \node[left] at (6.92,1.35) {$V_b$};
-        \draw[distbid] (7.05,1.90) -- (8.25,1.90) node[midway, above] {$\delta_b$};
+        % State 3.
+        \foreach \x/\h in {14.75/1.10,15.10/1.55,15.45/1.85,15.80/0.45} {
+            \draw[fake] (\x,0) rectangle +(0.24,\h);
+        }
+        \draw[black, very thick] (14.60,0.05) -- (16.20,1.95);
+        \draw[black, very thick] (16.20,0.05) -- (14.60,1.95);
+        \node[rotate=48, black, font=\normalsize\bfseries] at (15.40,1.00) {cancel};
 
-        \draw[real] (10.05,0) rectangle (10.23,0.50);
-        \node[right] at (10.26,0.30) {$V_a$};
-        \draw[distask] (9.65,0.75) -- (10.14,0.75) node[midway, above] {$\delta_a$};
-        \draw[orange!85!black, very thick] (9.85,0.08) -- (10.18,0.45);
-        \draw[orange!85!black, very thick] (10.18,0.08) -- (9.85,0.45);
-        \node[rotate=55, black!85!black, font=\normalsize\bfseries] at (10.03,0.24) {fill};
-
-        % Step 3: the non-bona fide bid-side order is cancelled immediately after the fill.
-        \draw[fake] (13.15,0) rectangle (13.35,1.65);
-        \node[left] at (13.12,1.35) {$V_b$};
-        \draw[distbid] (13.25,1.90) -- (14.45,1.90) node[midway, above] {$\delta_b$};
-        \draw[black, very thick] (12.80,0.05) -- (13.70,1.65);
-        \draw[black, very thick] (13.70,0.05) -- (12.80,1.65);
-        \node[rotate=58, black, font=\normalsize\bfseries] at (13.25,0.85) {cancel};
+        \draw[-{Latex[length=3mm]}, thick, black!75] (6.2,1.4) -- (6.8,1.4);
+        \draw[-{Latex[length=3mm]}, thick, black!75] (13.2,1.4) -- (13.8,1.4);
     \end{tikzpicture}%
     }
-    \caption{Timeline of a spoofing episode}
+    \caption{Schematic top-$n$ spoofing timeline. The large non-bona fide order is represented as an agent-specific
+    depth profile over several bid levels, while the bona fide order sits close to the opposite best quote. The same
+    construction applies symmetrically to sell- and buy-intent episodes.}
+    \label{fig:topn_spoofing_timeline}
 \end{figure}
 
-To rigorously distinguish manipulative spoofing from legitimate liquidity provision, we must define the microstructural 
-signature of the strategy not merely as a spatial anomaly within the Limit Order Book (LOB), but as a spatio-temporal 
-sequence of conditional events. 
+To rigorously distinguish manipulative spoofing from legitimate liquidity provision, we define the microstructural
+signature of the strategy as a conditional deformation of the agent's limit-order-book footprint. The relevant object is
+not only the size of a single order at the best bid or ask, but the whole agent-specific liquidity profile over the first
+$n$ price levels. This is important because a sophisticated spoofer may place the non-bona fide order away from the
+absolute best quote, for example at Level 2, Level 3, or across several adjacent levels, in order to remain visible while
+reducing the probability of unintended execution.
 
-We formalize the execution timeline of a spoofing agent $i$ into three distinct states:
+We formalize the execution timeline of a spoofing agent $i$ into three states:
 \begin{enumerate}
-    \item \textbf{State 1 (Deceptive Posturing):} The agent posts a massive, non-bona fide order ($V_b$) deep in the 
-    book at distance $\delta_b$ from the same-side best quote, simultaneously posting a small, bona fide order ($V_a$) 
-    at or near the best opposite quote ($\delta_a \approx 0$).
-    \item \textbf{State 2 (Execution):} The artificial volume imbalance shifts the micro-price, resulting in the 
-    execution of the bona fide order $V_a$.
-    \item \textbf{State 3 (Risk Termination):} Immediately following the execution of $V_a$, the agent cancels the 
-    massive non-bona fide order $V_b$ to neutralize execution risk.
+    \item \textbf{State 1 (Deceptive Posturing):} shortly before the execution, the agent posts a large non-bona fide
+    liquidity profile on one side of the book, typically away from the touch, while simultaneously maintaining a smaller
+    bona fide order close to the opposite best quote.
+    \item \textbf{State 2 (Execution):} the artificial depth profile distorts short-horizon imbalance signals and the
+    bona fide order is executed.
+    \item \textbf{State 3 (Risk Termination):} immediately after the execution, the agent cancels the opposite-side
+    liquidity profile, thereby terminating the execution risk associated with the deceptive orders.
 \end{enumerate}
 
-To capture this dynamic, we define a set of metrics that isolate the agent's spatial footprint and their conditional 
-reactivity.
+The model below generalizes the best-level construction to the top $n$ levels while preserving the same economic logic:
+a large asymmetric profile must be posted shortly before the fill, must be present before the fill, and must disappear
+conditionally after the fill. This timing restriction is important: long-lived resting liquidity that happens to be on
+the opposite side of a later execution should not be mechanically interpreted as part of a spoofing episode.
 
-\subsubsection{Normalized Spatial Imbalance}
-Traditional order book imbalance metrics often fail to accurately weight deep-book liquidity. While a spoofer seeks to 
-maximize visible volume, the probability of execution—and thus the true risk borne by the agent—decays non-linearly as 
-distance from the mid-price increases. 
+\subsubsection{Top-$n$ Agent-Specific Depth Profiles}
+\label{subsec:topn_depth_profiles}
 
-We explicitly assume that the manipulative impact of an order is a saturating function of its distance from the best 
-quote. Let $V_a$ and $V_b$ represent the volumes of the agent's ask and bid orders, respectively. We define the 
-\textit{Normalized Distance-Weighted Imbalance} for agent $i$ at event-time $\tau$ as:
-
+Let $s \in \{b,a\}$ denote the bid or ask side of the book, and let $k=1,\ldots,n$ denote the book level, with
+$k=1$ corresponding to the same-side best quote. For agent $i$, define
 \begin{equation}
-    imb_{\tau}^{i} = \frac{V_{a}(1 - e^{-\kappa \delta_{a}}) - V_{b}(1 - e^{-\kappa \delta_{b}})}{V_{a} + V_{b}}\Bigg|_{i}
+    V^{i,s}_{k}(t)
 \end{equation}
+as the volume posted by the agent at time $t$ on side $s$ and level $k$. We denote by
+\begin{equation}
+    \mathbf{V}^{i,s}_{n}(t)
+    = \left(V^{i,s}_{1}(t),\ldots,V^{i,s}_{n}(t)\right)
+\end{equation}
+the corresponding top-$n$ agent-level depth vector. In applications where the book depth varies substantially across
+assets or intraday periods, the raw volume can be normalized by the total visible market depth at the same side and
+level:
+\begin{equation}
+    \widetilde V^{i,s}_{k}(t)
+    =
+    \frac{V^{i,s}_{k}(t)}{D^{s}_{k}(t)},
+    \label{eq:relative_agent_depth}
+\end{equation}
+where $D^{s}_{k}(t)$ is the total displayed market depth on side $s$ and level $k$.
+The distance of a level from the touch is denoted by $d^{s}_{k}(t)$. In a tick-time perspective, $d^{s}_{k}(t)$ can be
+measured as the number of ticks between level $k$ and the same-side best quote, shifted by one unit so that the top level
+has positive distance. This avoids assigning zero weight to Level 1 while preserving the ranking of deeper levels.
 
-where $\kappa > 0$ is an asset-specific decay parameter calibrated to the instrument's typical liquidity density and 
-spread variance. The term $(1 - e^{-\kappa \delta})$ acts as an asymptotic filter, strictly bounding the distance 
-multiplier within $[0, 1)$. This guarantees that $imb_{\tau}^{i} \in [-1, 1]$, providing a way to compare imbalance 
-across different assets and time periods while emphasizing the strategic placement of orders.
+\subsubsection{Multilevel Distance-Weighted Imbalance}
+\label{subsec:multilevel_dwi}
+
+The first ingredient is a scalar projection of the top-$n$ depth profile. We assign to each level a depth kernel
+\begin{equation}
+    \omega^{s}_{k}(t)
+    =
+    \frac{
+        e^{-\lambda d^{s}_{k}(t)}
+        \left(1-e^{-\kappa d^{s}_{k}(t)}\right)
+    }{
+        \sum_{\ell=1}^{n}
+        e^{-\lambda d^{s}_{\ell}(t)}\left(
+        1-e^{-\kappa d^{s}_{\ell}(t)}\right)
+    },
+    \label{eq:depth_kernel}
+\end{equation}
+where $\kappa>0$ controls the increase in execution-risk protection with distance from the touch, while $\lambda>0$
+controls the decay of informational visibility at deeper levels. The product form captures the trade-off faced by a
+spoofer: a deceptive order should be sufficiently far from the touch to reduce execution risk, but not so far that it
+becomes irrelevant for short-horizon imbalance signals.
+
+The agent's weighted top-$n$ liquidity on side $s$ is then
+\begin{equation}
+    L^{i,s}_{n}(t)
+    =
+    \sum_{k=1}^{n}
+    \omega^{s}_{k}(t)\,\widetilde V^{i,s}_{k}(t).
+    \label{eq:weighted_topn_liquidity}
+\end{equation}
+We define the \textit{Multilevel Distance-Weighted Imbalance} for agent $i$ as
+\begin{equation}
+    \operatorname{DWI}^{i}_{n}(t)
+    =
+    \frac{
+        L^{i,a}_{n}(t)-L^{i,b}_{n}(t)
+    }{
+        L^{i,a}_{n}(t)+L^{i,b}_{n}(t)
+    }.
+    \label{eq:multilevel_dwi}
+\end{equation}
+With this sign convention, $\operatorname{DWI}^{i}_{n}(t)>0$ indicates an ask-heavy agent profile, while
+$\operatorname{DWI}^{i}_{n}(t)<0$ indicates a bid-heavy agent profile. Because the denominator normalizes by the total
+weighted agent footprint, the statistic is comparable across agents and trading periods. The case $n=1$ recovers a
+best-level version of the measure, whereas larger $n$ values allow the detector to capture deceptive liquidity placed
+behind the touch.
 
 \begin{figure}[htbp]
     \centering
@@ -437,7 +502,7 @@ across different assets and time periods while emphasizing the strategic placeme
         \fill[gray!10] (1.7,-1.05) rectangle (3.0,1.05);
         \fill[gray!5] (3.0,-1.05) rectangle (4.6,1.05);
 
-        \draw[axis] (0,-1.05) -- (0,1.1) node[above] {$imb_t^i$};
+        \draw[axis] (0,-1.05) -- (0,1.1) node[above] {$\operatorname{DWI}_{n}^{i}(t)$};
         \draw[axis] (0,-1.05) -- (4.85,-1.05) node[right] {event time};
         \draw[gray!50] (-0.05,0) -- (4.65,0);
 
@@ -453,13 +518,10 @@ across different assets and time periods while emphasizing the strategic placeme
         \node[state, text width=1.15cm] at (2.0,0.86) {State 2\\fill};
         \node[state, text width=1.25cm] at (3.9,0.86) {State 3\\cancel};
 
-        \node[align=center] at (1.0,-1.25) {$t_0$\\fake order};
+        \node[align=center] at (1.0,-1.25) {$t_0$\\top-$n$ profile};
         \node[align=center] at (2.2,-1.25) {$t_e$\\small fill};
-        \node[align=center] at (3.2,-1.25) {$t_e+\Delta\tau$\\cancel};
+        \node[align=center] at (3.2,-1.25) {$t_e+\Delta\tau$\\collapse};
 
-        % Sell-intent spoofing: a large bid-side fake order makes the ask-minus-bid
-        % imbalance negative; after the small ask order fills, the remaining fake bid
-        % makes the imbalance even more negative, then cancellation produces a jump to zero.
         \draw[spoof] (0.15,0) -- (0.9,0)
             -- (1.0,-0.55) -- (2.2,-0.55)
             -- (2.2,-0.82) -- (3.2,-0.82)
@@ -468,46 +530,110 @@ across different assets and time periods while emphasizing the strategic placeme
         \draw[maker] (0.15,0) .. controls (1.0,-0.35) and (2.1,-0.45) .. (3.0,-0.25)
             .. controls (3.7,-0.10) and (4.1,-0.03) .. (4.55,0);
 
-        \node[red!70!black, align=left, anchor=west] at (3.35,-0.72) {spoofing:\\sharp collapse};
+        \node[red!70!black, align=left, anchor=west] at (3.35,-0.72) {spoofing:\\conditional collapse};
         \node[blue!70!black, align=left, anchor=west] at (3.35,0.30) {market maker:\\smooth rebalancing};
-        \node[align=center] at (2.35,-1.62) {For a buy-intent spoofing episode, the same pattern is mirrored above zero.};
+        \node[align=center] at (2.35,-1.62) {For the opposite spoofing direction, the sign pattern is mirrored.};
     \end{tikzpicture}
-    \caption{Stylized event-time behavior of the normalized distance-weighted imbalance. A spoofing episode produces a
-    large imbalance and, after the small opposite-side execution, a sharp return toward zero when the non-bona fide order
-    is cancelled. Inventory rebalancing by a market maker should instead evolve more smoothly.}
-    \label{fig:imbalance_dynamics}
+    \caption{Stylized event-time behavior of the multilevel distance-weighted imbalance. A spoofing episode produces a
+    large top-$n$ imbalance and, after the small opposite-side execution, a rapid return toward zero when the deceptive
+    profile is cancelled. Inventory rebalancing by a market maker should evolve more smoothly.}
+    \label{fig:topn_imbalance_dynamics}
 \end{figure}
 \FloatBarrier
 
 \subsubsection{Conditionality and Intent Isolation}
-A static imbalance metric is insufficient to isolate intent, as a legitimate market maker engaged in asymmetric 
-inventory management may temporarily exhibit extreme $imb_{\tau}^{i}$ values. The fundamental differentiator lies 
-in the conditionality of State 3. For a market maker, the cancellation of a deep resting order is driven by adverse 
-selection or mid-price momentum. For a spoofer, the cancellation is strictly conditional upon the execution of the 
-opposite-side bona fide order.
+\label{subsec:multilevel_conditionality}
 
-Let $e$ denote the specific execution event of the small order $V_a$ at timestamp $t_e$. We define a microscopic time 
-window $\Delta \tau$ bounding the mechanical latency of the strategy. The \textit{Spoofing Conditionality Index (SCI)} 
-measures the structural collapse of the agent's LOB presence immediately surrounding the fill:
+A static multilevel imbalance is not sufficient to isolate manipulative intent. A legitimate market maker may also
+exhibit temporary imbalance while managing inventory or reacting to adverse selection. The discriminating information is
+the conditionality of the subsequent cancellation: for a spoofer, the disappearance of the large liquidity profile is
+mechanically tied to the execution of the smaller bona fide order on the opposite side.
 
+Let $e$ denote an execution of agent $i$ at timestamp $t_e$, and let $s_e\in\{b,a\}$ be the side of the executed bona
+fide order. The suspected deceptive side is the opposite side, denoted by $\bar{s}_e$. We define
 \begin{equation}
-    SCI^{i}_{e} = |imb_{t^{-}_{e}}^{i} - imb_{t^{+}_{e}}^{i}|
+    t_e^{-}=t_e-\epsilon_t,
+    \qquad
+    t_e^{+}=t_e+\Delta\tau,
 \end{equation}
-
-where $t^{-}_{e}$ is the state immediately preceding the fill, and $t^{+}_{e} = t_e + \Delta \tau$. An extreme 
-$SCI^{i}_{e}$ value indicates the sudden evaporation of the opposite-side massive order, a mechanical signature of 
-manipulative risk termination.
-
-To aggregate this behavior over a trading session and filter out coincidental reactive cancellations by high-frequency 
-market makers, we define the \textit{Conditional Probability Score (CPS)} for agent $i$:
-
+where $\epsilon_t$ is chosen so that $t_e^{-}$ represents the book state immediately before the execution, while
+$\Delta\tau$ bounds the mechanical latency of the cancellation response.
+We also impose a pre-execution episode window $\Theta>0$. An opposite-side order is considered part of the candidate
+deceptive profile for execution $e$ only if its first observed posting time $\tau_o$ satisfies
 \begin{equation}
-    CPS^{i} = \frac{1}{N} \sum_{e=1}^{N} \mathbb{I}(SCI^{i}_{e} > \gamma)
+    0 \leq t_e-\tau_o \leq \Theta .
+    \label{eq:deceptive_age_window}
 \end{equation}
+In the empirical implementation below we use $\Theta=10$ minutes as an exploratory default. The candidate deceptive
+orders used for episode attribution are therefore restricted to same-client, opposite-side top-$n$ orders posted within
+this pre-execution window. The unrestricted top-$n$ state remains useful for describing the agent's book footprint and
+for computing DWI and side-collapse statistics, but the intent-isolation step should not attribute old standing liquidity
+to the spoofing episode.
 
-where $N$ is the total number of small-order executions for the agent, $\mathbb{I}$ is the indicator function, and 
-$\gamma$ is an empirically derived threshold representing a structural imbalance shock. A legitimate market maker's 
-$CPS^i$ will converge toward zero, whereas a systematic spoofing algorithm will exhibit a $CPS^i$ approaching unity.
+The multilevel analogue of the Spoofing Conditionality Index is
+\begin{equation}
+    \operatorname{SCI}^{i}_{e,n}
+    =
+    \left|
+        \operatorname{DWI}^{i}_{n}(t_e^{-})
+        -
+        \operatorname{DWI}^{i}_{n}(t_e^{+})
+    \right|.
+    \label{eq:topn_sci}
+\end{equation}
+However, the top-$n$ representation allows us to be more selective than a pure imbalance difference. We can directly
+measure how much of the weighted liquidity on each side disappears after the fill:
+\begin{equation}
+    C^{i,s}_{e,n}
+    =
+    \frac{
+        \left[
+            L^{i,s}_{n}(t_e^{-})-L^{i,s}_{n}(t_e^{+})
+        \right]_{+}
+    }{
+        L^{i,s}_{n}(t_e^{-})+\varepsilon
+    },
+    \qquad s\in\{b,a\},
+    \label{eq:side_collapse}
+\end{equation}
+where $[x]_{+}=\max\{x,0\}$. A spoofing episode should produce a large value of $C^{i,\bar{s}_e}_{e,n}$, because the
+liquidity that vanishes is expected to be on the side opposite to the bona fide execution. By contrast, a general
+market-maker quote refresh induced by a mid-price change should tend to affect both sides more symmetrically.
+
+We therefore define the \textit{Multilevel Spoofing Conditionality Index} as
+\begin{equation}
+    \operatorname{MSCI}^{i}_{e,n}
+    =
+    \operatorname{SCI}^{i}_{e,n}\,
+    C^{i,\bar{s}_e}_{e,n}\,
+    \left[
+        C^{i,\bar{s}_e}_{e,n}-C^{i,s_e}_{e,n}
+    \right]_{+}.
+    \label{eq:msci}
+\end{equation}
+This score is high only when three conditions hold simultaneously: the agent's top-$n$ imbalance changes abruptly, the
+collapse occurs on the side opposite to the execution, and the opposite-side collapse is stronger than the same-side
+collapse. This construction preserves the interpretability of the original SCI while reducing false positives generated
+by ordinary two-sided quote updates.
+
+\subsubsection{Multilevel Conditional Probability Score}
+\label{subsec:mcps}
+
+To aggregate repeated behavior over a session, let $N_i$ be the number of relevant small-order executions by agent $i$.
+For a fixed depth $n$, we define the \textit{Multilevel Conditional Probability Score} as
+\begin{equation}
+    \operatorname{MCPS}^{i}_{n}
+    =
+    \frac{1}{N_i}
+    \sum_{e=1}^{N_i}
+    \mathbb{I}\left(
+        \operatorname{MSCI}^{i}_{e,n}>\gamma_n
+    \right),
+    \label{eq:mcps}
+\end{equation}
+where $\gamma_n$ is an empirically calibrated threshold for the selected book depth. This is the direct multilevel
+analogue of the original CPS: it counts the fraction of executions after which the agent exhibits a sufficiently large
+conditional, opposite-side collapse of its top-$n$ liquidity profile.
 
 \begin{figure}[htbp]
     \centering
@@ -522,26 +648,23 @@ $CPS^i$ will converge toward zero, whereas a systematic spoofing algorithm will 
         barbox/.style={draw, rounded corners=2pt, fill=gray!6}
     ]
         \draw[axis] (0,0) -- (10.9,0);
-        \draw[axis] (0,0) -- (0,1.25) node[above] {$SCI_e^i$};
-        \draw[threshold] (0,0.72) -- (10.6,0.72) node[right] {$\gamma$};
+        \draw[axis] (0,0) -- (0,1.25) node[above] {$\operatorname{MSCI}^{i}_{e,n}$};
+        \draw[threshold] (0,0.72) -- (10.6,0.72) node[right] {$\gamma_n$};
         \node[align=center] at (5.35,-0.20) {execution index $e$};
 
-        \foreach \x/\lab in {1/1,5/5,10/N} {
+        \foreach \x/\lab in {1/1,5/5,10/$N_i$} {
             \draw (\x,0.03) -- (\x,-0.03) node[below] {\lab};
         }
-        \foreach \y/\lab in {0.72/$\gamma$,1.0/$1$} {
+        \foreach \y/\lab in {0.72/$\gamma_n$,1.0/$1$} {
             \draw (0.03,\y) -- (-0.03,\y) node[left] {\lab};
         }
 
         \node[blue!70!black, anchor=west] at (0.15,1.18) {market maker: rare threshold crossings};
         \node[red!70!black, anchor=west] at (0.15,1.07) {spoofing: repeated threshold crossings};
 
-        % Event-level SCI values for a legitimate market maker: most executions remain below gamma.
         \foreach \x/\y in {1/0.22,2/0.35,3/0.18,4/0.45,5/0.28,6/0.78,7/0.31,8/0.24,9/0.40,10/0.27} {
             \node[makerpoint] at (\x,\y) {};
         }
-
-        % Event-level SCI values for a systematic spoofer: most executions exceed gamma.
         \foreach \x/\y in {1/0.82,2/0.95,3/0.88,4/0.67,5/1.02,6/0.91,7/0.76,8/0.99,9/0.85,10/0.93} {
             \node[spoofpoint] at (\x,\y) {};
         }
@@ -549,19 +672,56 @@ $CPS^i$ will converge toward zero, whereas a systematic spoofing algorithm will 
         \draw[barbox] (11.55,-0.34) rectangle (14.25,1.02);
         \draw[fill=blue!70!black] (12.00,0.08) rectangle (12.35,0.18);
         \draw[fill=red!70!black] (13.45,0.08) rectangle (13.80,0.88);
-        \node[align=center] at (12.90,1.14) {$CPS^i$};
+        \node[align=center] at (12.90,1.14) {$\operatorname{MCPS}^{i}_{n}$};
         \node[blue!70!black, align=center, font=\tiny] at (12.18,-0.14) {market\\maker};
         \node[red!70!black, align=center, font=\tiny] at (13.63,-0.14) {spoofer};
 
         \node[align=center, text width=0.85\textwidth] at (6.4,-0.55)
-        {$CPS^i$ counts the fraction of executions for which the imbalance collapse exceeds the threshold:
-        high values indicate repeated conditional cancellation after fills.};
+        {$\operatorname{MCPS}^{i}_{n}$ counts the fraction of executions for which the multilevel conditionality score
+        exceeds $\gamma_n$. High values indicate repeated conditional cancellation after fills.};
     \end{tikzpicture}
-    \caption{Operational interpretation of the Conditional Probability Score. Each point is one small-order execution for
-    the agent. The score increases when many execution-level imbalance collapses $SCI_e^i$ exceed the threshold $\gamma$.}
-    \label{fig:cps_score}
+    \caption{Operational interpretation of the Multilevel Conditional Probability Score. Each point is one execution for
+    the agent. The score increases when the multilevel conditionality index repeatedly exceeds the threshold $\gamma_n$.}
+    \label{fig:mcps_score}
 \end{figure}
 \FloatBarrier
+
+In practice, the depth $n$ should be chosen according to the venue, tick size, and typical liquidity distribution of the
+instrument. A robust surveillance implementation can compute MCPS on a grid $\mathcal{N}=\{1,2,3,5,10\}$ and
+retain the resulting vector
+\begin{equation}
+    \left(
+    \operatorname{MCPS}^{i}_{1},
+    \operatorname{MCPS}^{i}_{2},
+    \operatorname{MCPS}^{i}_{3},
+    \operatorname{MCPS}^{i}_{5},
+    \operatorname{MCPS}^{i}_{10}
+    \right)
+\end{equation}
+as an interpretable multiscale alert profile. A spoofer operating close to the touch should be detected at small $n$,
+whereas a strategy that layers deceptive volume deeper in the book should produce larger values only once deeper levels
+are included.
+
+\subsubsection{Event Reconstruction}
+\label{subsec:event_reconstruction}
+
+The above quantities should be computed from order-level data rather than from aggregate snapshots whenever possible.
+The reason is that a resting order may move from one level to another because the best quote changes, even if the agent
+has not cancelled or modified the order. For intent isolation, the relevant event is the removal of agent-owned
+liquidity after the execution of the bona fide order. The operational procedure is therefore:
+\begin{enumerate}
+    \item reconstruct the active orders of agent $i$ immediately before $t_e$;
+    \item assign each active order to its side $s$ and level $k\leq n$, retaining as candidate deceptive orders only
+    those on the opposite side whose first observed posting time lies in $[t_e-\Theta,t_e]$;
+    \item compute $L^{i,b}_{n}(t_e^{-})$, $L^{i,a}_{n}(t_e^{-})$, and $\operatorname{DWI}^{i}_{n}(t_e^{-})$;
+    \item update the book through the interval $[t_e,t_e+\Delta\tau]$ using executions, cancellations, and amendments;
+    \item compute the corresponding post-event quantities at $t_e^{+}$;
+    \item evaluate $\operatorname{MSCI}^{i}_{e,n}$ and aggregate it through $\operatorname{MCPS}^{i}_{n}$.
+\end{enumerate}
+This order-level reconstruction prevents ordinary repricing of the book from being mechanically interpreted as
+cancellation of deceptive liquidity, thereby reducing false positives for legitimate market makers.
+
+
 % We propose two agent-specific metrics based on the
 % microprice and the volume-distance correlation. 
 % \paragraph{Agent-Specific Microprice ($m_i$)} The traditional microprice is widely 

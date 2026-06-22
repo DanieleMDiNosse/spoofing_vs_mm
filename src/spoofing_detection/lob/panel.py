@@ -33,6 +33,13 @@ MUTATING_UPDATE_CLASSES = {
     "move_dark_to_cob",
 }
 
+NON_VISIBLE_RESTING_ORDER_TYPES = {
+    "market",
+    "stop_market_or_stop_market_on_quote",
+    "stop_limit_or_stop_limit_on_quote",
+    "mid_point_peg",
+}
+
 
 def sort_events(df: pl.DataFrame) -> pl.DataFrame:
     available = [col for col in SORT_COLUMNS if col in df.columns]
@@ -342,18 +349,85 @@ def event_distance(event: dict[str, Any], summary: dict[str, Any], *, prefix: st
 def _requires_prior_visible_order(event: dict[str, Any]) -> bool:
     """Whether an unseen cancel/fill should be treated as a reconstruction issue.
 
-    Unpriced market/IOC-style events are intentionally retained in the panel but
-    never seed visible resting state, so their fills/cancels do not imply a
-    missing active order. Priced non-market fills/cancels do.
+    Events that cannot seed visible resting state should not later look like
+    missing active orders when they are filled or cancelled.
     """
-    if event["event_order_type_label"] == "market":
+    if event["event_order_type_label"] in NON_VISIBLE_RESTING_ORDER_TYPES:
         return False
     if event["ORDERPX"] is None:
         return False
     return True
 
 
-def _apply_event(active_orders: dict[str, ActiveOrder], event: dict[str, Any]) -> list[str]:
+def _is_aggressive_event(event: dict[str, Any]) -> bool:
+    return str(event.get("AGGRESSIVEORDER") or "").upper() == "Y"
+
+
+def _would_lock_or_cross_book(active_orders: dict[str, ActiveOrder], event: dict[str, Any]) -> bool:
+    price = event.get("ORDERPX")
+    side = event.get("side_label")
+    if price is None or side not in {"bid", "ask"}:
+        return False
+    summary = book_summary(active_orders, prefix="pre", top_n=1)
+    if side == "bid" and summary["pre_best_ask"] is not None:
+        return price >= summary["pre_best_ask"]
+    if side == "ask" and summary["pre_best_bid"] is not None:
+        return price <= summary["pre_best_bid"]
+    return False
+
+
+def _fill_group_key(event: dict[str, Any]) -> tuple[Any, ...] | None:
+    if event["event_class"] != "fill":
+        return None
+    execution_id = event.get("EXECUTIONID")
+    trade_uid = event.get("TRADEUNIQUEIDENTIFIER")
+    trade_time = event.get("TRADETIME")
+    if execution_id in (None, 0, "0") and trade_uid is None and trade_time is None:
+        return None
+    return (
+        event.get("TRADEDATE"),
+        event.get("MIC"),
+        event.get("MARKETCODE"),
+        event.get("SYMBOLINDEX"),
+        event.get("EMM (*)"),
+        execution_id,
+        trade_uid,
+        trade_time,
+        event.get("LASTTRADEDPX"),
+    )
+
+
+def _flush_pending_aggressive_residuals(
+    active_orders: dict[str, ActiveOrder],
+    pending_aggressive_residuals: dict[str, tuple[dict[str, Any], tuple[Any, ...] | None]],
+    *,
+    keep_group: tuple[Any, ...] | None,
+) -> list[str]:
+    flags: list[str] = []
+    for order_id, (event, group_key) in list(pending_aggressive_residuals.items()):
+        if keep_group is not None and group_key == keep_group:
+            continue
+        if not is_visible_resting_event(event):
+            pending_aggressive_residuals.pop(order_id, None)
+            continue
+        if _would_lock_or_cross_book(active_orders, event):
+            # The residual is still marketable against remaining opposite-side
+            # liquidity. Keep it pending until later fills/cancels make it safe
+            # to rest, or until a terminal event removes it.
+            continue
+        first_seen = active_orders[order_id].first_seen_sort_index if order_id in active_orders else None
+        active_orders[order_id] = _make_active_order(event, first_seen_sort_index=first_seen)
+        pending_aggressive_residuals.pop(order_id, None)
+    return flags
+
+
+def _apply_event(
+    active_orders: dict[str, ActiveOrder],
+    event: dict[str, Any],
+    *,
+    pending_aggressive_residuals: dict[str, tuple[dict[str, Any], tuple[Any, ...] | None]],
+    non_resting_order_ids: set[str],
+) -> list[str]:
     flags: list[str] = []
     order_id = event["ORDERID"]
     event_class = event["event_class"]
@@ -361,32 +435,63 @@ def _apply_event(active_orders: dict[str, ActiveOrder], event: dict[str, Any]) -
         return flags
 
     if event_class == "cancel":
-        if order_id not in active_orders and _requires_prior_visible_order(event):
+        was_pending = pending_aggressive_residuals.pop(order_id, None) is not None
+        if (
+            order_id not in active_orders
+            and not was_pending
+            and order_id not in non_resting_order_ids
+            and _requires_prior_visible_order(event)
+        ):
             flags.append("cancel_for_unseen_order")
         active_orders.pop(order_id, None)
+        non_resting_order_ids.discard(order_id)
         return flags
 
     if event_class == "fill":
         if (event["LEAVESQTY"] or 0) <= 0:
-            if order_id not in active_orders and _requires_prior_visible_order(event):
+            was_pending = pending_aggressive_residuals.pop(order_id, None) is not None
+            if (
+                order_id not in active_orders
+                and not was_pending
+                and order_id not in non_resting_order_ids
+                and not _is_aggressive_event(event)
+                and _requires_prior_visible_order(event)
+            ):
                 flags.append("full_fill_for_unseen_order")
             active_orders.pop(order_id, None)
+            non_resting_order_ids.discard(order_id)
             return flags
         if is_visible_resting_event(event):
+            if _is_aggressive_event(event) or _would_lock_or_cross_book(active_orders, event):
+                active_orders.pop(order_id, None)
+                pending_aggressive_residuals[order_id] = (event, _fill_group_key(event))
+                non_resting_order_ids.add(order_id)
+                return flags
             first_seen = active_orders[order_id].first_seen_sort_index if order_id in active_orders else None
-            if order_id not in active_orders:
+            if order_id not in active_orders and order_id not in non_resting_order_ids:
                 flags.append("partial_fill_for_unseen_order")
             active_orders[order_id] = _make_active_order(event, first_seen_sort_index=first_seen)
+            non_resting_order_ids.discard(order_id)
         return flags
 
     if event_class in MUTATING_UPDATE_CLASSES:
         if is_visible_resting_event(event):
+            if _would_lock_or_cross_book(active_orders, event):
+                active_orders.pop(order_id, None)
+                pending_aggressive_residuals.pop(order_id, None)
+                non_resting_order_ids.add(order_id)
+                flags.append("marketable_order_not_resting")
+                return flags
             first_seen = active_orders[order_id].first_seen_sort_index if order_id in active_orders else None
-            if event_class == "modify_order" and order_id not in active_orders:
+            if event_class == "modify_order" and order_id not in active_orders and order_id not in non_resting_order_ids:
                 flags.append("modify_for_unseen_order")
             active_orders[order_id] = _make_active_order(event, first_seen_sort_index=first_seen)
+            non_resting_order_ids.discard(order_id)
         elif event_class == "modify_order" and order_id in active_orders and (event["LEAVESQTY"] or 0) <= 0:
             active_orders.pop(order_id, None)
+            non_resting_order_ids.discard(order_id)
+        elif event_class in {"new_order", "session_reload"}:
+            non_resting_order_ids.add(order_id)
         return flags
 
     # Trigger/VFA and other special rows are retained in the panel but do not
@@ -434,7 +539,13 @@ def reconstruct_dataframe(
     sorted_df = sort_events(df)
     if max_rows is not None:
         sorted_df = sorted_df.head(max_rows)
+    events = [
+        normalize_event(raw_row, sort_index=idx, config=config)
+        for idx, raw_row in enumerate(sorted_df.iter_rows(named=True), start=1)
+    ]
     active_orders: dict[str, ActiveOrder] = {}
+    pending_aggressive_residuals: dict[str, tuple[dict[str, Any], tuple[Any, ...] | None]] = {}
+    non_resting_order_ids: set[str] = set()
     normalized_rows: list[dict[str, Any]] = []
     panel_rows: list[dict[str, Any]] = []
     agent_rows: list[dict[str, Any]] = []
@@ -446,13 +557,17 @@ def reconstruct_dataframe(
     partitions_processed = 0
     active_orders_end_total = 0
 
-    for idx, raw_row in enumerate(sorted_df.iter_rows(named=True), start=1):
-        event = normalize_event(raw_row, sort_index=idx, config=config)
+    for event_index, event in enumerate(events):
         event_partition_id = _partition_id(event)
         if current_partition_id is None:
             current_partition_id = event_partition_id
             partitions_processed = 1
         elif event_partition_id != current_partition_id:
+            _flush_pending_aggressive_residuals(
+                active_orders,
+                pending_aggressive_residuals,
+                keep_group=None,
+            )
             if config.snapshot_mode == "end_of_partition" and last_event is not None:
                 active_snapshot_rows.extend(
                     active_order_snapshot_rows(
@@ -472,6 +587,8 @@ def reconstruct_dataframe(
                 )
             active_orders_end_total += len(active_orders)
             active_orders = {}
+            pending_aggressive_residuals = {}
+            non_resting_order_ids = set()
             current_partition_id = event_partition_id
             partitions_processed += 1
         last_event = event
@@ -494,7 +611,21 @@ def reconstruct_dataframe(
         )
         pre_distance = event_distance(event, pre_summary, prefix="pre")
 
-        mutation_flags = _apply_event(active_orders, event)
+        mutation_flags = _apply_event(
+            active_orders,
+            event,
+            pending_aggressive_residuals=pending_aggressive_residuals,
+            non_resting_order_ids=non_resting_order_ids,
+        )
+        next_event = events[event_index + 1] if event_index + 1 < len(events) else None
+        next_group = _fill_group_key(next_event) if next_event is not None else None
+        mutation_flags.extend(
+            _flush_pending_aggressive_residuals(
+                active_orders,
+                pending_aggressive_residuals,
+                keep_group=next_group,
+            )
+        )
 
         post_summary = book_summary(active_orders, prefix="post", top_n=config.top_n)
         post_firm = agent_aggregates(
@@ -565,6 +696,13 @@ def reconstruct_dataframe(
                     snapshot_reason=reason,
                 )
             )
+
+    if last_event is not None:
+        _flush_pending_aggressive_residuals(
+            active_orders,
+            pending_aggressive_residuals,
+            keep_group=None,
+        )
 
     if config.snapshot_mode == "end_of_partition" and last_event is not None:
         active_snapshot_rows.extend(

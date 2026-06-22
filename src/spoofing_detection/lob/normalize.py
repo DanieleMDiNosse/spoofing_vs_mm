@@ -16,6 +16,14 @@ from .enums import (
 )
 
 
+NON_VISIBLE_UNPRICED_ORDER_TYPES = {
+    "market",
+    "stop_market_or_stop_market_on_quote",
+    "stop_limit_or_stop_limit_on_quote",
+    "mid_point_peg",
+}
+
+
 def _is_missing(value: Any) -> bool:
     if value is None:
         return True
@@ -89,6 +97,10 @@ def normalize_event(row: dict[str, Any], *, sort_index: int, config: LOBConfig) 
     leaves_qty = to_float(get_first(row, "LEAVESQTY"))
     last_shares = to_float(get_first(row, "LASTSHARES"))
     last_px = to_float(get_first(row, "LASTTRADEDPX"))
+    trading_capacity_code = normalize_enum_code(
+        get_first(row, "ORDER_TRADINGCAPACITY (*)", "ORDER_TRADINGCAPACITY")
+    )
+    trading_capacity_label = get_first(row, "ORDER_TRADINGCAPACITY (*) (Tooltip)")
 
     firm_id = to_str_or_none(get_first(row, "FIRMID"))
     client_original_id = to_str_or_none(get_first(row, "NMSC_ORIGINALCLIENTIDSHORTCODE"))
@@ -98,7 +110,7 @@ def normalize_event(row: dict[str, Any], *, sort_index: int, config: LOBConfig) 
         flags.append("missing_client_original_id")
     if firm_id is None:
         flags.append("missing_firm_id")
-    if price is None and order_type_label == "market":
+    if price is None and order_type_label in NON_VISIBLE_UNPRICED_ORDER_TYPES:
         flags.append("non_resting_unpriced_event")
     elif price is None and event_class in {"new_order", "session_reload", "modify_order"}:
         flags.append("missing_price_for_potential_resting_event")
@@ -162,7 +174,10 @@ def normalize_event(row: dict[str, Any], *, sort_index: int, config: LOBConfig) 
         "NMSC_ORIGINALNONEXECBROKERSHORTCODE": to_str_or_none(get_first(row, "NMSC_ORIGINALNONEXECBROKERSHORTCODE")),
         "ACCOUNTTYPEINTERNAL (*)": get_first(row, "ACCOUNTTYPEINTERNAL (*)"),
         "LPROLE (*)": get_first(row, "LPROLE (*)"),
-        "ORDER_TRADINGCAPACITY (*)": get_first(row, "ORDER_TRADINGCAPACITY (*)"),
+        "order_trading_capacity_code": trading_capacity_code,
+        "order_trading_capacity_label": trading_capacity_label,
+        "ORDER_TRADINGCAPACITY (*)": trading_capacity_code,
+        "ORDER_TRADINGCAPACITY (*) (Tooltip)": trading_capacity_label,
         "DEAINDICATOR": get_first(row, "DEAINDICATOR"),
         "INVESTMENTALGOINDICATOR": get_first(row, "INVESTMENTALGOINDICATOR"),
         "EXECUTIONALGOINDICATOR": get_first(row, "EXECUTIONALGOINDICATOR"),
@@ -184,6 +199,7 @@ def is_visible_resting_event(event: dict[str, Any]) -> bool:
         return False
     if event["event_order_type_label"] in {
         "stop_market_or_stop_market_on_quote",
+        "stop_limit_or_stop_limit_on_quote",
         "mid_point_peg",
     }:
         return False

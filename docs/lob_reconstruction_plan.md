@@ -95,7 +95,7 @@ The first implementation should not claim exact reconstruction for:
 - FIFO or pro-rata queue position;
 - hidden iceberg reserve or dark-order state;
 - off-book or wholesale states not represented in central visible book events;
-- trade-bust rollback unless trade-bust events are explicitly documented and tested;
+- trade-bust rollback for other datasets; the user has stated that the current data do not contain trade-bust events, so rollback is not part of the current implementation target;
 - full-market context if files contain only selected instruments rather than all instruments;
 - exact opening state if reload validation finds later references to unseen orders.
 
@@ -240,8 +240,8 @@ For every input file and partition:
 | Time in force | `TIMEINFORCE (*)` | `timeinforce` | coded enum | Persistence and validity controls. |
 | Kill reason | `KILLREASON (*)` | `killreason` | coded enum | Cancellation reason. |
 | Order status | `ORDERSTATUS` | likely decoded from `orderqualifiers` | derived and ambiguous | Cross-check only until semantics validated. Do not let it override positive `LEAVESQTY` on fills. |
-| Passive role | `PASSIVEORDER` | likely decoded from `tradequalifier` or `orderqualifiers` | derived and ambiguous | Fill role / aggressor-passive logic after audit. |
-| Aggressive role | `AGGRESSIVEORDER` | likely decoded from `tradequalifier` or `orderqualifiers` | derived and ambiguous | Fill role / marketable order logic after audit. |
+| Passive role | `PASSIVEORDER` | source decoded field | user-confirmed project semantics | Passive liquidity: a limit order that does not cross the spread and is not filled immediately. Use for resting-liquidity interpretation after consistency audit. |
+| Aggressive role | `AGGRESSIVEORDER` | source decoded field | user-confirmed project semantics | Liquidity-consuming order: a market order or limit order that crosses the spread. Use for marketable-order interpretation after consistency audit. |
 
 ### 6.2 Agent and regulatory fields
 
@@ -357,7 +357,7 @@ unknown_enum_flag
 | `11 : GTC_GTD_Reload` | `session_reload` | Seed active state at session start if priced and `LEAVESQTY > 0`. Treat as reloading existing active GTC/GTD orders into the opening active book. | User decision: this event seeds opening active orders; validate no later unseen-order references. |
 | `23 : Move_Dark_to_COB` | `move_dark_to_cob` | Treat as add/update to visible book only if `DARKINDICATOR`/visible fields imply it is now in the central order book. Preserve dark flag. | Dark-to-lit semantics require audit. |
 | Reject events | `reject` | Do not add to active state. Keep event row for audit. | Rejects may appear in `ACKTYPE` rather than `ORDEREVENTTYPE`. |
-| Trade bust / trade cancellation | `trade_bust` | First version should classify and flag, not attempt rollback unless documented. | DOCX says `EXECUTIONID` is reused for trade cancellation, but observed event codes did not expose trade busts. |
+| Trade bust / trade cancellation | `trade_bust` | Not part of the current data per user confirmation. If encountered in future files, classify and flag rather than attempting rollback without documentation. | DOCX says `EXECUTIONID` is reused for trade cancellation, but observed event codes did not expose trade busts. |
 
 ### 7.3 `ORDERSTATUS`, `LEAVESQTY`, `LASTSHARES`, passive/aggressive usage
 
@@ -365,7 +365,7 @@ unknown_enum_flag
 - `DISPLAYEDQTY` is the primary visible-book quantity.
 - `ORDERSTATUS` is a consistency check, not the only source of truth. In observed data, fills can have `LEAVESQTY > 0` while `ORDERSTATUS=N`.
 - `LASTSHARES` and `LASTTRADEDPX` are execution fields and should be non-null for fill events. Missing values should raise issue flags.
-- `PASSIVEORDER` and `AGGRESSIVEORDER` should not be used as definitive role labels until the ETL source bit field is confirmed. The DOCX describes both trade-level and order-level aggressive/passive bits.
+- User-confirmed semantics: `PASSIVEORDER` identifies passive liquidity, i.e. a limit order that does not cross the spread and is not filled immediately. `AGGRESSIVEORDER` identifies a market order or a limit order that crosses the spread and consumes resting liquidity. The implementation should preserve both fields and audit their consistency before using them to change resting-book mutation rules.
 - For market orders with null `ORDERPX`, the event can still be an execution but should not create a resting visible order unless a later market-to-limit transformation event provides a price.
 
 ---
@@ -1243,14 +1243,16 @@ Queue-specific validation later:
 4. **Event inclusion:** use all events: keep all order events in normalized output and emit all order events in the LOB event-state panel; visible depth mutates only when an event has a visible resting-book component.
 5. **Scaling:** use parquet price/quantity values exactly as stored; do not rescale.
 6. **Enum mappings:** use the accepted provisional mappings from observed tooltip values and fail loudly on unknown numeric codes.
+7. **Passive/aggressive semantics:** `PASSIVEORDER` means passive non-crossing limit liquidity; `AGGRESSIVEORDER` means marketable liquidity-taking order, either market or crossing limit.
+8. **Trade busts:** the current data do not contain trade-bust events, so rollback semantics are not an implementation target for this dataset.
 
 ### Still open or requiring validation
 
 1. **Official enum dictionaries:** observed tooltip mappings are sufficient for provisional implementation, but official dictionaries should replace them if available.
-2. **Derived flags:** confirm which native bit fields produced `ORDERSTATUS`, `PASSIVEORDER`, `AGGRESSIVEORDER`, `DEAINDICATOR`, `INVESTMENTALGOINDICATOR`, and `EXECUTIONALGOINDICATOR`.
+2. **Derived flags:** confirm which native bit fields produced `ORDERSTATUS`, `DEAINDICATOR`, `INVESTMENTALGOINDICATOR`, and `EXECUTIONALGOINDICATOR`; `PASSIVEORDER`/`AGGRESSIVEORDER` project semantics are now user-confirmed but still need consistency checks against book state before driving mutation rules.
 3. **ORDERSTATUS on fills:** until confirmed, use `LEAVESQTY` rather than `ORDERSTATUS` as the primary active-state field for fill events.
 4. **Tick-size source:** first implementation should use price-unit and basis-point distances; exact tick distances need an official tick-size source or approved inference rule.
-5. **Trade bust handling:** classify and flag if encountered; do not rollback book state until trade-bust semantics are documented.
+5. **Trade bust handling:** not expected in the current data. If encountered in future inputs, classify and flag; do not rollback book state until trade-bust semantics are documented.
 6. **Session boundaries:** first implementation partitions by `TRADEDATE` plus instrument/market keys; market-phase/session markers should be used later if available.
 
 ---
@@ -1262,4 +1264,4 @@ Do not implement the pipeline until the user explicitly approves implementation.
 1. accepted provisional enum mappings from observed tooltip values;
 2. `LEAVESQTY` as primary post-fill active quantity pending `ORDERSTATUS` audit;
 3. price-unit/basis-point distances for the first version, with tick-distance deferred;
-4. trade-bust rows, if encountered, flagged and non-mutating until documented.
+4. trade-bust rows are not expected in the current data; if encountered in future inputs, flag them and keep them non-mutating until documented.
