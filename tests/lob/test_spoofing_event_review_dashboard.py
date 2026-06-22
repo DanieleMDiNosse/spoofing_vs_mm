@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import polars as pl
+
 from spoofing_detection.lob.models import ActiveOrder
 
 
@@ -85,3 +87,17 @@ def test_queue_rows_include_candidate_and_matched_flags_with_positions():
     assert rows[0]["is_matched_deceptive_cancel_order"] is True
     assert rows[1]["is_review_client"] is False
     assert rows[1]["is_candidate_deceptive_order"] is False
+
+
+def test_dashboard_includes_llm_review_panel(tmp_path):
+    path = tmp_path / "dashboard.html"
+    review_events = pl.DataFrame([{"review_event_id": "S10", "event_ts": "2024", "client_id": "C1", "MSCI": 0.1, "sort_index": 10, "matched_deceptive_cancel_order_ids_window": "A"}])
+    event_log = pl.DataFrame([{"review_event_id": "S10", "sort_index": 10, "event_ts": "2024", "event_class": "fill"}])
+    queue = pl.DataFrame([{"review_event_id": "S10", "snapshot_phase": "execution", "snapshot_sort_index": 10, "side": "bid", "level": 1, "price": 10.0, "level_visible_qty": 100.0, "visible_qty": 100.0, "is_candidate_deceptive_order": True, "is_matched_deceptive_cancel_order": False, "client_queue_dict": "{}"}])
+
+    _review.write_dashboard(path, review_events=review_events, event_log=event_log, queue=queue, llm_reviews={})
+
+    html = path.read_text()
+    assert "LLM surveillance review" in html
+    assert "llmReviews" in html
+    assert "No precomputed LLM review found" in html

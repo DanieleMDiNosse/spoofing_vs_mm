@@ -352,6 +352,16 @@ def _load_parameter_review_events(root: Path, max_events: int | None) -> list[di
     return runs
 
 
+def _load_llm_reviews(output_dir: Path) -> dict[str, str]:
+    root = output_dir / "llm_reviews"
+    reviews: dict[str, str] = {}
+    if not root.exists():
+        return reviews
+    for response_path in root.glob("*/response.md"):
+        reviews[response_path.parent.name] = response_path.read_text()
+    return reviews
+
+
 def write_dashboard(
     path: Path,
     *,
@@ -359,6 +369,7 @@ def write_dashboard(
     event_log: pl.DataFrame,
     queue: pl.DataFrame,
     parameter_review_events: list[dict[str, Any]] | None = None,
+    llm_reviews: dict[str, str] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     html = f"""<!doctype html>
@@ -386,6 +397,7 @@ table {{ border-collapse: collapse; width: 100%; font-size: 0.86rem; }}
 th, td {{ border-bottom: 1px solid #e8edf5; padding: 6px; text-align: left; }}
 th {{ background: #f1f4f9; position: sticky; top: 0; }}
 .badge {{ display: inline-block; padding: 2px 6px; border-radius: 6px; background: #fee2e2; color: #991b1b; font-weight: 600; }}
+#llmReview pre {{ white-space: pre-wrap; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; }}
 </style>
 </head>
 <body>
@@ -422,6 +434,7 @@ th {{ background: #f1f4f9; position: sticky; top: 0; }}
 <div class=\"controls\"><label for=\"parameterSelect\"><b>Choose kappa/lambda</b></label><select id=\"parameterSelect\"></select><label for=\"eventSelect\"><b>Choose candidate event</b></label><select id=\"eventSelect\"></select></div>
 <div class=\"card\" id=\"summary\"></div>
 <div class=\"card\"><div id=\"lob\"></div></div>
+<div class=\"card\"><h2>LLM surveillance review</h2><div id=\"llmReview\"></div></div>
 <div class=\"card\"><h2>Actual events in zoom window</h2><div id=\"eventTable\"></div></div>
 <script>
 const baseReviewEvents = {_json_records(review_events)};
@@ -429,6 +442,7 @@ const parameterRuns = {json.dumps(parameter_review_events or [], default=str)};
 let reviewEvents = parameterRuns.length ? parameterRuns[0].events : baseReviewEvents;
 const eventLog = {_json_records(event_log)};
 const queueRows = {_json_records(queue)};
+const llmReviews = {json.dumps(llm_reviews or {}, default=str)};
 function byEvent(id, rows) {{ return rows.filter(r => r.review_event_id === id); }}
 function label(ev) {{ return `${{ev.review_event_id}} | ${{ev.event_ts}} | client=${{ev.client_id}} | MSCI=${{Number(ev.MSCI).toFixed(4)}} | orders=${{ev.matched_deceptive_cancel_order_ids_window}}`; }}
 function renderOverview() {{
@@ -588,6 +602,15 @@ function renderLOB(ev) {{
       margin:{{l:100,t:125,b:95}}
     }}, {{responsive:true}});
 }}
+function escapeHtml(text) {{ return String(text).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c])); }}
+function renderLLMReview(ev) {{
+  const review = llmReviews[ev.review_event_id];
+  if (review) {{
+    document.getElementById('llmReview').innerHTML = `<pre>${{escapeHtml(review)}}</pre>`;
+  }} else {{
+    document.getElementById('llmReview').innerHTML = `<p>No precomputed LLM review found for ${{ev.review_event_id}}.</p><p>Generate it with <code>scripts/build_spoofing_event_dossier.py</code> and <code>scripts/analyze_spoofing_event_with_llm.py</code>.</p>`;
+  }}
+}}
 function renderEventTable(ev) {{
   const rows = byEvent(ev.review_event_id, eventLog).sort((a,b) => a.sort_index-b.sort_index);
   const html = ['<table><thead><tr><th>sort</th><th>time</th><th>class</th><th>side</th><th>price</th><th>ORDERID</th><th>client</th><th>leaves</th><th>displayed</th><th>last shares</th><th>flags</th></tr></thead><tbody>'];
@@ -598,7 +621,7 @@ function renderEventTable(ev) {{
   html.push('</tbody></table>');
   document.getElementById('eventTable').innerHTML = html.join('');
 }}
-function update(id) {{ const ev = reviewEvents.find(r => r.review_event_id === id); renderSummary(ev); renderLOB(ev); renderEventTable(ev); }}
+function update(id) {{ const ev = reviewEvents.find(r => r.review_event_id === id); renderSummary(ev); renderLOB(ev); renderLLMReview(ev); renderEventTable(ev); }}
 const select = document.getElementById('eventSelect');
 const parameterSelect = document.getElementById('parameterSelect');
 function populateEvents() {{
@@ -672,6 +695,7 @@ def main(argv: list[str] | None = None) -> None:
         event_log=event_log_df,
         queue=queue_df,
         parameter_review_events=parameter_review_events,
+        llm_reviews=_load_llm_reviews(args.output_dir),
     )
     metadata = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
