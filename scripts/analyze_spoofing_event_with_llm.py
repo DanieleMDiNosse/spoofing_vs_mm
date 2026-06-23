@@ -37,7 +37,8 @@ def call_ollama(*, model: str, prompt_text: str, timeout_seconds: int, temperatu
             "model": model,
             "prompt": prompt_text,
             "stream": False,
-            "options": {"temperature": temperature, "num_predict": 4096},
+            "think": False,
+            "options": {"temperature": temperature, "num_predict": 1536},
         }
     ).encode()
     request = urllib.request.Request(
@@ -49,13 +50,15 @@ def call_ollama(*, model: str, prompt_text: str, timeout_seconds: int, temperatu
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             body = json.loads(response.read().decode())
-        return clean_llm_response(str(body.get("response", "")))
+        response_text = str(body.get("response", ""))
+        if response_text.strip():
+            return clean_llm_response(response_text)
     except Exception:
         # Fall back to the CLI when the Ollama HTTP endpoint is unavailable.
         pass
     result = subprocess.run(
         ["ollama", "run", model],
-        input=prompt_text,
+        input="/set parameter num_predict 2048\n" + prompt_text,
         text=True,
         capture_output=True,
         timeout=timeout_seconds,
@@ -63,7 +66,7 @@ def call_ollama(*, model: str, prompt_text: str, timeout_seconds: int, temperatu
     )
     if result.returncode != 0:
         raise RuntimeError(f"ollama failed with code {result.returncode}: {result.stderr}")
-    return clean_llm_response(result.stdout)
+    return clean_llm_response(result.stdout if result.stdout.strip() else result.stderr)
 
 
 def clean_llm_response(text: str) -> str:

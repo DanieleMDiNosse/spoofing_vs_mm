@@ -208,7 +208,7 @@ def render_dossier_markdown(
                 "is_candidate_deceptive_order",
                 "is_matched_deceptive_cancel_order",
             ],
-            limit=200,
+            limit=60,
         )
     )
     lines += ["", "## Kappa/lambda robustness", ""]

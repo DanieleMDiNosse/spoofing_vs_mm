@@ -16,6 +16,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--prompt", type=Path, default=Path("prompts/spoofing_surveillance_analyst.md"))
     parser.add_argument("--model", default="gemma4-hermes:latest")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--timeout-seconds", type=int, default=550)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
@@ -64,6 +65,8 @@ def main(argv: list[str] | None = None) -> None:
             str(output_dir),
             "--model",
             args.model,
+            "--timeout-seconds",
+            str(args.timeout_seconds),
         ]
         print(f"EVENT {event_id}")
         _run(dossier_cmd, dry_run=args.dry_run)
