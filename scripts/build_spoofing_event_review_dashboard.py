@@ -47,6 +47,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--post-window-seconds", type=float, default=5.0, help="Seconds after execution to show")
     parser.add_argument("--max-events", type=int, default=None, help="Optional cap on matched events for smoke runs")
     parser.add_argument("--parameter-grid-root", type=Path, default=None, help="Optional root containing kappa/lambda sensitivity runs")
+    parser.add_argument("--annotations", type=Path, default=None, help="Optional analyst annotation CSV")
+    parser.add_argument("--client-session-alerts", type=Path, default=None, help="Optional client-session alert parquet")
     return parser.parse_args(argv)
 
 
@@ -362,6 +364,29 @@ def _load_llm_reviews(output_dir: Path) -> dict[str, str]:
     return reviews
 
 
+def _load_annotations(path: Path | None) -> pl.DataFrame:
+    if path is None or not path.exists():
+        return pl.DataFrame({"review_event_id": [], "analyst_label": [], "confidence": [], "benign_explanation": [], "notes": [], "reviewer": [], "reviewed_at_utc": []})
+    from spoofing_detection.lob.annotations import validate_annotations
+
+    return validate_annotations(pl.read_csv(path))
+
+
+def _load_optional_parquet(path: Path | None) -> pl.DataFrame:
+    if path is None or not path.exists():
+        return pl.DataFrame()
+    return pl.read_parquet(path)
+
+
+def write_review_artifacts(*, output_dir: Path, event_log: pl.DataFrame, queue: pl.DataFrame) -> dict[str, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    event_log_path = output_dir / "matched_spoofing_event_log.parquet"
+    queue_path = output_dir / "matched_spoofing_lob_queue.parquet"
+    event_log.write_parquet(event_log_path)
+    queue.write_parquet(queue_path)
+    return {"event_log": event_log_path, "queue": queue_path}
+
+
 def write_dashboard(
     path: Path,
     *,
@@ -370,6 +395,8 @@ def write_dashboard(
     queue: pl.DataFrame,
     parameter_review_events: list[dict[str, Any]] | None = None,
     llm_reviews: dict[str, str] | None = None,
+    annotations: pl.DataFrame | None = None,
+    client_session_alerts: pl.DataFrame | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     html = f"""<!doctype html>
@@ -430,10 +457,12 @@ th {{ background: #f1f4f9; position: sticky; top: 0; }}
     </tbody>
   </table>
 </div>
+<div class=\"card\"><h2>Client-session alerts</h2><div id=\"clientSessionAlerts\"></div></div>
 <div class=\"card\"><div id=\"overview\"></div></div>
 <div class=\"controls\"><label for=\"parameterSelect\"><b>Choose kappa/lambda</b></label><select id=\"parameterSelect\"></select><label for=\"eventSelect\"><b>Choose candidate event</b></label><select id=\"eventSelect\"></select></div>
 <div class=\"card\" id=\"summary\"></div>
 <div class=\"card\"><div id=\"lob\"></div></div>
+<div class=\"card\"><h2>Analyst annotation</h2><div id=\"annotation\"></div></div>
 <div class=\"card\"><h2>LLM surveillance review</h2><div id=\"llmReview\"></div></div>
 <div class=\"card\"><h2>Actual events in zoom window</h2><div id=\"eventTable\"></div></div>
 <script>
@@ -443,6 +472,8 @@ let reviewEvents = parameterRuns.length ? parameterRuns[0].events : baseReviewEv
 const eventLog = {_json_records(event_log)};
 const queueRows = {_json_records(queue)};
 const llmReviews = {json.dumps(llm_reviews or {}, default=str)};
+const annotations = {_json_records(annotations if annotations is not None else pl.DataFrame())};
+const clientSessionAlerts = {_json_records(client_session_alerts if client_session_alerts is not None else pl.DataFrame())};
 function byEvent(id, rows) {{ return rows.filter(r => r.review_event_id === id); }}
 function label(ev) {{ return `${{ev.review_event_id}} | ${{ev.event_ts}} | client=${{ev.client_id}} | MSCI=${{Number(ev.MSCI).toFixed(4)}} | orders=${{ev.matched_deceptive_cancel_order_ids_window}}`; }}
 function renderOverview() {{
@@ -451,6 +482,16 @@ function renderOverview() {{
   const text = reviewEvents.map(label);
   Plotly.newPlot('overview', [{{x, y, text, mode:'markers', type:'scattergl', marker:{{color:'#d62728', size:9}}, hovertemplate:'%{{text}}<extra></extra>'}}],
     {{title:'All matched spoofing-like candidate events', xaxis:{{title:'execution time'}}, yaxis:{{title:'MSCI'}}, margin:{{t:45}}}}, {{responsive:true}});
+}}
+function renderClientSessionAlerts() {{
+  const el = document.getElementById('clientSessionAlerts');
+  if (!clientSessionAlerts.length) {{ el.innerHTML = '<p>No client-session alerts loaded.</p>'; return; }}
+  let html = ['<table><thead><tr><th>Client</th><th>Alert score</th><th>Events</th><th>MCPS</th><th>Action</th></tr></thead><tbody>'];
+  for (const row of clientSessionAlerts) {{
+    html.push(`<tr><td>${{escapeHtml(row.client_id)}}</td><td>${{Number(row.alert_score || 0).toFixed(3)}}</td><td>${{row.event_count || ''}}</td><td>${{Number(row.mcps_at_threshold || 0).toFixed(3)}}</td><td>${{escapeHtml(row.recommended_action || '')}}</td></tr>`);
+  }}
+  html.push('</tbody></table>');
+  el.innerHTML = html.join('');
 }}
 function renderSummary(ev) {{
   document.getElementById('summary').innerHTML = `<h2>${{ev.review_event_id}} <span class="badge">matched deceptive-order cancellation</span></h2>
@@ -603,6 +644,19 @@ function renderLOB(ev) {{
     }}, {{responsive:true}});
 }}
 function escapeHtml(text) {{ return String(text).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c])); }}
+function renderAnnotation(ev) {{
+  const row = annotations.find(r => r.review_event_id === ev.review_event_id);
+  const el = document.getElementById('annotation');
+  if (!row) {{ el.innerHTML = '<p>No analyst annotation found for this event.</p>'; return; }}
+  el.innerHTML = `<table>
+    <tr><th>Label</th><td>${{escapeHtml(row.analyst_label)}}</td></tr>
+    <tr><th>Confidence</th><td>${{Number(row.confidence || 0).toFixed(2)}}</td></tr>
+    <tr><th>Benign explanation</th><td>${{escapeHtml(row.benign_explanation || '')}}</td></tr>
+    <tr><th>Reviewer</th><td>${{escapeHtml(row.reviewer || '')}}</td></tr>
+    <tr><th>Reviewed at</th><td>${{escapeHtml(row.reviewed_at_utc || '')}}</td></tr>
+    <tr><th>Notes</th><td>${{escapeHtml(row.notes || '')}}</td></tr>
+  </table>`;
+}}
 function renderLLMReview(ev) {{
   const review = llmReviews[ev.review_event_id];
   if (review) {{
@@ -621,7 +675,7 @@ function renderEventTable(ev) {{
   html.push('</tbody></table>');
   document.getElementById('eventTable').innerHTML = html.join('');
 }}
-function update(id) {{ const ev = reviewEvents.find(r => r.review_event_id === id); renderSummary(ev); renderLOB(ev); renderLLMReview(ev); renderEventTable(ev); }}
+function update(id) {{ const ev = reviewEvents.find(r => r.review_event_id === id); renderSummary(ev); renderLOB(ev); renderAnnotation(ev); renderLLMReview(ev); renderEventTable(ev); }}
 const select = document.getElementById('eventSelect');
 const parameterSelect = document.getElementById('parameterSelect');
 function populateEvents() {{
@@ -642,6 +696,7 @@ parameterSelect.addEventListener('change', e => {{
 }});
 select.addEventListener('change', e => update(e.target.value));
 populateEvents();
+renderClientSessionAlerts();
 renderOverview();
 if (reviewEvents.length) update(reviewEvents[0].review_event_id);
 </script>
@@ -687,8 +742,9 @@ def main(argv: list[str] | None = None) -> None:
     dashboard_path = args.output_dir / "matched_spoofing_event_review_dashboard.html"
     metadata_path = args.output_dir / "metadata.json"
     review_df.write_parquet(review_path)
-    event_log_df.write_parquet(event_log_path)
-    queue_df.write_parquet(queue_path)
+    artifact_paths = write_review_artifacts(output_dir=args.output_dir, event_log=event_log_df, queue=queue_df)
+    event_log_path = artifact_paths["event_log"]
+    queue_path = artifact_paths["queue"]
     write_dashboard(
         dashboard_path,
         review_events=review_df,
@@ -696,6 +752,8 @@ def main(argv: list[str] | None = None) -> None:
         queue=queue_df,
         parameter_review_events=parameter_review_events,
         llm_reviews=_load_llm_reviews(args.output_dir),
+        annotations=_load_annotations(args.annotations),
+        client_session_alerts=_load_optional_parquet(args.client_session_alerts),
     )
     metadata = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
