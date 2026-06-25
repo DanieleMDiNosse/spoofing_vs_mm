@@ -99,6 +99,7 @@ def test_dashboard_embeds_annotations_and_client_session_alerts(tmp_path):
     assert "weak_spoofing_like" in html
     assert "Client-session alerts" in html
     assert "human_review" in html
+    assert "WMSCI" in html
 
 
 def test_write_review_artifacts_saves_event_log(tmp_path):
@@ -107,3 +108,22 @@ def test_write_review_artifacts_saves_event_log(tmp_path):
     outputs = _review.write_review_artifacts(output_dir=tmp_path, event_log=event_log, queue=queue)
     assert outputs["event_log"].exists()
     assert outputs["queue"].exists()
+
+
+def test_parse_args_supports_key_event_queue_snapshots(tmp_path):
+    args = _review.parse_args(
+        [
+            "--input",
+            str(tmp_path / "input.parquet"),
+            "--execution-metrics",
+            str(tmp_path / "metrics.parquet"),
+            "--candidate-deceptive-orders",
+            str(tmp_path / "candidates.parquet"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--queue-snapshot-mode",
+            "key-events",
+        ]
+    )
+
+    assert args.queue_snapshot_mode == "key-events"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 import polars as pl
@@ -164,6 +165,77 @@ def test_compute_client_top_n_exposures_uses_paper_aligned_dwi():
     assert "imbalance" not in c1
     assert "weighted_bid_fraction_topN" not in c1
     assert "P1" not in by_client
+
+
+def test_compute_client_top_n_exposures_can_filter_to_clients_of_interest():
+    active = {
+        "B1": order("B1", "bid", 100.0, 10.0, "C1"),
+        "B2": order("B2", "bid", 99.9, 20.0, "C2"),
+        "A1": order("A1", "ask", 100.2, 5.0, "C1"),
+        "A2": order("A2", "ask", 100.3, 15.0, "C3"),
+    }
+
+    rows = compute_client_top_n_exposures(
+        active,
+        top_n=2,
+        tick_size=0.1,
+        kappa=1.0,
+        lambda_=0.5,
+        partition_id="P",
+        sort_index=10,
+        event_ts=None,
+        client_ids={"C1", "C3"},
+    )
+
+    assert [row["client_id"] for row in rows] == ["C1", "C3"]
+
+
+def test_compute_client_top_n_exposures_filters_numeric_client_ids_as_strings():
+    active = {
+        "A1": order("A1", "ask", 100.2, 5.0, 17295),
+        "A2": order("A2", "ask", 100.3, 15.0, 999),
+    }
+
+    rows = compute_client_top_n_exposures(
+        active,
+        top_n=2,
+        tick_size=0.1,
+        kappa=1.0,
+        lambda_=0.5,
+        partition_id="P",
+        sort_index=10,
+        event_ts=None,
+        client_ids={"17295"},
+    )
+
+    assert [row["client_id"] for row in rows] == ["17295"]
+
+
+def test_compute_exploratory_metrics_can_emit_compact_state_for_selected_clients_only():
+    df = pl.DataFrame(
+        [
+            raw_event(1, 1, "B0", 1, 100.0, 100, 100, "C2"),
+            raw_event(2, 1, "BD", 1, 99.9, 50, 50, "C1"),
+            raw_event(3, 1, "A1", 2, 100.2, 5, 5, "C1"),
+            raw_event(4, 1, "A0", 2, 100.3, 100, 100, "C2"),
+            raw_event(5, 3, "A1", 2, 100.2, 0, 0, "C1", last_shares=5),
+        ]
+    )
+
+    result = compute_exploratory_metrics(
+        df,
+        top_n=2,
+        tick_size=0.1,
+        kappa=1.0,
+        lambda_=0.5,
+        window_seconds=1.0,
+        include_level_columns=False,
+        state_client_ids={"C1"},
+    )
+
+    assert set(result.state_time_series["client_id"].to_list()) == {"C1"}
+    assert "bid_level_1_price" not in result.state_time_series.columns
+    assert result.execution_metrics.height == 1
 
 
 def test_choose_event_timestamp_prefers_trade_time_then_book_fields():
@@ -332,6 +404,11 @@ def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
     assert row["matched_deceptive_cancel_visible_qty_window"] == pytest.approx(50.0)
     assert row["matched_deceptive_cancel_order_ids_window"] == "BD"
     assert row["matched_deceptive_cancel_fraction_window"] == pytest.approx(1.0)
+    assert row["matched_deceptive_cancel_min_delay_seconds"] == pytest.approx(0.5)
+    assert row["weighted_net_withdrawal_qty_window"] == pytest.approx(50.0 * math.exp(-0.5 / 10.0))
+    assert row["withdrawal_to_fill_ratio"] == pytest.approx(50.0 / 5.0)
+    assert row["weighted_withdrawal_to_fill_ratio"] == pytest.approx(50.0 * math.exp(-0.5 / 10.0) / 5.0)
+    assert row["WMSCI_event"] > 0
     assert row["smallness_fraction_market_level"] == pytest.approx(1.0)
     assert row["DWI_pre_window"] is not None
     assert row["MSCI"] is not None

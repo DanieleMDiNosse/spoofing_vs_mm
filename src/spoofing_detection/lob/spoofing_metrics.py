@@ -163,6 +163,7 @@ def compute_client_top_n_exposures(
     sort_index: int,
     event_ts: datetime | None,
     include_level_columns: bool = True,
+    client_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     if top_n <= 0:
         raise ValueError("top_n must be positive")
@@ -190,9 +191,11 @@ def compute_client_top_n_exposures(
     client_level_qty: dict[tuple[str, str, int], float] = defaultdict(float)
     active_client_ids: set[str] = set()
     for order in active_orders.values():
-        client_id = order.client_original_id
+        client_id = str(order.client_original_id) if order.client_original_id is not None else None
         qty = _visible_qty(order)
         if client_id is None or qty <= 0 or order.side not in {"bid", "ask"}:
+            continue
+        if client_ids is not None and client_id not in client_ids:
             continue
         rank = price_to_rank[order.side].get(float(order.price))
         if rank is None:
@@ -548,6 +551,7 @@ def _stream_metric_inputs(
     max_rows: int | None = None,
     include_level_columns: bool = True,
     max_deceptive_order_age_seconds: float = 600.0,
+    state_client_ids: set[str] | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     config = LOBConfig(top_n=max(top_n, 1), snapshot_mode="none")
     sorted_events = sort_events(raw_events)
@@ -640,6 +644,7 @@ def _stream_metric_inputs(
                 sort_index=event["sort_index"],
                 event_ts=event_ts,
                 include_level_columns=include_level_columns,
+                client_ids=state_client_ids,
             )
         )
 
@@ -660,6 +665,7 @@ def compute_client_metric_time_series(
     lambda_: float = 1.0,
     max_rows: int | None = None,
     include_level_columns: bool = True,
+    state_client_ids: set[str] | None = None,
 ) -> pl.DataFrame:
     state_df, _, _, _, _ = _stream_metric_inputs(
         raw_events,
@@ -669,6 +675,7 @@ def compute_client_metric_time_series(
         lambda_=lambda_,
         max_rows=max_rows,
         include_level_columns=include_level_columns,
+        state_client_ids=state_client_ids,
     )
     return state_df
 
@@ -730,6 +737,22 @@ def _finite_product_msci(sci: float | None, c_opposite: float | None, c_same: fl
     if not all(math.isfinite(value) for value in values):
         return None
     return values[0] * values[1] * max(values[1] - values[2], 0.0)
+
+
+def _finite_wmsci(
+    *,
+    candidate_qty: float,
+    weighted_withdrawal_qty: float,
+    fill_qty: float,
+    matched_fraction: float | None,
+) -> float | None:
+    if fill_qty <= 0 or candidate_qty <= 0 or weighted_withdrawal_qty <= 0:
+        return 0.0
+    values = [candidate_qty, weighted_withdrawal_qty, fill_qty]
+    if not all(math.isfinite(value) for value in values):
+        return None
+    fraction = max(float(matched_fraction or 0.0), 0.0)
+    return math.log1p(candidate_qty / fill_qty) * math.log1p(weighted_withdrawal_qty / fill_qty) * fraction
 
 
 def attach_sci_window_metrics(
@@ -801,6 +824,7 @@ def _attach_direct_cancellation_window(
     cancellations: pl.DataFrame,
     *,
     window_seconds: float,
+    withdrawal_decay_seconds: float = 10.0,
 ) -> pl.DataFrame:
     if executions.is_empty():
         return executions
@@ -833,6 +857,20 @@ def _attach_direct_cancellation_window(
         matched_order_ids = ";".join(str(cancel["ORDERID"]) for cancel in matched)
         matched_qty = sum(float(cancel["visible_qty_pre_cancel"] or 0.0) for cancel in matched)
         candidate_qty = float(row.get("candidate_deceptive_visible_qty_pre") or 0.0)
+        fill_qty = float(row.get("fill_qty") or 0.0)
+        matched_fraction = matched_qty / candidate_qty if candidate_qty > 0 else None
+        matched_delays: list[float] = []
+        weighted_withdrawal_qty = 0.0
+        if event_ts is not None:
+            for cancel in matched:
+                cancel_ts = _parse_ts(cancel.get("event_ts"))
+                if cancel_ts is None:
+                    continue
+                delay = max((cancel_ts - event_ts).total_seconds(), 0.0)
+                matched_delays.append(delay)
+                weighted_withdrawal_qty += float(cancel["visible_qty_pre_cancel"] or 0.0) * math.exp(
+                    -delay / withdrawal_decay_seconds
+                )
         rows.append(
             {
                 **row,
@@ -844,7 +882,18 @@ def _attach_direct_cancellation_window(
                 "matched_deceptive_cancel_visible_qty_window": matched_qty,
                 "matched_deceptive_cancel_order_ids_window": matched_order_ids,
                 "has_matched_deceptive_cancel_window": bool(matched),
-                "matched_deceptive_cancel_fraction_window": matched_qty / candidate_qty if candidate_qty > 0 else None,
+                "matched_deceptive_cancel_fraction_window": matched_fraction,
+                "matched_deceptive_cancel_min_delay_seconds": min(matched_delays) if matched_delays else None,
+                "matched_deceptive_cancel_max_delay_seconds": max(matched_delays) if matched_delays else None,
+                "weighted_net_withdrawal_qty_window": weighted_withdrawal_qty,
+                "withdrawal_to_fill_ratio": matched_qty / fill_qty if fill_qty > 0 else None,
+                "weighted_withdrawal_to_fill_ratio": weighted_withdrawal_qty / fill_qty if fill_qty > 0 else None,
+                "WMSCI_event": _finite_wmsci(
+                    candidate_qty=candidate_qty,
+                    weighted_withdrawal_qty=weighted_withdrawal_qty,
+                    fill_qty=fill_qty,
+                    matched_fraction=matched_fraction,
+                ),
             }
         )
     return pl.DataFrame(rows, infer_schema_length=None)
@@ -930,6 +979,7 @@ def compute_exploratory_metrics(
     max_rows: int | None = None,
     include_level_columns: bool = True,
     max_deceptive_order_age_seconds: float = 600.0,
+    state_client_ids: set[str] | None = None,
 ) -> ExploratoryMetricsResult:
     state_df, execution_df, candidate_df, cancel_df, rejected_df = _stream_metric_inputs(
         raw_events,
@@ -940,6 +990,7 @@ def compute_exploratory_metrics(
         max_rows=max_rows,
         include_level_columns=include_level_columns,
         max_deceptive_order_age_seconds=max_deceptive_order_age_seconds,
+        state_client_ids=state_client_ids,
     )
     execution_df = attach_sci_window_metrics(
         execution_df,

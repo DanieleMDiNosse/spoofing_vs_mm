@@ -616,6 +616,126 @@ collapse occurs on the side opposite to the execution, and the opposite-side col
 collapse. This construction preserves the interpretability of the original SCI while reducing false positives generated
 by ordinary two-sided quote updates.
 
+The MSCI is intentionally conservative because it requires a visible collapse of the whole distance-weighted profile.
+This can miss episodes in which the suspicious evidence is not a large change in aggregate DWI, but a large same-client
+opposite-side withdrawal following a small execution. To capture this second mechanism, define the set
+$\mathcal{C}_{e,n}^{i}$ of same-client, opposite-side candidate orders present before execution $e$ and cancelled in
+$(t_e,t_e+\Delta\tau]$. For each cancelled order $o\in\mathcal{C}_{e,n}^{i}$, let $q_o$ be its visible quantity
+immediately before cancellation and let $\delta_o=t_o-t_e$ be the cancellation delay. We use an exponentially decayed
+withdrawal quantity
+\begin{equation}
+    W^{i}_{e,n}
+    =
+    \sum_{o\in\mathcal{C}_{e,n}^{i}}
+    q_o\exp\left(-\frac{\delta_o}{\tau_w}\right),
+    \label{eq:weighted_withdrawal}
+\end{equation}
+where $\tau_w$ controls how rapidly post-execution cancellations are discounted. Let $Q_e$ be the executed quantity and
+let $Q^{i,\bar{s}_e}_{e,n}$ be the pre-execution visible quantity of the candidate deceptive profile. The event-level
+\textit{Withdrawal Multilevel Spoofing Conditionality Index} is
+\begin{equation}
+    \operatorname{WMSCI}^{i}_{e,n}
+    =
+    \log\left(1+\frac{Q^{i,\bar{s}_e}_{e,n}}{Q_e+\varepsilon}\right)
+    \log\left(1+\frac{W^{i}_{e,n}}{Q_e+\varepsilon}\right)
+    \frac{\sum_{o\in\mathcal{C}_{e,n}^{i}}q_o}{Q^{i,\bar{s}_e}_{e,n}+\varepsilon}.
+    \label{eq:wmsci}
+\end{equation}
+The first term measures the size of the pre-execution opposite-side posture relative to the execution, the second term
+measures the speed-weighted withdrawal relative to the execution, and the last term measures how much of the candidate
+profile is actually removed. Thus WMSCI complements MSCI: MSCI detects abrupt DWI collapse, while WMSCI detects small
+executions followed by large same-client opposite-side cancellations even when the aggregate DWI statistic remains close
+to zero.
+
+Both indices are event-level, client-conditioned quantities. The superscript $i$ means that the book footprint is
+reconstructed for client $i$, but $\operatorname{MSCI}^{i}_{e,n}$ and $\operatorname{WMSCI}^{i}_{e,n}$ are not yet
+client-session scores: they describe what happened around one execution $e$. Intuitively, MSCI asks whether the client's
+whole top-$n$ profile moved in a spoofing-like way after the execution. WMSCI asks a narrower order-level question:
+after a small fill, did the same client quickly remove a large amount of the opposite-side candidate profile?
+
+For example, suppose client $i$ executes a buy order of $Q_e=10$ shares while displaying $1{,}000$ shares on the ask side
+within the top $n$ levels. If the ask-heavy profile disappears and the bid-side profile is largely unchanged, then
+$C^{i,\bar{s}_e}_{e,n}$ is large, $C^{i,s_e}_{e,n}$ is small, and MSCI is high because the distance-weighted profile
+itself collapses in the suspicious direction. If instead the aggregate DWI changes little, perhaps because the cancelled
+orders are at levels that have limited kernel weight or because other same-client liquidity offsets the imbalance, MSCI
+may be close to zero. WMSCI can still be high if, after the 10-share buy, the same client cancels 900 of the 1,000
+opposite-side shares quickly. The evidentiary object is then not a large aggregate imbalance jump, but the size and speed
+of the matched withdrawal relative to the small execution.
+
+\begin{figure}[htbp]
+    \centering
+    \resizebox{0.88\textwidth}{!}{%
+    \begin{tikzpicture}[
+        x=1cm,
+        y=1cm,
+        font=\footnotesize,
+        panel/.style={draw=gray!45, rounded corners=4pt, fill=gray!3},
+        axis/.style={->, thick},
+        pre/.style={fill=orange!70!black, draw=orange!70!black},
+        post/.style={fill=orange!25, draw=orange!80!black},
+        bidbar/.style={fill=green!55!black, draw=green!55!black},
+        cancel/.style={-{Latex[length=2.4mm]}, very thick, red!75!black},
+        callout/.style={draw=gray!45, rounded corners=2pt, fill=white, align=left, text width=5.5cm, inner sep=4pt},
+        formula/.style={draw=gray!45, rounded corners=2pt, fill=white, align=center, text width=4.0cm, inner sep=4pt}
+    ]
+        \draw[panel] (-0.35,3.95) rectangle (12.35,8.95);
+        \draw[panel] (-0.35,-1.20) rectangle (12.35,3.45);
+
+        \node[font=\bfseries\large, anchor=west] at (0.10,8.58)
+        {MSCI: aggregate profile collapse};
+        \node[font=\bfseries\large, anchor=west] at (0.10,3.08)
+        {WMSCI: matched withdrawal after a small fill};
+
+        % Left panel: DWI-style before/after profile collapse.
+        \draw[axis] (0.70,4.55) -- (0.70,7.35) node[above, align=center] {weighted\\liquidity};
+        \draw[axis] (0.70,4.55) -- (6.75,4.55);
+
+        \draw[bidbar] (1.25,4.55) rectangle (2.00,5.40);
+        \draw[pre] (3.25,4.55) rectangle (4.00,7.05);
+        \draw[post] (5.45,4.55) rectangle (6.20,4.95);
+        \draw[cancel] (4.10,6.75) -- (5.35,5.05);
+
+        \node[align=center, text width=1.45cm] at (1.62,4.05) {same side\\after fill};
+        \node[align=center, text width=1.55cm] at (3.62,4.05) {opposite side\\before};
+        \node[align=center, text width=1.55cm] at (5.82,4.05) {opposite side\\after};
+        \node[callout] at (9.10,6.85)
+        {High MSCI means the client-conditioned top-$n$ profile visibly collapses on the opposite side of the execution.};
+        \node[formula] at (9.10,5.15)
+        {MSCI conditions:\\
+        $\operatorname{SCI}$ high\\
+        $C^{i,\bar{s}_e}_{e,n}>C^{i,s_e}_{e,n}$\\
+        $\Rightarrow$ high score};
+
+        % Right panel: small fill followed by large same-client cancellation.
+        \draw[axis] (0.70,-0.25) -- (6.15,-0.25);
+        \node[align=center, anchor=west] at (6.35,-0.25) {event time};
+        \foreach \x/\lab in {1.45/before,3.45/fill,5.45/cancel} {
+            \draw[gray!55, dashed] (\x,-0.40) -- (\x,2.15);
+            \node[align=center] at (\x,-0.72) {\lab};
+        }
+
+        \draw[pre] (1.10,-0.05) rectangle (1.80,1.95);
+        \node[align=center, anchor=south] at (1.45,2.10) {$Q^{i,\bar{s}_e}_{e,n}=1{,}000$};
+        \draw[bidbar] (3.20,-0.05) rectangle (3.70,0.18);
+        \node[align=center, anchor=south] at (3.45,0.38) {small fill\\$Q_e=10$};
+        \draw[post] (5.10,-0.05) rectangle (5.80,0.18);
+        \node[align=center, anchor=south] at (5.45,0.38) {900 shares\\withdrawn};
+        \draw[cancel] (1.85,1.75) .. controls (3.00,2.75) and (4.35,2.75) .. (5.05,0.35);
+
+        \node[callout] at (9.10,1.80)
+        {High WMSCI means the same client withdraws a large opposite-side candidate profile shortly after a small fill.};
+        \node[formula] at (9.10,0.20)
+        {DWI collapse may be muted\\
+        matched withdrawal evidence remains strong};
+    \end{tikzpicture}%
+    }
+    \caption{Different evidentiary roles of MSCI and WMSCI. MSCI is high when the client-conditioned top-$n$ profile
+    exhibits a large opposite-side collapse after one execution. WMSCI is high when a small execution is followed by a
+    large, fast, same-client cancellation of the opposite-side candidate orders, even if the aggregate DWI movement is
+    small. Both are event-level scores; client-session risk is obtained only after aggregating such events.}
+    \label{fig:msci_wmsci_intuition}
+\end{figure}
+
 \subsubsection{Multilevel Conditional Probability Score}
 \label{subsec:mcps}
 
@@ -634,6 +754,9 @@ For a fixed depth $n$, we define the \textit{Multilevel Conditional Probability 
 where $\gamma_n$ is an empirically calibrated threshold for the selected book depth. This is the direct multilevel
 analogue of the original CPS: it counts the fraction of executions after which the agent exhibits a sufficiently large
 conditional, opposite-side collapse of its top-$n$ liquidity profile.
+An analogous session statistic can be computed by replacing $\operatorname{MSCI}^{i}_{e,n}$ with
+$\operatorname{WMSCI}^{i}_{e,n}$ in \Cref{eq:mcps}; in the implementation we report both event scores because they
+flag different microstructural mechanisms.
 
 \begin{figure}[htbp]
     \centering
@@ -716,10 +839,18 @@ liquidity after the execution of the bona fide order. The operational procedure 
     \item compute $L^{i,b}_{n}(t_e^{-})$, $L^{i,a}_{n}(t_e^{-})$, and $\operatorname{DWI}^{i}_{n}(t_e^{-})$;
     \item update the book through the interval $[t_e,t_e+\Delta\tau]$ using executions, cancellations, and amendments;
     \item compute the corresponding post-event quantities at $t_e^{+}$;
-    \item evaluate $\operatorname{MSCI}^{i}_{e,n}$ and aggregate it through $\operatorname{MCPS}^{i}_{n}$.
+    \item evaluate $\operatorname{MSCI}^{i}_{e,n}$ and $\operatorname{WMSCI}^{i}_{e,n}$, and aggregate repeated
+    behavior through the corresponding client-session scores.
 \end{enumerate}
 This order-level reconstruction prevents ordinary repricing of the book from being mechanically interpreted as
 cancellation of deceptive liquidity, thereby reducing false positives for legitimate market makers.
+
+As a diagnostic case, widening the post-execution cancellation window from one to thirty seconds on the Risanamento data
+for 10 September 2024 recovers fourteen same-client opposite-side cancellation events, mostly for client 17295. Their
+MSCI values are zero because the distance-weighted profile does not produce a large net DWI collapse, but their WMSCI
+values are positive: the largest event has $\operatorname{WMSCI}=14.30$, an executed quantity of 67 shares, and a
+subsequent opposite-side withdrawal roughly 2704 times the execution size after about 23 seconds. This example motivates
+reporting WMSCI alongside MSCI rather than treating either score as a complete detector in isolation.
 
 
 % We propose two agent-specific metrics based on the

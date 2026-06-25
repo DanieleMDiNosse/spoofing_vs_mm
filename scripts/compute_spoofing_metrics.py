@@ -16,6 +16,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from spoofing_detection.lob.client_identity_audit import audit_missing_client_trading_capacity
+from spoofing_detection.lob.normalize import to_str_or_none
 from spoofing_detection.lob.spoofing_metrics import (
     compute_exploratory_metrics,
     compute_mcps_scores,
@@ -54,7 +55,52 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--gamma-grid", default="0.25,0.5,0.75,1.0", help="Comma-separated MSCI thresholds")
     parser.add_argument("--tick-size", type=float, default=None, help="Optional explicit tick size")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional raw-row cap for smoke runs")
+    parser.add_argument(
+        "--state-client-mode",
+        choices=("all", "passive-fill-clients"),
+        default="all",
+        help=(
+            "Reduce client_metric_time_series memory by emitting DWI state rows only for clients that can enter "
+            "passive fill surveillance events. Use 'all' to preserve the full legacy state table."
+        ),
+    )
+    parser.add_argument(
+        "--compact-state",
+        action="store_true",
+        help="Omit per-level diagnostic columns from client_metric_time_series while keeping DWI/L_bid/L_ask metrics.",
+    )
     return parser.parse_args(argv)
+
+
+def _infer_state_client_ids(raw_events: pl.DataFrame, *, mode: str) -> set[str] | None:
+    if mode == "all":
+        return None
+    if mode != "passive-fill-clients":
+        raise ValueError(f"unknown state client mode: {mode}")
+
+    required = {
+        "ORDEREVENTTYPE (*)",
+        "PASSIVEORDER",
+        "AGGRESSIVEORDER",
+        "ORDERTYPE (*)",
+        "NMSC_ORIGINALCLIENTIDSHORTCODE",
+    }
+    missing = sorted(required - set(raw_events.columns))
+    if missing:
+        raise ValueError(f"cannot infer passive-fill clients; missing columns: {', '.join(missing)}")
+
+    client_rows = raw_events.filter(
+        (pl.col("ORDEREVENTTYPE (*)") == 3)
+        & (pl.col("PASSIVEORDER").cast(pl.Utf8).str.to_uppercase() == "Y")
+        & (pl.col("AGGRESSIVEORDER").cast(pl.Utf8).fill_null("N").str.to_uppercase() != "Y")
+        & pl.col("ORDERTYPE (*)").is_in([2, 5])
+        & pl.col("NMSC_ORIGINALCLIENTIDSHORTCODE").is_not_null()
+    )
+    return {
+        client_id
+        for value in client_rows.get_column("NMSC_ORIGINALCLIENTIDSHORTCODE").unique().to_list()
+        if (client_id := to_str_or_none(value)) is not None
+    }
 
 
 def _write_parquet(df: pl.DataFrame, path: Path) -> None:
@@ -265,6 +311,7 @@ def main(argv: list[str] | None = None) -> None:
         tick_size = infer_tick_size_from_best_quotes(pl.read_parquet(args.quote_panel))
 
     client_audit = audit_missing_client_trading_capacity(raw_events_for_compute)
+    state_client_ids = _infer_state_client_ids(raw_events_for_compute, mode=args.state_client_mode)
     result = compute_exploratory_metrics(
         raw_events_for_compute,
         top_n=args.top_n,
@@ -274,6 +321,8 @@ def main(argv: list[str] | None = None) -> None:
         epsilon=args.epsilon,
         window_seconds=args.window_seconds,
         max_deceptive_order_age_seconds=args.max_deceptive_order_age_seconds,
+        include_level_columns=not args.compact_state,
+        state_client_ids=state_client_ids,
     )
     mcps_scores = compute_mcps_scores(result.execution_metrics, gamma_grid=gamma_grid)
 
@@ -312,6 +361,9 @@ def main(argv: list[str] | None = None) -> None:
         "market_orders_included": False,
         "event_selection": "matched_deceptive_order_cancellations_only",
         "max_rows": args.max_rows,
+        "state_client_mode": args.state_client_mode,
+        "state_client_count": len(state_client_ids) if state_client_ids is not None else None,
+        "compact_state": args.compact_state,
         "client_identity_audit": client_audit,
         "row_counts": {
             "input_rows_for_compute": raw_events_for_compute.height,

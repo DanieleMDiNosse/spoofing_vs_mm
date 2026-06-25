@@ -46,6 +46,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pre-window-seconds", type=float, default=30.0, help="Seconds before execution to show")
     parser.add_argument("--post-window-seconds", type=float, default=5.0, help="Seconds after execution to show")
     parser.add_argument("--max-events", type=int, default=None, help="Optional cap on matched events for smoke runs")
+    parser.add_argument(
+        "--queue-snapshot-mode",
+        choices=("all", "key-events"),
+        default="all",
+        help="Use 'key-events' to write queue snapshots only for nearest pre/execution/post events, reducing dashboard memory.",
+    )
     parser.add_argument("--parameter-grid-root", type=Path, default=None, help="Optional root containing kappa/lambda sensitivity runs")
     parser.add_argument("--annotations", type=Path, default=None, help="Optional analyst annotation CSV")
     parser.add_argument("--client-session-alerts", type=Path, default=None, help="Optional client-session alert parquet")
@@ -221,6 +227,7 @@ def reconstruct_review_windows(
     top_n: int,
     pre_window_seconds: float,
     post_window_seconds: float,
+    queue_snapshot_mode: str = "all",
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     config = LOBConfig(top_n=max(top_n, 1), snapshot_mode="none")
     sorted_events = sort_events(raw_events)
@@ -237,8 +244,24 @@ def reconstruct_review_windows(
                 "review": row,
                 "start": row["event_ts_parsed"] - timedelta(seconds=pre_window_seconds),
                 "end": row["event_ts_parsed"] + timedelta(seconds=post_window_seconds),
+                "queue_sort_indexes": set(),
             }
         )
+
+    if queue_snapshot_mode not in {"all", "key-events"}:
+        raise ValueError(f"unknown queue snapshot mode: {queue_snapshot_mode}")
+    if queue_snapshot_mode == "key-events":
+        event_times = [(int(event["sort_index"]), choose_event_timestamp(event)) for event in events]
+        for window in windows:
+            review_sort_index = int(window["review"]["sort_index"])
+            pre = [idx for idx, ts in event_times if ts is not None and idx < review_sort_index and window["start"] <= ts]
+            post = [idx for idx, ts in event_times if ts is not None and idx > review_sort_index and ts <= window["end"]]
+            selected = {review_sort_index}
+            if pre:
+                selected.add(max(pre))
+            if post:
+                selected.add(min(post))
+            window["queue_sort_indexes"] = selected
 
     active_orders: dict[str, ActiveOrder] = {}
     pending_aggressive_residuals: dict[str, tuple[dict[str, Any], tuple[Any, ...] | None]] = {}
@@ -281,21 +304,22 @@ def reconstruct_review_windows(
                         phase = "pre"
                     else:
                         phase = "post"
-                    queue_rows.extend(
-                        _queue_rows_for_snapshot(
-                            review_event_id=review["review_event_id"],
-                            review_client_id=review["client_id"],
-                            execution_sort_index=int(review["sort_index"]),
-                            execution_ts=review["event_ts_parsed"],
-                            snapshot_event=event,
-                            snapshot_ts=event_ts,
-                            snapshot_phase=phase,
-                            active_orders=active_orders,
-                            candidate_order_ids=review["candidate_order_ids"],
-                            matched_order_ids=review["matched_order_ids"],
-                            top_n=top_n,
+                    if queue_snapshot_mode == "all" or int(event["sort_index"]) in window["queue_sort_indexes"]:
+                        queue_rows.extend(
+                            _queue_rows_for_snapshot(
+                                review_event_id=review["review_event_id"],
+                                review_client_id=review["client_id"],
+                                execution_sort_index=int(review["sort_index"]),
+                                execution_ts=review["event_ts_parsed"],
+                                snapshot_event=event,
+                                snapshot_ts=event_ts,
+                                snapshot_phase=phase,
+                                active_orders=active_orders,
+                                candidate_order_ids=review["candidate_order_ids"],
+                                matched_order_ids=review["matched_order_ids"],
+                                top_n=top_n,
+                            )
                         )
-                    )
 
         if int(event["sort_index"]) in by_sort_index:
             review = by_sort_index[int(event["sort_index"])]
@@ -315,6 +339,12 @@ def reconstruct_review_windows(
                     "candidate_deceptive_visible_qty_pre": review.get("candidate_deceptive_visible_qty_pre"),
                     "matched_deceptive_cancel_visible_qty_window": review.get("matched_deceptive_cancel_visible_qty_window"),
                     "matched_deceptive_cancel_fraction_window": review.get("matched_deceptive_cancel_fraction_window"),
+                    "matched_deceptive_cancel_min_delay_seconds": review.get("matched_deceptive_cancel_min_delay_seconds"),
+                    "matched_deceptive_cancel_max_delay_seconds": review.get("matched_deceptive_cancel_max_delay_seconds"),
+                    "weighted_net_withdrawal_qty_window": review.get("weighted_net_withdrawal_qty_window"),
+                    "withdrawal_to_fill_ratio": review.get("withdrawal_to_fill_ratio"),
+                    "weighted_withdrawal_to_fill_ratio": review.get("weighted_withdrawal_to_fill_ratio"),
+                    "WMSCI_event": review.get("WMSCI_event"),
                     "candidate_deceptive_order_ids_pre": review.get("candidate_deceptive_order_ids_pre"),
                     "matched_deceptive_cancel_order_ids_window": review.get("matched_deceptive_cancel_order_ids_window"),
                 }
@@ -475,13 +505,15 @@ const llmReviews = {json.dumps(llm_reviews or {}, default=str)};
 const annotations = {_json_records(annotations if annotations is not None else pl.DataFrame())};
 const clientSessionAlerts = {_json_records(client_session_alerts if client_session_alerts is not None else pl.DataFrame())};
 function byEvent(id, rows) {{ return rows.filter(r => r.review_event_id === id); }}
-function label(ev) {{ return `${{ev.review_event_id}} | ${{ev.event_ts}} | client=${{ev.client_id}} | MSCI=${{Number(ev.MSCI).toFixed(4)}} | orders=${{ev.matched_deceptive_cancel_order_ids_window}}`; }}
+function finiteNumber(value) {{ const number = Number(value); return Number.isFinite(number) ? number : null; }}
+function scoreValue(ev) {{ const w = finiteNumber(ev.WMSCI_event); return w !== null ? w : finiteNumber(ev.MSCI); }}
+function label(ev) {{ return `${{ev.review_event_id}} | ${{ev.event_ts}} | client=${{ev.client_id}} | WMSCI=${{Number(ev.WMSCI_event || 0).toFixed(4)}} | MSCI=${{Number(ev.MSCI || 0).toFixed(4)}} | orders=${{ev.matched_deceptive_cancel_order_ids_window}}`; }}
 function renderOverview() {{
   const x = reviewEvents.map(r => r.event_ts);
-  const y = reviewEvents.map(r => r.MSCI);
+  const y = reviewEvents.map(scoreValue);
   const text = reviewEvents.map(label);
   Plotly.newPlot('overview', [{{x, y, text, mode:'markers', type:'scattergl', marker:{{color:'#d62728', size:9}}, hovertemplate:'%{{text}}<extra></extra>'}}],
-    {{title:'All matched spoofing-like candidate events', xaxis:{{title:'execution time'}}, yaxis:{{title:'MSCI'}}, margin:{{t:45}}}}, {{responsive:true}});
+    {{title:'All matched spoofing-like candidate events', xaxis:{{title:'execution time'}}, yaxis:{{title:'WMSCI event score'}}, margin:{{t:45}}}}, {{responsive:true}});
 }}
 function renderClientSessionAlerts() {{
   const el = document.getElementById('clientSessionAlerts');
@@ -496,8 +528,9 @@ function renderClientSessionAlerts() {{
 function renderSummary(ev) {{
   document.getElementById('summary').innerHTML = `<h2>${{ev.review_event_id}} <span class="badge">matched deceptive-order cancellation</span></h2>
   <b>time:</b> ${{ev.event_ts}} &nbsp; <b>client:</b> ${{ev.client_id}} &nbsp; <b>execution side:</b> ${{ev.execution_side}} &nbsp; <b>deceptive side:</b> ${{ev.deceptive_side}}<br>
-  <b>fill qty:</b> ${{ev.fill_qty}} &nbsp; <b>MSCI:</b> ${{Number(ev.MSCI).toFixed(6)}} &nbsp; <b>SCI:</b> ${{Number(ev.SCI).toFixed(6)}}<br>
+  <b>fill qty:</b> ${{ev.fill_qty}} &nbsp; <b>WMSCI:</b> ${{Number(ev.WMSCI_event || 0).toFixed(6)}} &nbsp; <b>MSCI:</b> ${{Number(ev.MSCI || 0).toFixed(6)}} &nbsp; <b>SCI:</b> ${{Number(ev.SCI || 0).toFixed(6)}}<br>
   <b>candidate visible qty pre:</b> ${{ev.candidate_deceptive_visible_qty_pre}} &nbsp; <b>matched cancel qty:</b> ${{ev.matched_deceptive_cancel_visible_qty_window}} &nbsp; <b>matched fraction:</b> ${{ev.matched_deceptive_cancel_fraction_window}}<br>
+  <b>weighted withdrawal:</b> ${{ev.weighted_net_withdrawal_qty_window}} &nbsp; <b>withdrawal/fill:</b> ${{ev.withdrawal_to_fill_ratio}} &nbsp; <b>cancel delay:</b> ${{ev.matched_deceptive_cancel_min_delay_seconds}}–${{ev.matched_deceptive_cancel_max_delay_seconds}}s<br>
   <b>candidate order ids:</b> ${{ev.candidate_deceptive_order_ids_pre}}<br>
   <b>matched cancelled ids:</b> ${{ev.matched_deceptive_cancel_order_ids_window}}`;
 }}
@@ -540,7 +573,7 @@ function renderLOB(ev) {{
 
   function formatPrice(value) {{
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'NA';
-    return Number(value).toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+    return Number(value).toFixed(4).replace(/0+$/, '').replace(/\\.$/, '');
   }}
 
   function stageLabel(phase) {{
@@ -734,6 +767,7 @@ def main(argv: list[str] | None = None) -> None:
         top_n=args.top_n,
         pre_window_seconds=args.pre_window_seconds,
         post_window_seconds=args.post_window_seconds,
+        queue_snapshot_mode=args.queue_snapshot_mode,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     review_path = args.output_dir / "matched_spoofing_events.parquet"
@@ -764,6 +798,7 @@ def main(argv: list[str] | None = None) -> None:
         "top_n": args.top_n,
         "pre_window_seconds": args.pre_window_seconds,
         "post_window_seconds": args.post_window_seconds,
+        "queue_snapshot_mode": args.queue_snapshot_mode,
         "parameter_grid_root": str(args.parameter_grid_root) if args.parameter_grid_root else None,
         "parameter_run_count": len(parameter_review_events),
         "review_event_count": review_df.height,
