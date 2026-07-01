@@ -115,8 +115,8 @@ def test_dashboard_embeds_annotations_and_client_session_alerts(tmp_path):
     assert "human_review" in html
     assert "WMSCI" in html
     assert "Price-response diagnostics" in html
-    assert "favorable pre-fill move" in html
-    assert "execution advantage vs posture" in html
+    assert "favorable pre-fill mid move" in html
+    assert "execution advantage vs posture mid" in html
 
 
 def test_write_review_artifacts_saves_event_log(tmp_path):

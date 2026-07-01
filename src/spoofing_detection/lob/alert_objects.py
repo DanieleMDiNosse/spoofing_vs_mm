@@ -8,6 +8,13 @@ ALERT_SCHEMA = {
     "mcps_at_threshold": pl.Float64,
     "max_MSCI": pl.Float64,
     "mean_MSCI": pl.Float64,
+    "matched_event_count": pl.UInt32,
+    "matched_event_share": pl.Float64,
+    "max_WMSCI_event": pl.Float64,
+    "mean_WMSCI_event": pl.Float64,
+    "positive_fpm_mid_share": pl.Float64,
+    "positive_reversion_mid_share": pl.Float64,
+    "mean_execution_price_advantage_vs_posture_mid": pl.Float64,
     "side_symmetry_score": pl.Float64,
     "matched_cancel_event_share": pl.Float64,
     "alert_score": pl.Float64,
@@ -28,16 +35,27 @@ def build_client_session_alerts(
 ) -> pl.DataFrame:
     if risk_features.is_empty():
         return empty_alerts()
-    joined = risk_features.join(legitimacy_features, on="client_id", how="left")
+    prepared_risk = risk_features
+    for column, default in {
+        "matched_event_share": None,
+        "max_WMSCI_event": None,
+        "positive_fpm_mid_share": None,
+        "positive_reversion_mid_share": None,
+    }.items():
+        if column not in prepared_risk.columns:
+            prepared_risk = prepared_risk.with_columns(pl.lit(default).alias(column))
+    joined = prepared_risk.join(legitimacy_features, on="client_id", how="left")
     alerts = (
         joined.with_columns(
             (
-                pl.col("mcps_at_threshold").fill_null(0.0) * 0.5
-                + pl.col("max_MSCI").fill_null(0.0).clip(0.0, 1.0) * 0.3
+                pl.max_horizontal("mcps_at_threshold", "matched_event_share").fill_null(0.0) * 0.35
+                + pl.col("max_WMSCI_event").fill_null(0.0).log1p().clip(0.0, 5.0) / 5.0 * 0.25
+                + pl.col("positive_fpm_mid_share").fill_null(0.0).clip(0.0, 1.0) * 0.1
+                + pl.col("positive_reversion_mid_share").fill_null(0.0).clip(0.0, 1.0) * 0.1
                 + (1.0 - pl.col("side_symmetry_score").fill_null(0.5)).clip(0.0, 1.0) * 0.2
             ).alias("alert_score")
         )
-        .filter((pl.col("event_count") >= min_events) & (pl.col("mcps_at_threshold") >= min_mcps))
+        .filter((pl.col("event_count") >= min_events) & (pl.max_horizontal("mcps_at_threshold", "matched_event_share") >= min_mcps))
         .with_columns(pl.lit("human_review").alias("recommended_action"))
         .sort(["alert_score", "event_count"], descending=[True, True])
     )

@@ -13,6 +13,13 @@ def test_build_client_session_alerts_combines_risk_and_legitimacy():
             "mcps_at_threshold": [0.6],
             "max_MSCI": [0.9],
             "mean_MSCI": [0.4],
+            "matched_event_count": [3],
+            "matched_event_share": [0.6],
+            "max_WMSCI_event": [10.0],
+            "mean_WMSCI_event": [4.0],
+            "positive_fpm_mid_share": [0.5],
+            "positive_reversion_mid_share": [0.25],
+            "mean_execution_price_advantage_vs_posture_mid": [0.01],
         }
     )
     legitimacy = pl.DataFrame(
