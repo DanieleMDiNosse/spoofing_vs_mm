@@ -52,7 +52,30 @@ def _minimal_dashboard_frames() -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFram
             }
         ]
     )
-    event_log = pl.DataFrame([{"review_event_id": "S10", "sort_index": 10, "event_ts": "2024", "event_class": "fill"}])
+    event_log = pl.DataFrame(
+        [
+            {
+                "review_event_id": "S10",
+                "sort_index": 10,
+                "event_ts": "2024",
+                "event_class": "fill",
+                "is_review_client": True,
+                "is_execution_order": True,
+                "is_candidate_deceptive_order": False,
+                "is_matched_deceptive_cancel_order": False,
+            },
+            {
+                "review_event_id": "S10",
+                "sort_index": 11,
+                "event_ts": "2024",
+                "event_class": "cancel",
+                "is_review_client": True,
+                "is_execution_order": False,
+                "is_candidate_deceptive_order": True,
+                "is_matched_deceptive_cancel_order": True,
+            },
+        ]
+    )
     queue = pl.DataFrame([{"review_event_id": "S10", "snapshot_phase": "execution", "snapshot_sort_index": 10, "side": "bid", "level": 1, "price": 10.0, "level_visible_qty": 100.0, "visible_qty": 100.0, "is_candidate_deceptive_order": True, "is_matched_deceptive_cancel_order": False, "client_queue_dict": "{}"}])
     return review_events, event_log, queue
 
@@ -117,6 +140,10 @@ def test_dashboard_embeds_annotations_and_client_session_alerts(tmp_path):
     assert "Price-response diagnostics" in html
     assert "favorable pre-fill mid move" in html
     assert "execution advantage vs posture mid" in html
+    assert "event-row-client" in html
+    assert "event-row-execution" in html
+    assert "event-row-candidate" in html
+    assert "event-row-matched-cancel" in html
 
 
 def test_write_review_artifacts_saves_event_log(tmp_path):

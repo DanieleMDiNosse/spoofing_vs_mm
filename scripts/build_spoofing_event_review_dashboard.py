@@ -457,6 +457,12 @@ table {{ border-collapse: collapse; width: 100%; font-size: 0.86rem; }}
 th, td {{ border-bottom: 1px solid #e8edf5; padding: 6px; text-align: left; }}
 th {{ background: #f1f4f9; position: sticky; top: 0; }}
 .badge {{ display: inline-block; padding: 2px 6px; border-radius: 6px; background: #fee2e2; color: #991b1b; font-weight: 600; }}
+.event-row-client {{ background: #fff7ed; }}
+.event-row-execution {{ background: #dcfce7; font-weight: 600; }}
+.event-row-candidate {{ box-shadow: inset 4px 0 0 #f97316; }}
+.event-row-matched-cancel {{ background: #fee2e2; font-weight: 600; }}
+.event-legend {{ display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 8px 0; color: #4d5a6d; font-size: 0.84rem; }}
+.event-legend span {{ padding: 3px 7px; border-radius: 6px; border: 1px solid #e5e7eb; }}
 #llmReview pre {{ white-space: pre-wrap; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; }}
 </style>
 </head>
@@ -536,7 +542,7 @@ function renderSummary(ev) {{
   <b>fill qty:</b> ${{ev.fill_qty}} &nbsp; <b>WMSCI:</b> ${{Number(ev.WMSCI_event || 0).toFixed(6)}} &nbsp; <b>MSCI:</b> ${{Number(ev.MSCI || 0).toFixed(6)}} &nbsp; <b>SCI:</b> ${{Number(ev.SCI || 0).toFixed(6)}}<br>
   <b>favorable pre-fill mid move:</b> ${{metricText(ev.favorable_mid_move_pre_fill)}} &nbsp; <b>post-cancel mid reversion:</b> ${{metricText(ev.post_cancel_mid_reversion)}} &nbsp; <b>execution advantage vs posture mid:</b> ${{metricText(ev.execution_price_advantage_vs_posture_mid)}}<br>
   <b>candidate visible qty pre:</b> ${{ev.candidate_deceptive_visible_qty_pre}} &nbsp; <b>matched cancel qty:</b> ${{ev.matched_deceptive_cancel_visible_qty_window}} &nbsp; <b>matched fraction:</b> ${{ev.matched_deceptive_cancel_fraction_window}}<br>
-  <b>weighted withdrawal:</b> ${{ev.weighted_net_withdrawal_qty_window}} &nbsp; <b>withdrawal/fill:</b> ${{ev.withdrawal_to_fill_ratio}} &nbsp; <b>cancel delay:</b> ${{ev.matched_deceptive_cancel_min_delay_seconds}}–${{ev.matched_deceptive_cancel_max_delay_seconds}}s<br>
+  <b>withdrawal/fill:</b> ${{ev.withdrawal_to_fill_ratio}} &nbsp; <b>cancel delay:</b> ${{ev.matched_deceptive_cancel_min_delay_seconds}}–${{ev.matched_deceptive_cancel_max_delay_seconds}}s<br>
   <b>candidate order ids:</b> ${{ev.candidate_deceptive_order_ids_pre}}<br>
   <b>matched cancelled ids:</b> ${{ev.matched_deceptive_cancel_order_ids_window}}`;
 }}
@@ -706,10 +712,16 @@ function renderLLMReview(ev) {{
 }}
 function renderEventTable(ev) {{
   const rows = byEvent(ev.review_event_id, eventLog).sort((a,b) => a.sort_index-b.sort_index);
-  const html = ['<table><thead><tr><th>sort</th><th>time</th><th>class</th><th>side</th><th>price</th><th>ORDERID</th><th>client</th><th>leaves</th><th>displayed</th><th>last shares</th><th>flags</th></tr></thead><tbody>'];
+  const html = ['<div class="event-legend"><span class="event-row-client">review client</span><span class="event-row-execution">small execution</span><span class="event-row-candidate">candidate order</span><span class="event-row-matched-cancel">matched cancel</span></div><table><thead><tr><th>sort</th><th>time</th><th>class</th><th>side</th><th>price</th><th>ORDERID</th><th>client</th><th>leaves</th><th>displayed</th><th>last shares</th><th>flags</th></tr></thead><tbody>'];
   for (const r of rows) {{
     const flags = [r.is_execution_order?'execution':'', r.is_candidate_deceptive_order?'candidate':'', r.is_matched_deceptive_cancel_order?'matched-cancel':'', r.is_review_client?'client':''].filter(Boolean).join(', ');
-    html.push(`<tr><td>${{r.sort_index}}</td><td>${{r.event_ts}}</td><td>${{r.event_class}}</td><td>${{r.side ?? ''}}</td><td>${{r.price ?? ''}}</td><td>${{r.ORDERID ?? ''}}</td><td>${{r.client_id ?? ''}}</td><td>${{r.leaves_qty ?? ''}}</td><td>${{r.displayed_qty ?? ''}}</td><td>${{r.last_shares ?? ''}}</td><td>${{flags}}</td></tr>`);
+    const rowClasses = [
+      r.is_review_client ? 'event-row-client' : '',
+      r.is_execution_order ? 'event-row-execution' : '',
+      r.is_candidate_deceptive_order ? 'event-row-candidate' : '',
+      r.is_matched_deceptive_cancel_order ? 'event-row-matched-cancel' : ''
+    ].filter(Boolean).join(' ');
+    html.push(`<tr class="${{rowClasses}}"><td>${{r.sort_index}}</td><td>${{r.event_ts}}</td><td>${{r.event_class}}</td><td>${{r.side ?? ''}}</td><td>${{r.price ?? ''}}</td><td>${{r.ORDERID ?? ''}}</td><td>${{r.client_id ?? ''}}</td><td>${{r.leaves_qty ?? ''}}</td><td>${{r.displayed_qty ?? ''}}</td><td>${{r.last_shares ?? ''}}</td><td>${{flags}}</td></tr>`);
   }}
   html.push('</tbody></table>');
   document.getElementById('eventTable').innerHTML = html.join('');
