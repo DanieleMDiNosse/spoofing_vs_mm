@@ -293,6 +293,9 @@ def test_attach_sci_window_metrics_computes_side_collapse_and_msci():
             "DWI": [-0.2, -0.8, -0.1],
             "L_bid_topN": [0.4, 0.9, 0.2],
             "L_ask_topN": [0.2, 0.4, 0.3],
+            "sort_index": [8, 9, 11],
+            "market_mid": [100.00, 100.10, 100.02],
+            "market_microprice": [100.01, 100.13, 100.03],
         }
     )
     executions = pl.DataFrame(
@@ -300,8 +303,11 @@ def test_attach_sci_window_metrics_computes_side_collapse_and_msci():
             "partition_id": ["P"],
             "client_id": ["C1"],
             "event_ts": [datetime(2024, 1, 2, 9, 30, 10)],
+            "sort_index": [10],
             "execution_side": ["ask"],
             "deceptive_side": ["bid"],
+            "event_price": [100.12],
+            "candidate_deceptive_first_seen_sort_index_min": [8],
         }
     )
 
@@ -321,6 +327,13 @@ def test_attach_sci_window_metrics_computes_side_collapse_and_msci():
     assert out.item(0, "collapse_opposite_side") == pytest.approx(c_bid)
     assert out.item(0, "collapse_same_side") == pytest.approx(c_ask)
     assert out.item(0, "MSCI") == pytest.approx(expected_msci)
+    assert out.item(0, "market_mid_posture") == pytest.approx(100.00)
+    assert out.item(0, "market_mid_pre_window") == pytest.approx(100.10)
+    assert out.item(0, "market_mid_post_window") == pytest.approx(100.02)
+    assert out.item(0, "favorable_mid_move_pre_fill") == pytest.approx(0.10)
+    assert out.item(0, "favorable_microprice_move_pre_fill") == pytest.approx(0.12)
+    assert out.item(0, "post_cancel_mid_reversion") == pytest.approx(0.08)
+    assert out.item(0, "execution_price_advantage_vs_posture_mid") == pytest.approx(0.12)
     assert "imbalance_pre_window" not in out.columns
 
 
@@ -339,6 +352,10 @@ def test_compute_mcps_scores_groups_by_client_and_gamma():
             "has_matched_deceptive_cancel_window": [False, True, False, True],
             "has_direct_opposite_cancel_window": [True, True, False, True],
             "candidate_deceptive_order_count_pre": [1, 1, 0, 1],
+            "favorable_mid_move_pre_fill": [0.1, -0.1, None, 0.2],
+            "favorable_microprice_move_pre_fill": [0.2, 0.0, None, 0.3],
+            "post_cancel_mid_reversion": [0.05, None, None, 0.1],
+            "execution_price_advantage_vs_posture_mid": [0.01, 0.02, None, 0.03],
         }
     )
 
@@ -350,6 +367,8 @@ def test_compute_mcps_scores_groups_by_client_and_gamma():
     assert c1["msci_above_gamma_count"] == 1
     assert c1["MCPS"] == pytest.approx(1 / 3)
     assert c1["candidate_profile_share"] == pytest.approx(2 / 3)
+    assert c1["mean_favorable_mid_move_pre_fill"] == pytest.approx(0.0)
+    assert c1["mean_post_cancel_mid_reversion"] == pytest.approx(0.05)
 
 
 def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():

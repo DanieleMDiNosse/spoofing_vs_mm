@@ -179,6 +179,16 @@ def compute_client_top_n_exposures(
         "ask": _market_levels(active_orders, side="ask", top_n=top_n),
     }
     market_total = {side: sum(qty for _, qty in side_levels) for side, side_levels in levels.items()}
+    best_bid = levels["bid"][0][0] if levels["bid"] else None
+    best_ask = levels["ask"][0][0] if levels["ask"] else None
+    best_bid_qty = levels["bid"][0][1] if levels["bid"] else 0.0
+    best_ask_qty = levels["ask"][0][1] if levels["ask"] else 0.0
+    market_mid = (best_bid + best_ask) / 2.0 if best_bid is not None and best_ask is not None else None
+    market_microprice = (
+        (best_ask * best_bid_qty + best_bid * best_ask_qty) / (best_bid_qty + best_ask_qty)
+        if best_bid is not None and best_ask is not None and best_bid_qty + best_ask_qty > 0
+        else None
+    )
     price_to_rank = {
         side: {price: rank for rank, (price, _) in enumerate(side_levels, start=1)}
         for side, side_levels in levels.items()
@@ -214,6 +224,10 @@ def compute_client_top_n_exposures(
             "tick_size": tick_size,
             "kappa": kappa,
             "lambda_": lambda_,
+            "market_best_bid": best_bid,
+            "market_best_ask": best_ask,
+            "market_mid": market_mid,
+            "market_microprice": market_microprice,
         }
         liquidity: dict[str, float] = {}
         for side in ("bid", "ask"):
@@ -450,6 +464,7 @@ def _candidate_deceptive_order_summary(candidate_rows: list[dict[str, Any]]) -> 
             "candidate_deceptive_qty_weighted_depth_distance_ticks_pre": None,
             "candidate_deceptive_max_relative_depth_pre": 0.0,
             "candidate_deceptive_min_age_seconds_pre": None,
+            "candidate_deceptive_first_seen_sort_index_min": None,
             "candidate_deceptive_order_ids_pre": "",
         }
 
@@ -493,6 +508,11 @@ def _candidate_deceptive_order_summary(candidate_rows: list[dict[str, Any]]) -> 
             float(row["deceptive_order_relative_depth_pre"] or 0.0) for row in candidate_rows
         ),
         "candidate_deceptive_min_age_seconds_pre": min(ages) if ages else None,
+        "candidate_deceptive_first_seen_sort_index_min": min(
+            int(row["deceptive_order_first_seen_sort_index"])
+            for row in candidate_rows
+            if row["deceptive_order_first_seen_sort_index"] is not None
+        ),
         "candidate_deceptive_order_ids_pre": ";".join(str(row["deceptive_order_id"]) for row in candidate_rows),
     }
 
@@ -687,7 +707,12 @@ def _group_state_rows(states: pl.DataFrame) -> dict[tuple[Any, str], list[dict[s
     required = {"partition_id", "client_id", "event_ts", "DWI", "L_bid_topN", "L_ask_topN"}
     if not required.issubset(states.columns):
         return groups
-    selected = list(required) + (["sort_index"] if "sort_index" in states.columns else [])
+    optional = [
+        col
+        for col in ("sort_index", "market_best_bid", "market_best_ask", "market_mid", "market_microprice")
+        if col in states.columns
+    ]
+    selected = list(required) + optional
     for row in states.select(selected).iter_rows(named=True):
         ts = _parse_ts(row["event_ts"])
         if ts is None:
@@ -718,6 +743,41 @@ def _lookup_post_state(values: list[dict[str, Any]], end_ts: datetime, sort_inde
     if sort_index is not None:
         eligible = [item for item in eligible if item.get("sort_index") is not None and int(item["sort_index"]) > int(sort_index)]
     return eligible[-1] if eligible else None
+
+
+def _lookup_state_at_or_after_index(values: list[dict[str, Any]], sort_index: int | None) -> dict[str, Any] | None:
+    if sort_index is None:
+        return None
+    values_with_index = [item for item in values if item.get("sort_index") is not None]
+    indexes = [int(item["sort_index"]) for item in values_with_index]
+    idx = bisect.bisect_left(indexes, int(sort_index))
+    return values_with_index[idx] if idx < len(values_with_index) else None
+
+
+def _execution_price_direction(execution_side: str | None) -> float | None:
+    if execution_side == "ask":
+        return 1.0
+    if execution_side == "bid":
+        return -1.0
+    return None
+
+
+def _signed_change(direction: float | None, start: float | None, end: float | None) -> float | None:
+    if direction is None or start is None or end is None:
+        return None
+    values = [float(direction), float(start), float(end)]
+    if not all(math.isfinite(value) for value in values):
+        return None
+    return values[0] * (values[2] - values[1])
+
+
+def _execution_price_advantage(direction: float | None, benchmark: float | None, event_price: float | None) -> float | None:
+    if direction is None or benchmark is None or event_price is None:
+        return None
+    values = [float(direction), float(benchmark), float(event_price)]
+    if not all(math.isfinite(value) for value in values):
+        return None
+    return values[0] * (values[2] - values[1])
 
 
 def _collapse(pre: float | None, post: float | None, *, epsilon: float) -> float | None:
@@ -772,10 +832,17 @@ def attach_sci_window_metrics(
         sort_index = row.get("sort_index")
         pre_state = None
         post_state = None
+        posture_state = None
         post_target = None
         if event_ts is not None:
             post_target = event_ts + window
             values = grouped_states.get((row.get("partition_id"), row.get("client_id")), [])
+            posture_state = _lookup_state_at_or_after_index(
+                values,
+                int(row["candidate_deceptive_first_seen_sort_index_min"])
+                if row.get("candidate_deceptive_first_seen_sort_index_min") is not None
+                else None,
+            )
             pre_state = _lookup_pre_state(values, event_ts, int(sort_index) if sort_index is not None else None)
             post_state = _lookup_post_state(values, post_target, int(sort_index) if sort_index is not None else None)
         pre_dwi = pre_state.get("DWI") if pre_state is not None else None
@@ -796,12 +863,43 @@ def attach_sci_window_metrics(
         else:
             collapse_opposite = None
             collapse_same = None
+        price_direction = _execution_price_direction(row.get("execution_side"))
+        posture_mid = posture_state.get("market_mid") if posture_state is not None else None
+        pre_mid = pre_state.get("market_mid") if pre_state is not None else None
+        post_mid = post_state.get("market_mid") if post_state is not None else None
+        posture_microprice = posture_state.get("market_microprice") if posture_state is not None else None
+        pre_microprice = pre_state.get("market_microprice") if pre_state is not None else None
+        post_microprice = post_state.get("market_microprice") if post_state is not None else None
         rows.append(
             {
                 **row,
+                "price_response_direction": price_direction,
+                "posture_state_sort_index": posture_state.get("sort_index") if posture_state is not None else None,
                 "pre_state_sort_index": pre_state.get("sort_index") if pre_state is not None else None,
                 "post_state_sort_index": post_state.get("sort_index") if post_state is not None else None,
                 "post_target_ts": post_target,
+                "market_mid_posture": posture_mid,
+                "market_mid_pre_window": pre_mid,
+                "market_mid_post_window": post_mid,
+                "market_microprice_posture": posture_microprice,
+                "market_microprice_pre_window": pre_microprice,
+                "market_microprice_post_window": post_microprice,
+                "favorable_mid_move_pre_fill": _signed_change(price_direction, posture_mid, pre_mid),
+                "favorable_microprice_move_pre_fill": _signed_change(
+                    price_direction, posture_microprice, pre_microprice
+                ),
+                "post_cancel_mid_reversion": _signed_change(price_direction, post_mid, pre_mid),
+                "post_cancel_microprice_reversion": _signed_change(price_direction, post_microprice, pre_microprice),
+                "execution_price_advantage_vs_posture_mid": _execution_price_advantage(
+                    price_direction,
+                    posture_mid,
+                    row.get("event_price"),
+                ),
+                "execution_price_advantage_vs_posture_microprice": _execution_price_advantage(
+                    price_direction,
+                    posture_microprice,
+                    row.get("event_price"),
+                ),
                 "DWI_pre_window": pre_dwi,
                 "DWI_post_window": post_dwi,
                 "SCI": sci,
@@ -940,6 +1038,26 @@ def compute_mcps_scores(execution_metrics: pl.DataFrame, *, gamma_grid: list[flo
             collapse_same = [
                 float(row["collapse_same_side"]) for row in rows if row.get("collapse_same_side") is not None
             ]
+            favorable_mid_moves = [
+                float(row["favorable_mid_move_pre_fill"])
+                for row in rows
+                if row.get("favorable_mid_move_pre_fill") is not None
+            ]
+            favorable_microprice_moves = [
+                float(row["favorable_microprice_move_pre_fill"])
+                for row in rows
+                if row.get("favorable_microprice_move_pre_fill") is not None
+            ]
+            post_cancel_mid_reversions = [
+                float(row["post_cancel_mid_reversion"])
+                for row in rows
+                if row.get("post_cancel_mid_reversion") is not None
+            ]
+            execution_advantages = [
+                float(row["execution_price_advantage_vs_posture_mid"])
+                for row in rows
+                if row.get("execution_price_advantage_vs_posture_mid") is not None
+            ]
             above = sum(1 for value in finite_msci if value > gamma)
             out = {col: key[idx] for idx, col in enumerate(group_cols)}
             out.update(
@@ -955,6 +1073,10 @@ def compute_mcps_scores(execution_metrics: pl.DataFrame, *, gamma_grid: list[flo
                     "mean_SCI": _mean(finite_sci),
                     "mean_collapse_opposite_side": _mean(collapse_opposite),
                     "mean_collapse_same_side": _mean(collapse_same),
+                    "mean_favorable_mid_move_pre_fill": _mean(favorable_mid_moves),
+                    "mean_favorable_microprice_move_pre_fill": _mean(favorable_microprice_moves),
+                    "mean_post_cancel_mid_reversion": _mean(post_cancel_mid_reversions),
+                    "mean_execution_price_advantage_vs_posture_mid": _mean(execution_advantages),
                     "matched_deceptive_cancel_share": _bool_share(rows, "has_matched_deceptive_cancel_window"),
                     "direct_opposite_cancel_share": _bool_share(rows, "has_direct_opposite_cancel_window"),
                     "candidate_profile_share": sum(

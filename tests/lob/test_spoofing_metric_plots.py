@@ -26,6 +26,9 @@ def test_write_spoofing_metric_dashboard_creates_paper_aligned_html(tmp_path: Pa
             "matched_deceptive_cancel_visible_qty_window": [50.0, 0.0],
             "has_matched_deceptive_cancel_window": [True, False],
             "matched_deceptive_cancel_fraction_window": [1.0, 0.0],
+            "favorable_mid_move_pre_fill": [0.02, -0.01],
+            "post_cancel_mid_reversion": [0.01, 0.0],
+            "execution_price_advantage_vs_posture_mid": [0.03, -0.01],
         }
     )
     state_time_series = pl.DataFrame(
@@ -42,6 +45,8 @@ def test_write_spoofing_metric_dashboard_creates_paper_aligned_html(tmp_path: Pa
             "executions": [10, 8],
             "MCPS": [0.4, 0.0],
             "max_MSCI": [0.75, 0.1],
+            "mean_favorable_mid_move_pre_fill": [0.02, -0.01],
+            "mean_post_cancel_mid_reversion": [0.01, 0.0],
         }
     )
     output = tmp_path / "dashboard.html"
@@ -63,6 +68,9 @@ def test_write_spoofing_metric_dashboard_creates_paper_aligned_html(tmp_path: Pa
     assert "opposite-side collapse" in html
     assert "candidate deceptive profile" in html
     assert "spoofing-like executions" in html
+    assert "Price-response diagnostics" in html
+    assert "favorable pre-fill mid-price movement" in html
+    assert "mean_favorable_mid_move_pre_fill" in html
     assert "Orange points" not in html
     assert "Blue points" not in html
     assert "#ff7f0e" not in html

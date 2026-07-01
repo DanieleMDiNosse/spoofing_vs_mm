@@ -143,6 +143,9 @@ def _top_execution_lines(execution_metrics: pl.DataFrame, limit: int = 20) -> li
             "collapse_opposite_side",
             "collapse_same_side",
             "MSCI",
+            "favorable_mid_move_pre_fill",
+            "post_cancel_mid_reversion",
+            "execution_price_advantage_vs_posture_mid",
             "candidate_deceptive_visible_qty_pre",
             "has_matched_deceptive_cancel_window",
         )
@@ -205,6 +208,9 @@ def _top_mcps_lines(mcps_scores: pl.DataFrame, limit: int = 20) -> list[str]:
             "MCPS",
             "max_MSCI",
             "mean_MSCI",
+            "mean_favorable_mid_move_pre_fill",
+            "mean_post_cancel_mid_reversion",
+            "mean_execution_price_advantage_vs_posture_mid",
             "candidate_profile_share",
             "matched_deceptive_cancel_share",
         )
@@ -250,6 +256,7 @@ def _write_summary_report(
         "- SCI is the absolute DWI change from immediately before a small passive execution to the post-execution window.",
         "- Collapse measures how much weighted liquidity disappears after the execution on each side of the book.",
         "- MSCI is high only when DWI changes sharply and the opposite side collapses more than the execution side.",
+        "- Price-response diagnostics are signed so positive values indicate a movement or execution price advantage favorable to the passive fill side; they are economic consistency checks, not causal proof.",
         "- MCPS is a client-level repetition score: the fraction of small executions whose MSCI is above gamma.",
         "- A candidate deceptive profile is the same client's pre-existing visible depth on the side opposite to the small execution, posted within the configured pre-execution age window.",
         "",

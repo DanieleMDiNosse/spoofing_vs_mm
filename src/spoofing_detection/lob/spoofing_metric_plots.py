@@ -20,6 +20,9 @@ def _top_mcps_table(mcps_scores: pl.DataFrame | None, execution_metrics: pl.Data
                 "MCPS",
                 "max_MSCI",
                 "mean_MSCI",
+                "mean_favorable_mid_move_pre_fill",
+                "mean_post_cancel_mid_reversion",
+                "mean_execution_price_advantage_vs_posture_mid",
                 "matched_deceptive_cancel_share",
             )
             if column in mcps_scores.columns
@@ -53,16 +56,17 @@ def write_spoofing_metric_dashboard(
 ) -> None:
     output_html = Path(output_html)
     fig = make_subplots(
-        rows=6,
+        rows=7,
         cols=1,
         shared_xaxes=False,
-        vertical_spacing=0.07,
-        specs=[[{}], [{}], [{}], [{}], [{"type": "table"}], [{}]],
+        vertical_spacing=0.055,
+        specs=[[{}], [{}], [{}], [{}], [{}], [{"type": "table"}], [{}]],
         subplot_titles=(
             "Event-level MSCI over time",
             "MSCI distribution",
             "Opposite-side collapse versus same-side collapse",
             "Candidate deceptive profile size versus small execution size",
+            "Price-response diagnostics for spoofing-like executions",
             "Top clients by MCPS",
             "Selected-client DWI time series",
         ),
@@ -88,6 +92,9 @@ def write_spoofing_metric_dashboard(
                 "candidate_deceptive_visible_qty_pre",
                 "matched_deceptive_cancel_visible_qty_window",
                 "matched_deceptive_cancel_fraction_window",
+                "favorable_mid_move_pre_fill",
+                "post_cancel_mid_reversion",
+                "execution_price_advantage_vs_posture_mid",
             )
             if column in execution_metrics.columns
         ]
@@ -157,6 +164,53 @@ def write_spoofing_metric_dashboard(
                     row=4,
                     col=1,
                 )
+        if {"favorable_mid_move_pre_fill", "post_cancel_mid_reversion"}.issubset(execution_metrics.columns):
+            if not plotted_executions.is_empty():
+                fig.add_trace(
+                    go.Scattergl(
+                        x=plotted_executions.get_column("favorable_mid_move_pre_fill").to_list(),
+                        y=plotted_executions.get_column("post_cancel_mid_reversion").to_list(),
+                        mode="markers",
+                        marker={"color": colors, "size": 7, "opacity": 0.65},
+                        text=plotted_executions.get_column("client_id").to_list()
+                        if "client_id" in plotted_executions.columns
+                        else None,
+                        customdata=(
+                            [
+                                list(row)
+                                for row in plotted_executions.select(
+                                    [
+                                        col
+                                        for col in ("execution_price_advantage_vs_posture_mid", "MSCI")
+                                        if col in plotted_executions.columns
+                                    ]
+                                ).iter_rows()
+                            ]
+                            if any(
+                                col in plotted_executions.columns
+                                for col in ("execution_price_advantage_vs_posture_mid", "MSCI")
+                            )
+                            else None
+                        ),
+                        hovertemplate=(
+                            "favorable pre-fill mid move=%{x}<br>post-cancel mid reversion=%{y}"
+                            "<br>client=%{text}<br>extra metrics=%{customdata}<extra></extra>"
+                        ),
+                        name="price response for spoofing-like executions",
+                    ),
+                    row=5,
+                    col=1,
+                )
+            fig.add_trace(
+                go.Scatter(x=[0, 0], y=[-1, 1], mode="lines", line={"dash": "dot", "color": "#999"}, name="zero FPM"),
+                row=5,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(x=[-1, 1], y=[0, 0], mode="lines", line={"dash": "dot", "color": "#bbb"}, name="zero REV"),
+                row=5,
+                col=1,
+            )
     else:
         fig.add_annotation(text="No eligible executions", row=1, col=1, showarrow=False)
 
@@ -169,7 +223,7 @@ def write_spoofing_metric_dashboard(
                 "align": "left",
             },
         ),
-        row=5,
+        row=6,
         col=1,
     )
 
@@ -190,14 +244,14 @@ def write_spoofing_metric_dashboard(
                     line={"color": "#2ca02c"},
                     name=f"DWI {selected_client}",
                 ),
-                row=6,
+                row=7,
                 col=1,
             )
 
     fig.update_layout(
         title=title,
         template="plotly_white",
-        height=1750,
+        height=2050,
         hovermode="closest",
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
     )
@@ -209,14 +263,18 @@ def write_spoofing_metric_dashboard(
     fig.update_yaxes(title_text="opposite-side collapse", row=3, col=1)
     fig.update_xaxes(title_text="small execution quantity", row=4, col=1)
     fig.update_yaxes(title_text="candidate deceptive profile volume", row=4, col=1)
-    fig.update_yaxes(title_text="DWI", row=6, col=1)
-    fig.update_xaxes(title_text="Event time", row=6, col=1)
+    fig.update_xaxes(title_text="favorable pre-fill mid-price movement", row=5, col=1)
+    fig.update_yaxes(title_text="post-cancel mid-price reversion", row=5, col=1)
+    fig.update_yaxes(title_text="DWI", row=7, col=1)
+    fig.update_xaxes(title_text="Event time", row=7, col=1)
 
     note = (
         "<p><b>How to read this dashboard:</b> DWI is the client's ask-minus-bid weighted top-n depth profile. "
         "MSCI becomes large only when DWI changes quickly and the liquidity that disappears is mostly on the side "
         "opposite to the small execution. MCPS is the client-level repetition score: it asks how often MSCI is above "
-        "a chosen threshold. The event-level scatter plots show only spoofing-like executions: red points directly "
+        "a chosen threshold. Price-response diagnostics are signed so positive values indicate movement or execution "
+        "price advantage in the direction favorable to the small execution; they are economic consistency checks, not "
+        "causal proof. The event-level scatter plots show only spoofing-like executions: red points directly "
         "cancel one of the pre-existing opposite-side candidate deceptive orders after the execution. Other executions "
         "are omitted from these scatter plots. These are surveillance cues, not proof of intent.</p>"
     )

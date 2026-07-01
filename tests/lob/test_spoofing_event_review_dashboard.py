@@ -37,7 +37,21 @@ def _order(order_id: str, *, client: str | None, qty: float, priority: str, firs
 
 
 def _minimal_dashboard_frames() -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    review_events = pl.DataFrame([{"review_event_id": "S10", "event_ts": "2024", "client_id": "C1", "MSCI": 0.1, "sort_index": 10, "matched_deceptive_cancel_order_ids_window": "A"}])
+    review_events = pl.DataFrame(
+        [
+            {
+                "review_event_id": "S10",
+                "event_ts": "2024",
+                "client_id": "C1",
+                "MSCI": 0.1,
+                "sort_index": 10,
+                "matched_deceptive_cancel_order_ids_window": "A",
+                "favorable_mid_move_pre_fill": 0.02,
+                "post_cancel_mid_reversion": 0.01,
+                "execution_price_advantage_vs_posture_mid": 0.03,
+            }
+        ]
+    )
     event_log = pl.DataFrame([{"review_event_id": "S10", "sort_index": 10, "event_ts": "2024", "event_class": "fill"}])
     queue = pl.DataFrame([{"review_event_id": "S10", "snapshot_phase": "execution", "snapshot_sort_index": 10, "side": "bid", "level": 1, "price": 10.0, "level_visible_qty": 100.0, "visible_qty": 100.0, "is_candidate_deceptive_order": True, "is_matched_deceptive_cancel_order": False, "client_queue_dict": "{}"}])
     return review_events, event_log, queue
@@ -100,6 +114,9 @@ def test_dashboard_embeds_annotations_and_client_session_alerts(tmp_path):
     assert "Client-session alerts" in html
     assert "human_review" in html
     assert "WMSCI" in html
+    assert "Price-response diagnostics" in html
+    assert "favorable pre-fill move" in html
+    assert "execution advantage vs posture" in html
 
 
 def test_write_review_artifacts_saves_event_log(tmp_path):

@@ -345,6 +345,12 @@ def reconstruct_review_windows(
                     "withdrawal_to_fill_ratio": review.get("withdrawal_to_fill_ratio"),
                     "weighted_withdrawal_to_fill_ratio": review.get("weighted_withdrawal_to_fill_ratio"),
                     "WMSCI_event": review.get("WMSCI_event"),
+                    "favorable_mid_move_pre_fill": review.get("favorable_mid_move_pre_fill"),
+                    "favorable_microprice_move_pre_fill": review.get("favorable_microprice_move_pre_fill"),
+                    "post_cancel_mid_reversion": review.get("post_cancel_mid_reversion"),
+                    "post_cancel_microprice_reversion": review.get("post_cancel_microprice_reversion"),
+                    "execution_price_advantage_vs_posture_mid": review.get("execution_price_advantage_vs_posture_mid"),
+                    "execution_price_advantage_vs_posture_microprice": review.get("execution_price_advantage_vs_posture_microprice"),
                     "candidate_deceptive_order_ids_pre": review.get("candidate_deceptive_order_ids_pre"),
                     "matched_deceptive_cancel_order_ids_window": review.get("matched_deceptive_cancel_order_ids_window"),
                 }
@@ -468,6 +474,7 @@ th {{ background: #f1f4f9; position: sticky; top: 0; }}
     <li><b>DWI</b> is the multilevel distance-weighted imbalance of the client's top-N footprint: positive values are ask-heavy, negative values are bid-heavy.</li>
     <li><b>SCI</b> measures how abruptly DWI changes between the pre-execution and post-cancel snapshots.</li>
     <li><b>MSCI</b> combines SCI with side-specific collapse: it is high only when the opposite-side candidate liquidity collapses more than the same-side liquidity.</li>
+    <li><b>Price-response diagnostics</b> are signed so positive values mean the mid-price, microprice, or execution price moved in the direction favorable to the small execution; they are economic consistency checks, not causal proof.</li>
     <li><b>Candidate deceptive orders</b> are same-client, opposite-side, top-N orders visible before the execution and posted within the episode age window.</li>
     <li><b>Matched spoofing-like events</b> are the strict subset where one of those candidate order IDs is cancelled after the execution.</li>
   </ul>
@@ -506,8 +513,9 @@ const annotations = {_json_records(annotations if annotations is not None else p
 const clientSessionAlerts = {_json_records(client_session_alerts if client_session_alerts is not None else pl.DataFrame())};
 function byEvent(id, rows) {{ return rows.filter(r => r.review_event_id === id); }}
 function finiteNumber(value) {{ const number = Number(value); return Number.isFinite(number) ? number : null; }}
+function metricText(value, digits=6) {{ const number = finiteNumber(value); return number === null ? 'NA' : number.toFixed(digits); }}
 function scoreValue(ev) {{ const w = finiteNumber(ev.WMSCI_event); return w !== null ? w : finiteNumber(ev.MSCI); }}
-function label(ev) {{ return `${{ev.review_event_id}} | ${{ev.event_ts}} | client=${{ev.client_id}} | WMSCI=${{Number(ev.WMSCI_event || 0).toFixed(4)}} | MSCI=${{Number(ev.MSCI || 0).toFixed(4)}} | orders=${{ev.matched_deceptive_cancel_order_ids_window}}`; }}
+function label(ev) {{ return `${{ev.review_event_id}} | ${{ev.event_ts}} | client=${{ev.client_id}} | WMSCI=${{metricText(ev.WMSCI_event, 4)}} | MSCI=${{metricText(ev.MSCI, 4)}} | FPM(mid)=${{metricText(ev.favorable_mid_move_pre_fill, 4)}} | REV(mid)=${{metricText(ev.post_cancel_mid_reversion, 4)}} | orders=${{ev.matched_deceptive_cancel_order_ids_window}}`; }}
 function renderOverview() {{
   const x = reviewEvents.map(r => r.event_ts);
   const y = reviewEvents.map(scoreValue);
@@ -529,6 +537,8 @@ function renderSummary(ev) {{
   document.getElementById('summary').innerHTML = `<h2>${{ev.review_event_id}} <span class="badge">matched deceptive-order cancellation</span></h2>
   <b>time:</b> ${{ev.event_ts}} &nbsp; <b>client:</b> ${{ev.client_id}} &nbsp; <b>execution side:</b> ${{ev.execution_side}} &nbsp; <b>deceptive side:</b> ${{ev.deceptive_side}}<br>
   <b>fill qty:</b> ${{ev.fill_qty}} &nbsp; <b>WMSCI:</b> ${{Number(ev.WMSCI_event || 0).toFixed(6)}} &nbsp; <b>MSCI:</b> ${{Number(ev.MSCI || 0).toFixed(6)}} &nbsp; <b>SCI:</b> ${{Number(ev.SCI || 0).toFixed(6)}}<br>
+  <b>favorable pre-fill move:</b> mid ${{metricText(ev.favorable_mid_move_pre_fill)}} / microprice ${{metricText(ev.favorable_microprice_move_pre_fill)}} &nbsp; <b>post-cancel reversion:</b> mid ${{metricText(ev.post_cancel_mid_reversion)}} / microprice ${{metricText(ev.post_cancel_microprice_reversion)}}<br>
+  <b>execution advantage vs posture:</b> mid ${{metricText(ev.execution_price_advantage_vs_posture_mid)}} / microprice ${{metricText(ev.execution_price_advantage_vs_posture_microprice)}}<br>
   <b>candidate visible qty pre:</b> ${{ev.candidate_deceptive_visible_qty_pre}} &nbsp; <b>matched cancel qty:</b> ${{ev.matched_deceptive_cancel_visible_qty_window}} &nbsp; <b>matched fraction:</b> ${{ev.matched_deceptive_cancel_fraction_window}}<br>
   <b>weighted withdrawal:</b> ${{ev.weighted_net_withdrawal_qty_window}} &nbsp; <b>withdrawal/fill:</b> ${{ev.withdrawal_to_fill_ratio}} &nbsp; <b>cancel delay:</b> ${{ev.matched_deceptive_cancel_min_delay_seconds}}–${{ev.matched_deceptive_cancel_max_delay_seconds}}s<br>
   <b>candidate order ids:</b> ${{ev.candidate_deceptive_order_ids_pre}}<br>
