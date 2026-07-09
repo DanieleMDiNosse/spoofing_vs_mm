@@ -16,12 +16,30 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from spoofing_detection.lob.client_identity_audit import audit_missing_client_trading_capacity
+from spoofing_detection.lob.depth_kernel_calibration import load_empirical_kernel_weights
 from spoofing_detection.lob.normalize import to_str_or_none
 from spoofing_detection.lob.spoofing_metrics import (
     compute_exploratory_metrics,
     compute_mcps_scores,
     infer_tick_size_from_best_quotes,
 )
+from spoofing_detection.lob.spoofing_config import DEFAULT_SPOOFING_CONFIG_PATH, load_spoofing_config_defaults
+
+
+_CONFIGURABLE_DEFAULT_KEYS = {
+    "top_n",
+    "kappa",
+    "lambda_",
+    "epsilon",
+    "window_seconds",
+    "max_deceptive_order_age_seconds",
+    "gamma_grid",
+    "tick_size",
+    "max_rows",
+    "state_client_mode",
+    "compact_state",
+    "empirical_depth_kernel",
+}
 
 
 def _parse_float_grid(text: str) -> list[float]:
@@ -32,7 +50,22 @@ def _parse_float_grid(text: str) -> list[float]:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", type=Path, default=DEFAULT_SPOOFING_CONFIG_PATH)
+    config_args, _ = config_parser.parse_known_args(argv)
+    config_defaults = load_spoofing_config_defaults(
+        config_path=config_args.config,
+        section="metrics",
+        allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
+    )
+
     parser = argparse.ArgumentParser(description="Compute multilevel top-n spoofing surveillance metrics.")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=config_args.config,
+        help="JSON config file containing spoofing parameter defaults",
+    )
     parser.add_argument("--input", type=Path, required=True, help="Raw input parquet event file")
     parser.add_argument(
         "--quote-panel",
@@ -56,6 +89,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tick-size", type=float, default=None, help="Optional explicit tick size")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional raw-row cap for smoke runs")
     parser.add_argument(
+        "--empirical-depth-kernel",
+        type=Path,
+        default=None,
+        help="Optional empirical_depth_kernel parquet/csv artifact. When set, rank weights override scalar kappa/lambda in DWI/MSCI weighting.",
+    )
+    parser.add_argument(
         "--state-client-mode",
         choices=("all", "passive-fill-clients"),
         default="all",
@@ -66,10 +105,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--compact-state",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=False,
         help="Omit per-level diagnostic columns from client_metric_time_series while keeping DWI/L_bid/L_ask metrics.",
     )
-    return parser.parse_args(argv)
+    parser.set_defaults(**config_defaults)
+    args = parser.parse_args(argv)
+    if args.empirical_depth_kernel is not None and not isinstance(args.empirical_depth_kernel, Path):
+        args.empirical_depth_kernel = Path(args.empirical_depth_kernel)
+    return args
 
 
 def _infer_state_client_ids(raw_events: pl.DataFrame, *, mode: str) -> set[str] | None:
@@ -319,6 +363,9 @@ def main(argv: list[str] | None = None) -> None:
 
     client_audit = audit_missing_client_trading_capacity(raw_events_for_compute)
     state_client_ids = _infer_state_client_ids(raw_events_for_compute, mode=args.state_client_mode)
+    empirical_kernel_weights = (
+        load_empirical_kernel_weights(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None
+    )
     result = compute_exploratory_metrics(
         raw_events_for_compute,
         top_n=args.top_n,
@@ -330,6 +377,7 @@ def main(argv: list[str] | None = None) -> None:
         max_deceptive_order_age_seconds=args.max_deceptive_order_age_seconds,
         include_level_columns=not args.compact_state,
         state_client_ids=state_client_ids,
+        empirical_kernel_weights=empirical_kernel_weights,
     )
     mcps_scores = compute_mcps_scores(result.execution_metrics, gamma_grid=gamma_grid)
 
@@ -355,6 +403,7 @@ def main(argv: list[str] | None = None) -> None:
         "input": str(args.input),
         "quote_panel": str(args.quote_panel) if args.quote_panel is not None else None,
         "output_dir": str(args.output_dir),
+        "config": str(args.config) if args.config is not None and args.config.exists() else None,
         "top_n": args.top_n,
         "kappa": args.kappa,
         "lambda_": args.lambda_,
@@ -371,6 +420,8 @@ def main(argv: list[str] | None = None) -> None:
         "state_client_mode": args.state_client_mode,
         "state_client_count": len(state_client_ids) if state_client_ids is not None else None,
         "compact_state": args.compact_state,
+        "empirical_depth_kernel": str(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None,
+        "kernel_mode": "empirical" if args.empirical_depth_kernel is not None else "parametric",
         "client_identity_audit": client_audit,
         "row_counts": {
             "input_rows_for_compute": raw_events_for_compute.height,

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -26,12 +27,37 @@ from spoofing_detection.lob.panel import (
     _partition_id,
     sort_events,
 )
+from spoofing_detection.lob.spoofing_config import DEFAULT_SPOOFING_CONFIG_PATH, load_spoofing_config_defaults
 from spoofing_detection.lob.spoofing_metrics import _parse_ts, choose_event_timestamp
 
 
+_CONFIGURABLE_DEFAULT_KEYS = {
+    "top_n",
+    "pre_window_seconds",
+    "post_window_seconds",
+    "max_events",
+    "queue_snapshot_mode",
+}
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", type=Path, default=DEFAULT_SPOOFING_CONFIG_PATH)
+    config_args, _ = config_parser.parse_known_args(argv)
+    config_defaults = load_spoofing_config_defaults(
+        config_path=config_args.config,
+        section="event_review",
+        allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
+    )
+
     parser = argparse.ArgumentParser(
         description="Build an interactive review dashboard and exact queue parquet for matched spoofing-like events."
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=config_args.config,
+        help="JSON config file containing spoofing parameter defaults",
     )
     parser.add_argument("--input", type=Path, required=True, help="Raw input parquet event file")
     parser.add_argument("--execution-metrics", type=Path, required=True, help="execution_metrics.parquet from spoofing run")
@@ -55,6 +81,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--parameter-grid-root", type=Path, default=None, help="Optional root containing kappa/lambda sensitivity runs")
     parser.add_argument("--annotations", type=Path, default=None, help="Optional analyst annotation CSV")
     parser.add_argument("--client-session-alerts", type=Path, default=None, help="Optional client-session alert parquet")
+    parser.set_defaults(**config_defaults)
     return parser.parse_args(argv)
 
 
@@ -87,6 +114,34 @@ def _market_levels(active_orders: dict[str, ActiveOrder], *, side: str, top_n: i
         if qty > 0 and order.side == side:
             by_price[float(order.price)] += qty
     return sorted(by_price, reverse=(side == "bid"))[:top_n]
+
+
+def _same_side_book_level(active_orders: dict[str, ActiveOrder], *, side: Any, price: Any) -> int | None:
+    if side not in {"bid", "ask"}:
+        return None
+    try:
+        event_price = float(price)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(event_price):
+        return None
+
+    visible_prices: set[float] = set()
+    for order in active_orders.values():
+        if order.side != side or _visible_qty(order) <= 0:
+            continue
+        try:
+            order_price = float(order.price)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(order_price):
+            visible_prices.add(order_price)
+
+    if side == "bid":
+        better_price_count = sum(1 for order_price in visible_prices if order_price > event_price)
+    else:
+        better_price_count = sum(1 for order_price in visible_prices if order_price < event_price)
+    return better_price_count + 1
 
 
 def _client_queue_dict(level_orders: list[ActiveOrder]) -> str:
@@ -174,7 +229,13 @@ def _queue_rows_for_snapshot(
     return rows
 
 
-def _event_log_row(review_event: dict[str, Any], event: dict[str, Any], ts: datetime | None) -> dict[str, Any]:
+def _event_log_row(
+    review_event: dict[str, Any],
+    event: dict[str, Any],
+    ts: datetime | None,
+    *,
+    book_level: int | None,
+) -> dict[str, Any]:
     return {
         "review_event_id": review_event["review_event_id"],
         "execution_sort_index": review_event["sort_index"],
@@ -185,6 +246,7 @@ def _event_log_row(review_event: dict[str, Any], event: dict[str, Any], ts: date
         "ORDERPRIORITY": event.get("ORDERPRIORITY"),
         "side": event.get("side_label"),
         "price": event.get("ORDERPX"),
+        "book_level": book_level,
         "displayed_qty": event.get("DISPLAYEDQTY"),
         "leaves_qty": event.get("LEAVESQTY"),
         "last_shares": event.get("LASTSHARES"),
@@ -297,7 +359,12 @@ def reconstruct_review_windows(
             for window in windows:
                 review = window["review"]
                 if window["start"] <= event_ts <= window["end"]:
-                    event_rows.append(_event_log_row(review, event, event_ts))
+                    book_level = _same_side_book_level(
+                        active_orders,
+                        side=event.get("side_label"),
+                        price=event.get("ORDERPX"),
+                    )
+                    event_rows.append(_event_log_row(review, event, event_ts, book_level=book_level))
                     if int(event["sort_index"]) == int(review["sort_index"]):
                         phase = "execution"
                     elif int(event["sort_index"]) < int(review["sort_index"]):
@@ -387,6 +454,94 @@ def _load_parameter_review_events(root: Path, max_events: int | None) -> list[di
     return runs
 
 
+def _format_number(value: Any) -> str:
+    if value is None:
+        return "NA"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:g}"
+
+
+def _format_seconds(value: Any) -> str:
+    if value is None:
+        return "NA"
+    return f"{_format_number(value)} seconds"
+
+
+def _format_gamma_grid(value: Any) -> str:
+    if isinstance(value, list):
+        return ", ".join(_format_number(item) for item in value)
+    if value is None:
+        return "NA"
+    return str(value)
+
+
+def _parameter_table_html(
+    *,
+    review_top_n: int,
+    pre_window_seconds: float,
+    post_window_seconds: float,
+    metric_metadata: dict[str, Any],
+) -> str:
+    rows = [
+        (
+            "LOB review top-N depth",
+            _format_number(review_top_n),
+            "Number of bid and ask price levels reconstructed in the manual event-review chart.",
+        ),
+        (
+            "Metric-run top-N depth",
+            _format_number(metric_metadata.get("top_n")),
+            "Depth used by the MSCI/MCPS run that produced the selected candidate events.",
+        ),
+        (
+            "Candidate-order age window",
+            _format_seconds(metric_metadata.get("max_deceptive_order_age_seconds")),
+            "Maximum time between first seeing the opposite-side candidate order and the small execution.",
+        ),
+        (
+            "Local review window",
+            f"{_format_seconds(pre_window_seconds)} before, {_format_seconds(post_window_seconds)} after",
+            "Event-log and queue-reconstruction interval shown around each selected execution.",
+        ),
+        (
+            "Post-execution cancellation window",
+            _format_seconds(metric_metadata.get("window_seconds")),
+            "Window after the small execution in which a candidate order cancellation is matched.",
+        ),
+        ("kappa", _format_number(metric_metadata.get("kappa")), "Depth-kernel parameter controlling the protection-from-execution component."),
+        (
+            "lambda",
+            _format_number(metric_metadata.get("lambda_")),
+            "Depth-kernel parameter controlling decay of informational visibility with distance.",
+        ),
+        ("epsilon", _format_number(metric_metadata.get("epsilon")), "Small stabilizer used in denominators."),
+        (
+            "MCPS gamma grid",
+            _format_gamma_grid(metric_metadata.get("gamma_grid")),
+            "Thresholds used to aggregate repeated high-MSCI executions into client-level MCPS scores.",
+        ),
+    ]
+    row_html = "\n".join(f"      <tr><td>{name}</td><td>{value}</td><td>{meaning}</td></tr>" for name, value, meaning in rows)
+    return f"""  <table class=\"parameter-table\">
+    <thead><tr><th>Parameter</th><th>Value</th><th>Meaning</th></tr></thead>
+    <tbody>
+{row_html}
+    </tbody>
+  </table>"""
+
+
+def _load_metric_metadata(execution_metrics_path: Path) -> dict[str, Any]:
+    metadata_path = execution_metrics_path.parent / "metadata.json"
+    if not metadata_path.exists():
+        return {}
+    return json.loads(metadata_path.read_text())
+
+
 def _load_llm_reviews(output_dir: Path) -> dict[str, str]:
     root = output_dir / "llm_reviews"
     reviews: dict[str, str] = {}
@@ -426,12 +581,22 @@ def write_dashboard(
     review_events: pl.DataFrame,
     event_log: pl.DataFrame,
     queue: pl.DataFrame,
+    review_top_n: int = 10,
+    pre_window_seconds: float = 30.0,
+    post_window_seconds: float = 5.0,
+    metric_metadata: dict[str, Any] | None = None,
     parameter_review_events: list[dict[str, Any]] | None = None,
     llm_reviews: dict[str, str] | None = None,
     annotations: pl.DataFrame | None = None,
     client_session_alerts: pl.DataFrame | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    parameter_table = _parameter_table_html(
+        review_top_n=review_top_n,
+        pre_window_seconds=pre_window_seconds,
+        post_window_seconds=post_window_seconds,
+        metric_metadata=metric_metadata or {},
+    )
     html = f"""<!doctype html>
 <html>
 <head>
@@ -482,20 +647,7 @@ th {{ background: #f1f4f9; position: sticky; top: 0; }}
     <li><b>Matched spoofing-like events</b> are the strict subset where one of those candidate order IDs is cancelled after the execution.</li>
   </ul>
   <p>The chart overlays total visible depth, candidate-spoofer depth, and the executed small-order volume. These outputs are exploratory surveillance evidence, not proof of intent.</p>
-  <table class=\"parameter-table\">
-    <thead><tr><th>Parameter</th><th>Value</th><th>Meaning</th></tr></thead>
-    <tbody>
-      <tr><td>LOB review top-N depth</td><td>10</td><td>Number of bid and ask price levels reconstructed in the manual event-review chart.</td></tr>
-      <tr><td>Metric-run top-N depth</td><td>3</td><td>Depth used by the MSCI/MCPS run that produced the selected candidate events.</td></tr>
-      <tr><td>Candidate-order age window</td><td>600 seconds</td><td>Maximum time between first seeing the opposite-side candidate order and the small execution.</td></tr>
-      <tr><td>Local review window</td><td>30 seconds before, 5 seconds after</td><td>Event-log and queue-reconstruction interval shown around each selected execution.</td></tr>
-      <tr><td>Post-execution cancellation window</td><td>1 second</td><td>Window after the small execution in which a candidate order cancellation is matched.</td></tr>
-      <tr><td>kappa</td><td>1</td><td>Depth-kernel parameter controlling the protection-from-execution component.</td></tr>
-      <tr><td>lambda</td><td>1</td><td>Depth-kernel parameter controlling decay of informational visibility with distance.</td></tr>
-      <tr><td>epsilon</td><td>1e-12</td><td>Small stabilizer used in denominators.</td></tr>
-      <tr><td>MCPS gamma grid</td><td>configured run grid</td><td>Thresholds used to aggregate repeated high-MSCI executions into client-level MCPS scores.</td></tr>
-    </tbody>
-  </table>
+{parameter_table}
 </div>
 <div class=\"card\"><h2>Client-session alerts</h2><div id=\"clientSessionAlerts\"></div></div>
 <div class=\"card\"><div id=\"overview\"></div></div>
@@ -712,7 +864,7 @@ function renderLLMReview(ev) {{
 }}
 function renderEventTable(ev) {{
   const rows = byEvent(ev.review_event_id, eventLog).sort((a,b) => a.sort_index-b.sort_index);
-  const html = ['<div class="event-legend"><span class="event-row-client">review client</span><span class="event-row-execution">small execution</span><span class="event-row-candidate">candidate order</span><span class="event-row-matched-cancel">matched cancel</span></div><table><thead><tr><th>sort</th><th>time</th><th>class</th><th>side</th><th>price</th><th>ORDERID</th><th>client</th><th>leaves</th><th>displayed</th><th>last shares</th><th>flags</th></tr></thead><tbody>'];
+  const html = ['<div class="event-legend"><span class="event-row-client">review client</span><span class="event-row-execution">small execution</span><span class="event-row-candidate">candidate order</span><span class="event-row-matched-cancel">matched cancel</span></div><table><thead><tr><th>sort</th><th>time</th><th>class</th><th>side</th><th>price</th><th>level</th><th>ORDERID</th><th>client</th><th>leaves</th><th>displayed</th><th>last shares</th><th>flags</th></tr></thead><tbody>'];
   for (const r of rows) {{
     const flags = [r.is_execution_order?'execution':'', r.is_candidate_deceptive_order?'candidate':'', r.is_matched_deceptive_cancel_order?'matched-cancel':'', r.is_review_client?'client':''].filter(Boolean).join(', ');
     const rowClasses = [
@@ -721,7 +873,7 @@ function renderEventTable(ev) {{
       r.is_candidate_deceptive_order ? 'event-row-candidate' : '',
       r.is_matched_deceptive_cancel_order ? 'event-row-matched-cancel' : ''
     ].filter(Boolean).join(' ');
-    html.push(`<tr class="${{rowClasses}}"><td>${{r.sort_index}}</td><td>${{r.event_ts}}</td><td>${{r.event_class}}</td><td>${{r.side ?? ''}}</td><td>${{r.price ?? ''}}</td><td>${{r.ORDERID ?? ''}}</td><td>${{r.client_id ?? ''}}</td><td>${{r.leaves_qty ?? ''}}</td><td>${{r.displayed_qty ?? ''}}</td><td>${{r.last_shares ?? ''}}</td><td>${{flags}}</td></tr>`);
+    html.push(`<tr class="${{rowClasses}}"><td>${{r.sort_index}}</td><td>${{r.event_ts}}</td><td>${{r.event_class}}</td><td>${{r.side ?? ''}}</td><td>${{r.price ?? ''}}</td><td>${{r.book_level ?? ''}}</td><td>${{r.ORDERID ?? ''}}</td><td>${{r.client_id ?? ''}}</td><td>${{r.leaves_qty ?? ''}}</td><td>${{r.displayed_qty ?? ''}}</td><td>${{r.last_shares ?? ''}}</td><td>${{flags}}</td></tr>`);
   }}
   html.push('</tbody></table>');
   document.getElementById('eventTable').innerHTML = html.join('');
@@ -797,11 +949,16 @@ def main(argv: list[str] | None = None) -> None:
     artifact_paths = write_review_artifacts(output_dir=args.output_dir, event_log=event_log_df, queue=queue_df)
     event_log_path = artifact_paths["event_log"]
     queue_path = artifact_paths["queue"]
+    metric_metadata = _load_metric_metadata(args.execution_metrics)
     write_dashboard(
         dashboard_path,
         review_events=review_df,
         event_log=event_log_df,
         queue=queue_df,
+        review_top_n=args.top_n,
+        pre_window_seconds=args.pre_window_seconds,
+        post_window_seconds=args.post_window_seconds,
+        metric_metadata=metric_metadata,
         parameter_review_events=parameter_review_events,
         llm_reviews=_load_llm_reviews(args.output_dir),
         annotations=_load_annotations(args.annotations),
@@ -817,6 +974,15 @@ def main(argv: list[str] | None = None) -> None:
         "pre_window_seconds": args.pre_window_seconds,
         "post_window_seconds": args.post_window_seconds,
         "queue_snapshot_mode": args.queue_snapshot_mode,
+        "metric_run_parameters": {
+            "top_n": metric_metadata.get("top_n"),
+            "window_seconds": metric_metadata.get("window_seconds"),
+            "max_deceptive_order_age_seconds": metric_metadata.get("max_deceptive_order_age_seconds"),
+            "kappa": metric_metadata.get("kappa"),
+            "lambda_": metric_metadata.get("lambda_"),
+            "epsilon": metric_metadata.get("epsilon"),
+            "gamma_grid": metric_metadata.get("gamma_grid"),
+        },
         "parameter_grid_root": str(args.parameter_grid_root) if args.parameter_grid_root else None,
         "parameter_run_count": len(parameter_review_events),
         "review_event_count": review_df.height,

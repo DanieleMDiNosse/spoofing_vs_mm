@@ -16,12 +16,29 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from spoofing_detection.lob.client_identity_audit import audit_missing_client_trading_capacity
+from spoofing_detection.lob.depth_kernel_calibration import load_empirical_kernel_weights
 from spoofing_detection.lob.spoofing_metric_plots import write_spoofing_metric_dashboard
 from spoofing_detection.lob.spoofing_metrics import (
     compute_exploratory_metrics,
     compute_mcps_scores,
     infer_tick_size_from_best_quotes,
 )
+from spoofing_detection.lob.spoofing_config import DEFAULT_SPOOFING_CONFIG_PATH, load_spoofing_config_defaults
+
+
+_CONFIGURABLE_DEFAULT_KEYS = {
+    "depth_grid",
+    "kappa",
+    "lambda_",
+    "epsilon",
+    "window_seconds",
+    "max_deceptive_order_age_seconds",
+    "gamma_grid",
+    "tick_size",
+    "max_rows",
+    "make_dashboard",
+    "empirical_depth_kernel",
+}
 
 
 def _parse_int_grid(text: str) -> list[int]:
@@ -86,7 +103,22 @@ def _depth_counts_from_files(paths: dict[str, Path]) -> dict[str, int]:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", type=Path, default=DEFAULT_SPOOFING_CONFIG_PATH)
+    config_args, _ = config_parser.parse_known_args(argv)
+    config_defaults = load_spoofing_config_defaults(
+        config_path=config_args.config,
+        section="grid",
+        allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
+    )
+
     parser = argparse.ArgumentParser(description="Run multidepth top-n MSCI/MCPS spoofing metrics.")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=config_args.config,
+        help="JSON config file containing spoofing parameter defaults",
+    )
     parser.add_argument("--input", type=Path, required=True, help="Raw input parquet event file")
     parser.add_argument("--quote-panel", type=Path, default=None, help="Quote panel for tick-size inference")
     parser.add_argument("--output-dir", type=Path, required=True, help="Output directory")
@@ -104,8 +136,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--gamma-grid", default="0.25,0.5,0.75,1.0", help="Comma-separated MSCI thresholds")
     parser.add_argument("--tick-size", type=float, default=None, help="Optional explicit tick size")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional raw-row cap for smoke runs")
-    parser.add_argument("--make-dashboard", action="store_true", help="Write one dashboard per depth")
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--empirical-depth-kernel",
+        type=Path,
+        default=None,
+        help="Optional empirical_depth_kernel parquet/csv artifact. When set, rank weights override scalar kappa/lambda in DWI/MSCI weighting.",
+    )
+    parser.add_argument(
+        "--make-dashboard",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Write one dashboard per depth",
+    )
+    parser.set_defaults(**config_defaults)
+    args = parser.parse_args(argv)
+    if args.empirical_depth_kernel is not None and not isinstance(args.empirical_depth_kernel, Path):
+        args.empirical_depth_kernel = Path(args.empirical_depth_kernel)
+    return args
 
 
 def _write_grid_summary(path: Path, *, metadata: dict[str, Any], combined_scores: pl.DataFrame) -> None:
@@ -168,6 +215,9 @@ def main(argv: list[str] | None = None) -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     client_audit = audit_missing_client_trading_capacity(raw_events_for_compute)
+    empirical_kernel_weights = (
+        load_empirical_kernel_weights(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None
+    )
     combined_score_frames: list[pl.DataFrame] = []
     per_depth_counts: dict[str, dict[str, int]] = {}
 
@@ -197,6 +247,7 @@ def main(argv: list[str] | None = None) -> None:
             window_seconds=args.window_seconds,
             include_level_columns=top_n <= 5,
             max_deceptive_order_age_seconds=args.max_deceptive_order_age_seconds,
+            empirical_kernel_weights=empirical_kernel_weights,
         )
         scores = compute_mcps_scores(result.execution_metrics, gamma_grid=gamma_grid)
         _write_parquet(result.state_time_series, paths["state_time_series"])
@@ -231,6 +282,7 @@ def main(argv: list[str] | None = None) -> None:
         "input": str(args.input),
         "quote_panel": str(args.quote_panel) if args.quote_panel is not None else None,
         "output_dir": str(args.output_dir),
+        "config": str(args.config) if args.config is not None and args.config.exists() else None,
         "depth_grid": depth_grid,
         "kappa": args.kappa,
         "lambda_": args.lambda_,
@@ -240,6 +292,8 @@ def main(argv: list[str] | None = None) -> None:
         "gamma_grid": gamma_grid,
         "tick_size": tick_size,
         "max_rows": args.max_rows,
+        "empirical_depth_kernel": str(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None,
+        "kernel_mode": "empirical" if args.empirical_depth_kernel is not None else "parametric",
         "client_identity_audit": client_audit,
         "per_depth_counts": per_depth_counts,
         "combined_client_mcps_scores": str(combined_path),

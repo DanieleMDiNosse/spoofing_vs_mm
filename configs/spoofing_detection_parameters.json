@@ -1,0 +1,76 @@
+{
+  "metrics": {
+    "top_n": 5,
+    "kappa": 1.0,
+    "lambda": 1.0,
+    "epsilon": 1e-12,
+    "window_seconds": 10.0,
+    "max_deceptive_order_age_seconds": 90.0,
+    "gamma_grid": [0.001, 0.005, 0.01, 0.025, 0.05, 0.1],
+    "tick_size": null,
+    "state_client_mode": "passive-fill-clients",
+    "compact_state": true,
+    "empirical_depth_kernel": null
+  },
+  "grid": {
+    "depth_grid": [1, 2, 3, 5, 10],
+    "kappa": 1.0,
+    "lambda": 1.0,
+    "epsilon": 1e-12,
+    "window_seconds": 10.0,
+    "max_deceptive_order_age_seconds": 90.0,
+    "gamma_grid": [0.001, 0.005, 0.01, 0.025, 0.05, 0.1],
+    "tick_size": null,
+    "make_dashboard": false,
+    "empirical_depth_kernel": null
+  },
+  "event_review": {
+    "top_n": 10,
+    "pre_window_seconds": 30.0,
+    "post_window_seconds": 35.0,
+    "queue_snapshot_mode": "key-events"
+  },
+  "production_readiness": {
+    "msci_threshold": 0.001,
+    "min_events": 3,
+    "min_mcps": 0.0
+  },
+  "parameter_descriptions": {
+    "metrics": {
+      "top_n": "Number of visible bid/ask book levels used to build each client's weighted depth profile for DWI/MSCI computation.",
+      "kappa": "Depth-kernel execution-risk protection parameter; larger values increase the protection-from-execution component for levels away from the best quote.",
+      "lambda": "Depth-kernel visibility-decay parameter; larger values down-weight levels farther from the best quote more aggressively.",
+      "epsilon": "Small numerical stabilizer used in denominators to avoid division by zero without changing ordinary finite ratios.",
+      "window_seconds": "Post-execution clock-time window used to measure liquidity collapse, matched cancellations, and price-response diagnostics after a passive fill.",
+      "max_deceptive_order_age_seconds": "Maximum allowed age of a pre-existing same-client opposite-side candidate order before the execution; older orders are excluded as stale background liquidity.",
+      "gamma_grid": "MSCI thresholds used to aggregate event-level MSCI exceedances into client-level MCPS repetition scores.",
+      "tick_size": "Explicit minimum price increment for depth-distance calculations; null means infer it from the reconstructed best bid/ask quote panel.",
+      "state_client_mode": "Controls which clients get DWI state rows: 'all' keeps all clients, while 'passive-fill-clients' keeps only clients that can enter passive-fill surveillance events to reduce memory.",
+      "compact_state": "When true, omits per-level diagnostic columns from client_metric_time_series while keeping the aggregate DWI/L_bid/L_ask state needed by downstream outputs.",
+      "empirical_depth_kernel": "Optional empirical depth-kernel parquet/csv artifact. When set, rank weights replace the scalar kappa/lambda kernel in DWI/MSCI weighting."
+    },
+    "grid": {
+      "depth_grid": "Set of top-N depths to evaluate in the multidepth sensitivity grid.",
+      "kappa": "Depth-kernel execution-risk protection parameter used for every depth-grid run unless overridden on the CLI.",
+      "lambda": "Depth-kernel visibility-decay parameter used for every depth-grid run unless overridden on the CLI.",
+      "epsilon": "Small denominator stabilizer used for every depth-grid run.",
+      "window_seconds": "Post-execution clock-time window used for every depth-grid run.",
+      "max_deceptive_order_age_seconds": "Maximum age of candidate deceptive orders before the execution in every depth-grid run.",
+      "gamma_grid": "MSCI thresholds used to compute MCPS for each depth in the grid.",
+      "tick_size": "Explicit tick size for grid runs; null means infer it from the quote panel.",
+      "make_dashboard": "When true, writes a spoofing_metric_dashboard.html for each depth run in addition to parquet and summary outputs.",
+      "empirical_depth_kernel": "Optional empirical depth-kernel parquet/csv artifact applied to every depth-grid run when present."
+    },
+    "event_review": {
+      "top_n": "Number of visible book levels to reconstruct and display in event-review queue snapshots.",
+      "pre_window_seconds": "Clock-time interval before the selected execution shown in the event-review log and LOB queue context.",
+      "post_window_seconds": "Clock-time interval after the selected execution shown in the event-review log and LOB queue context.",
+      "queue_snapshot_mode": "Queue output density: 'all' writes snapshots for every event in the review window, while 'key-events' writes only nearest pre/execution/post snapshots to reduce dashboard size."
+    },
+    "production_readiness": {
+      "msci_threshold": "Event-level MSCI cutoff used when counting client-session MSCI exceedances for alert features.",
+      "min_events": "Minimum number of repeated matched-withdrawal events required before emitting a human-review alert.",
+      "min_mcps": "Optional minimum matched-event share required for an alert; 0 disables the share floor so active clients with many matched withdrawals are not dropped only because their denominator is large."
+    }
+  }
+}

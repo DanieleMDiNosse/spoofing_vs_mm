@@ -17,6 +17,10 @@ if str(SRC_DIR) not in sys.path:
 from spoofing_detection.lob.alert_objects import build_client_session_alerts
 from spoofing_detection.lob.client_session_features import compute_client_session_features
 from spoofing_detection.lob.legitimacy_features import compute_legitimacy_features
+from spoofing_detection.lob.spoofing_config import DEFAULT_SPOOFING_CONFIG_PATH, load_spoofing_config_defaults
+
+
+_CONFIGURABLE_DEFAULT_KEYS = {"msci_threshold", "min_events", "min_mcps"}
 
 
 def run_pipeline(
@@ -46,13 +50,34 @@ def run_pipeline(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", type=Path, default=DEFAULT_SPOOFING_CONFIG_PATH)
+    config_args, _ = config_parser.parse_known_args(argv)
+    config_defaults = load_spoofing_config_defaults(
+        config_path=config_args.config,
+        section="production_readiness",
+        allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
+    )
+
     parser = argparse.ArgumentParser(description="Run production-readiness spoofing surveillance layer.")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=config_args.config,
+        help="JSON config file containing spoofing parameter defaults",
+    )
     parser.add_argument("--execution-metrics", type=Path, required=True)
     parser.add_argument("--event-log", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--msci-threshold", type=float, default=0.5)
-    parser.add_argument("--min-events", type=int, default=3)
-    parser.add_argument("--min-mcps", type=float, default=0.25)
+    parser.add_argument("--min-events", type=int, default=3, help="minimum repeated matched-withdrawal events required")
+    parser.add_argument(
+        "--min-mcps",
+        type=float,
+        default=0.0,
+        help="optional minimum matched-event share floor; 0 disables the share floor",
+    )
+    parser.set_defaults(**config_defaults)
     return parser.parse_args(argv)
 
 

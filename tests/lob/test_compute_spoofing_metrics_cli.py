@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import polars as pl
@@ -52,3 +53,81 @@ def test_parse_args_supports_compact_memory_options(tmp_path: Path):
 
     assert args.state_client_mode == "passive-fill-clients"
     assert args.compact_state is True
+
+
+def test_parse_args_loads_spoofing_metric_parameters_from_config_with_cli_overrides(tmp_path: Path):
+    module = load_module()
+    config_path = tmp_path / "spoofing_parameters.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "metrics": {
+                    "top_n": 5,
+                    "kappa": 2.0,
+                    "lambda": 0.5,
+                    "window_seconds": 30.0,
+                    "max_deceptive_order_age_seconds": 120.0,
+                    "gamma_grid": [0.001, 0.01],
+                    "state_client_mode": "passive-fill-clients",
+                    "compact_state": True,
+                    "empirical_depth_kernel": str(tmp_path / "kernel.parquet"),
+                }
+            }
+        )
+    )
+
+    args = module.parse_args(
+        [
+            "--config",
+            str(config_path),
+            "--input",
+            str(tmp_path / "input.parquet"),
+            "--quote-panel",
+            str(tmp_path / "quotes.parquet"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--top-n",
+            "7",
+        ]
+    )
+
+    assert args.config == config_path
+    assert args.top_n == 7
+    assert args.kappa == 2.0
+    assert args.lambda_ == 0.5
+    assert args.window_seconds == 30.0
+    assert args.max_deceptive_order_age_seconds == 120.0
+    assert args.gamma_grid == "0.001,0.01"
+    assert args.state_client_mode == "passive-fill-clients"
+    assert args.compact_state is True
+    assert args.empirical_depth_kernel == tmp_path / "kernel.parquet"
+
+    cli_kernel = tmp_path / "cli_kernel.parquet"
+    cli_args = module.parse_args(
+        [
+            "--input",
+            str(tmp_path / "input.parquet"),
+            "--quote-panel",
+            str(tmp_path / "quotes.parquet"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--empirical-depth-kernel",
+            str(cli_kernel),
+        ]
+    )
+    assert cli_args.empirical_depth_kernel == cli_kernel
+
+    override_args = module.parse_args(
+        [
+            "--config",
+            str(config_path),
+            "--input",
+            str(tmp_path / "input.parquet"),
+            "--quote-panel",
+            str(tmp_path / "quotes.parquet"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--no-compact-state",
+        ]
+    )
+    assert override_args.compact_state is False

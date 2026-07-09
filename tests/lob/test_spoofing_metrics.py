@@ -167,6 +167,35 @@ def test_compute_client_top_n_exposures_uses_paper_aligned_dwi():
     assert "P1" not in by_client
 
 
+def test_compute_client_top_n_exposures_can_use_empirical_rank_weights():
+    active = {
+        "B1": order("B1", "bid", 100.0, 10.0, "C1"),
+        "B2": order("B2", "bid", 99.9, 20.0, "C1"),
+        "A1": order("A1", "ask", 100.2, 5.0, "C1"),
+        "A2": order("A2", "ask", 100.3, 15.0, "C2"),
+    }
+    empirical_weights = {"bid": {1: 0.25, 2: 0.75}, "ask": {1: 0.80, 2: 0.20}}
+
+    rows = compute_client_top_n_exposures(
+        active,
+        top_n=2,
+        tick_size=0.1,
+        kappa=1.0,
+        lambda_=0.5,
+        partition_id="P",
+        sort_index=10,
+        event_ts=None,
+        empirical_kernel_weights=empirical_weights,
+    )
+
+    c1 = {row["client_id"]: row for row in rows}["C1"]
+    assert c1["bid_level_1_kernel_weight"] == pytest.approx(0.25)
+    assert c1["bid_level_2_kernel_weight"] == pytest.approx(0.75)
+    assert c1["ask_level_1_kernel_weight"] == pytest.approx(0.80)
+    assert c1["L_bid_topN"] == pytest.approx(0.25 + 0.75)
+    assert c1["L_ask_topN"] == pytest.approx(0.80)
+
+
 def test_compute_client_top_n_exposures_can_filter_to_clients_of_interest():
     active = {
         "B1": order("B1", "bid", 100.0, 10.0, "C1"),

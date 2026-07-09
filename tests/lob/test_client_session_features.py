@@ -34,8 +34,11 @@ def test_compute_client_session_features_aggregates_repeated_events():
     assert row_a["matched_event_count"] == 1
     assert row_a["matched_event_share"] == 0.5
     assert row_a["max_WMSCI_event"] == 4.0
-    assert row_a["positive_fpm_mid_share"] == 0.5
-    assert row_a["positive_reversion_mid_share"] == 0.5
+    assert row_a["mean_WMSCI_event"] == 4.0
+    assert row_a["mean_withdrawal_to_fill_ratio"] == 10.0
+    assert row_a["positive_fpm_mid_share"] == 1.0
+    assert row_a["positive_reversion_mid_share"] == 0.0
+    assert row_a["mean_execution_price_advantage_vs_posture_mid"] == 0.03
 
 
 def test_compute_client_session_features_handles_empty_input():

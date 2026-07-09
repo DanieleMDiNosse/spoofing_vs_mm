@@ -1,0 +1,61 @@
+{
+  "command": [
+    "scripts/estimate_depth_kernel.py",
+    "--input",
+    "data/ExportGridData_2026-05-20_090247703_RISANAMENTO_01062024_30112024_FG.parquet",
+    "--quote-panel",
+    "outputs/lob_reconstruction/20260618_105229_all_files_validation_post_warning_fix/ExportGridData_2026-05-20_090247703_RISANAMENTO_01062024_30112024_FG/lob_event_state_panel.parquet",
+    "--instrument-id",
+    "RISANAMENTO",
+    "--top-n",
+    "5",
+    "--horizon-seconds",
+    "30",
+    "--output-dir",
+    "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/RISANAMENTO_top5_h30",
+    "--visibility-floor",
+    "1e-12"
+  ],
+  "created_at_utc": "2026-07-09T13:51:05.000019+00:00",
+  "horizon_seconds": 30.0,
+  "input": "data/ExportGridData_2026-05-20_090247703_RISANAMENTO_01062024_30112024_FG.parquet",
+  "input_rows_for_calibration": 143018,
+  "instrument_id": "RISANAMENTO",
+  "instrument_summary": {
+    "instrument_id": "RISANAMENTO",
+    "kappa_hat_instrument": 0.7292004442281189,
+    "lambda_hat_instrument": 0.0
+  },
+  "is_full_sample_calibration": true,
+  "max_rows": null,
+  "output_dir": "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/RISANAMENTO_top5_h30",
+  "paths": {
+    "kernel_csv": "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/RISANAMENTO_top5_h30/empirical_depth_kernel.csv",
+    "kernel_parquet": "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/RISANAMENTO_top5_h30/empirical_depth_kernel.parquet",
+    "metadata": "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/RISANAMENTO_top5_h30/metadata.json",
+    "summary_report": "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/RISANAMENTO_top5_h30/summary_report.md"
+  },
+  "protection_floor": 0.0,
+  "quote_panel": "outputs/lob_reconstruction/20260618_105229_all_files_validation_post_warning_fix/ExportGridData_2026-05-20_090247703_RISANAMENTO_01062024_30112024_FG/lob_event_state_panel.parquet",
+  "raw_event_rows": 143018,
+  "runtime": {
+    "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
+    "polars": "1.41.2",
+    "python": "3.11.14 | packaged by conda-forge | (main, Oct 22 2025, 22:46:25) [GCC 14.3.0]"
+  },
+  "tick_size": 9.999999999999593e-05,
+  "top_n": 5,
+  "visibility_floor": 1e-12,
+  "weight_sums": [
+    {
+      "instrument_id": "RISANAMENTO",
+      "side": "ask",
+      "weight_sum": 1.0
+    },
+    {
+      "instrument_id": "RISANAMENTO",
+      "side": "bid",
+      "weight_sum": 1.0
+    }
+  ]
+}

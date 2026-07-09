@@ -66,6 +66,30 @@ def compute_client_session_features(executions: pl.DataFrame, *, msci_threshold:
                 (pl.col("post_cancel_mid_reversion") > 0).cast(pl.UInt8).alias("positive_reversion_mid"),
             ]
         )
+        .with_columns(
+            [
+                pl.when(pl.col("matched_event") == 1)
+                .then(pl.col("WMSCI_event"))
+                .otherwise(None)
+                .alias("matched_WMSCI_event"),
+                pl.when(pl.col("matched_event") == 1)
+                .then(pl.col("withdrawal_to_fill_ratio"))
+                .otherwise(None)
+                .alias("matched_withdrawal_to_fill_ratio"),
+                pl.when(pl.col("matched_event") == 1)
+                .then(pl.col("positive_fpm_mid"))
+                .otherwise(None)
+                .alias("matched_positive_fpm_mid"),
+                pl.when(pl.col("matched_event") == 1)
+                .then(pl.col("positive_reversion_mid"))
+                .otherwise(None)
+                .alias("matched_positive_reversion_mid"),
+                pl.when(pl.col("matched_event") == 1)
+                .then(pl.col("execution_price_advantage_vs_posture_mid"))
+                .otherwise(None)
+                .alias("matched_execution_price_advantage_vs_posture_mid"),
+            ]
+        )
         .group_by("client_id")
         .agg(
             [
@@ -75,11 +99,11 @@ def compute_client_session_features(executions: pl.DataFrame, *, msci_threshold:
                 pl.col("MSCI").mean().alias("mean_MSCI"),
                 pl.col("matched_event").sum().cast(pl.UInt32).alias("matched_event_count"),
                 pl.col("WMSCI_event").max().alias("max_WMSCI_event"),
-                pl.col("WMSCI_event").mean().alias("mean_WMSCI_event"),
-                pl.col("withdrawal_to_fill_ratio").mean().alias("mean_withdrawal_to_fill_ratio"),
-                pl.col("positive_fpm_mid").mean().alias("positive_fpm_mid_share"),
-                pl.col("positive_reversion_mid").mean().alias("positive_reversion_mid_share"),
-                pl.col("execution_price_advantage_vs_posture_mid").mean().alias(
+                pl.col("matched_WMSCI_event").mean().alias("mean_WMSCI_event"),
+                pl.col("matched_withdrawal_to_fill_ratio").mean().alias("mean_withdrawal_to_fill_ratio"),
+                pl.col("matched_positive_fpm_mid").mean().alias("positive_fpm_mid_share"),
+                pl.col("matched_positive_reversion_mid").mean().alias("positive_reversion_mid_share"),
+                pl.col("matched_execution_price_advantage_vs_posture_mid").mean().alias(
                     "mean_execution_price_advantage_vs_posture_mid"
                 ),
                 pl.col("SCI").mean().alias("mean_SCI"),

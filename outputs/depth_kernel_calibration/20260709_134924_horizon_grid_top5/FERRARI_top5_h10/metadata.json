@@ -1,0 +1,61 @@
+{
+  "command": [
+    "scripts/estimate_depth_kernel.py",
+    "--input",
+    "data/ExportGridData_2026-05-19_130707032_FERRARI_13062024_FG.parquet",
+    "--quote-panel",
+    "outputs/lob_reconstruction/20260618_105229_all_files_validation_post_warning_fix/ExportGridData_2026-05-19_130707032_FERRARI_13062024_FG/lob_event_state_panel.parquet",
+    "--instrument-id",
+    "FERRARI",
+    "--top-n",
+    "5",
+    "--horizon-seconds",
+    "10",
+    "--output-dir",
+    "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/FERRARI_top5_h10",
+    "--visibility-floor",
+    "1e-12"
+  ],
+  "created_at_utc": "2026-07-09T15:07:28.132643+00:00",
+  "horizon_seconds": 10.0,
+  "input": "data/ExportGridData_2026-05-19_130707032_FERRARI_13062024_FG.parquet",
+  "input_rows_for_calibration": 481798,
+  "instrument_id": "FERRARI",
+  "instrument_summary": {
+    "instrument_id": "FERRARI",
+    "kappa_hat_instrument": 0.9844923901926402,
+    "lambda_hat_instrument": 0.1537924343096788
+  },
+  "is_full_sample_calibration": true,
+  "max_rows": null,
+  "output_dir": "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/FERRARI_top5_h10",
+  "paths": {
+    "kernel_csv": "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/FERRARI_top5_h10/empirical_depth_kernel.csv",
+    "kernel_parquet": "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/FERRARI_top5_h10/empirical_depth_kernel.parquet",
+    "metadata": "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/FERRARI_top5_h10/metadata.json",
+    "summary_report": "outputs/depth_kernel_calibration/20260709_134924_horizon_grid_top5/FERRARI_top5_h10/summary_report.md"
+  },
+  "protection_floor": 0.0,
+  "quote_panel": "outputs/lob_reconstruction/20260618_105229_all_files_validation_post_warning_fix/ExportGridData_2026-05-19_130707032_FERRARI_13062024_FG/lob_event_state_panel.parquet",
+  "raw_event_rows": 481798,
+  "runtime": {
+    "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
+    "polars": "1.41.2",
+    "python": "3.11.14 | packaged by conda-forge | (main, Oct 22 2025, 22:46:25) [GCC 14.3.0]"
+  },
+  "tick_size": 0.0999999999999659,
+  "top_n": 5,
+  "visibility_floor": 1e-12,
+  "weight_sums": [
+    {
+      "instrument_id": "FERRARI",
+      "side": "ask",
+      "weight_sum": 1.0
+    },
+    {
+      "instrument_id": "FERRARI",
+      "side": "bid",
+      "weight_sum": 1.0
+    }
+  ]
+}

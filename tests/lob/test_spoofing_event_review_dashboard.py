@@ -16,11 +16,20 @@ _review = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_review)
 
 
-def _order(order_id: str, *, client: str | None, qty: float, priority: str, first_seen: int) -> ActiveOrder:
+def _order(
+    order_id: str,
+    *,
+    client: str | None,
+    qty: float,
+    priority: str,
+    first_seen: int,
+    side: str = "bid",
+    price: float = 10.0,
+) -> ActiveOrder:
     return ActiveOrder(
         order_id=order_id,
-        side="bid",
-        price=10.0,
+        side=side,
+        price=price,
         leaves_qty=qty,
         displayed_qty=qty,
         order_qty=qty,
@@ -91,6 +100,45 @@ def test_client_queue_dict_reports_client_percent_volume_and_priority():
     assert payload["client_2"]["priority"] == 2
 
 
+def test_parse_args_loads_event_review_parameters_from_config_with_cli_overrides(tmp_path: Path):
+    config_path = tmp_path / "spoofing_parameters.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "event_review": {
+                    "top_n": 10,
+                    "pre_window_seconds": 30.0,
+                    "post_window_seconds": 35.0,
+                    "queue_snapshot_mode": "key-events",
+                }
+            }
+        )
+    )
+
+    args = _review.parse_args(
+        [
+            "--config",
+            str(config_path),
+            "--input",
+            str(tmp_path / "input.parquet"),
+            "--execution-metrics",
+            str(tmp_path / "execution_metrics.parquet"),
+            "--candidate-deceptive-orders",
+            str(tmp_path / "candidate_deceptive_orders.parquet"),
+            "--output-dir",
+            str(tmp_path / "event_review"),
+            "--top-n",
+            "12",
+        ]
+    )
+
+    assert args.config == config_path
+    assert args.top_n == 12
+    assert args.pre_window_seconds == 30.0
+    assert args.post_window_seconds == 35.0
+    assert args.queue_snapshot_mode == "key-events"
+
+
 def test_queue_rows_include_candidate_and_matched_flags_with_positions():
     active_orders = {"A": _order("A", client="client_1", qty=30.0, priority="1", first_seen=1), "B": _order("B", client="client_2", qty=20.0, priority="2", first_seen=2)}
     rows = _review._queue_rows_for_snapshot(
@@ -113,6 +161,31 @@ def test_queue_rows_include_candidate_and_matched_flags_with_positions():
     assert rows[0]["is_matched_deceptive_cancel_order"] is True
     assert rows[1]["is_review_client"] is False
     assert rows[1]["is_candidate_deceptive_order"] is False
+
+
+def test_same_side_book_level_reports_bid_and_ask_rank_even_if_price_empty():
+    active_orders = {
+        "B1": _order("B1", client="c", qty=10.0, priority="1", first_seen=1, side="bid", price=10.0),
+        "B3": _order("B3", client="c", qty=10.0, priority="2", first_seen=2, side="bid", price=9.0),
+        "A1": _order("A1", client="c", qty=10.0, priority="3", first_seen=3, side="ask", price=10.5),
+        "A3": _order("A3", client="c", qty=10.0, priority="4", first_seen=4, side="ask", price=11.5),
+    }
+
+    assert _review._same_side_book_level(active_orders, side="bid", price=9.5) == 2
+    assert _review._same_side_book_level(active_orders, side="ask", price=11.0) == 2
+    assert _review._same_side_book_level(active_orders, side="ask", price=None) is None
+
+
+def test_dashboard_event_table_displays_same_side_book_level(tmp_path):
+    path = tmp_path / "dashboard.html"
+    review_events, event_log, queue = _minimal_dashboard_frames()
+    event_log = event_log.with_columns(pl.Series("book_level", [1, 2]))
+
+    _review.write_dashboard(path, review_events=review_events, event_log=event_log, queue=queue)
+
+    html = path.read_text()
+    assert "<th>level</th>" in html
+    assert "r.book_level" in html
 
 
 def test_dashboard_includes_llm_review_panel(tmp_path):

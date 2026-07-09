@@ -291,38 +291,10 @@ using the full order-flow sequence available in proprietary data.
 
 The empirical diagnostics reported below are computed on three CONSOB limit-order-book message samples: Risanamento
 (June--November 2024), Nexi (23 April 2024), and Ferrari (13 June 2024). For each instrument we reconstruct the visible
-order book from order-level events, infer the tick size from the reconstructed best quotes, and compute the top-$3$
-episode-conditioned metrics using a $30$-second post-execution cancellation window and a $600$-second maximum age for
+order book from order-level events, infer the tick size from the reconstructed best quotes, and compute the top-$5$
+episode-conditioned metrics using a $10$-second post-execution cancellation window and a $90$-second maximum age for
 candidate opposite-side orders. The resulting objects are surveillance alerts for analyst review rather than enforcement
 labels.
-
-\begin{table}[htbp]
-\centering
-\caption{Exploratory top-$3$ spoofing-compatible detections across the three samples. Matched events are small passive
-executions followed by same-client cancellation of an opposite-side candidate order inside the post-execution window.
-The price-response shares report the fraction of matched events with positive signed mid-price favorable pre-fill movement
-or post-cancel reversion.}
-\label{tab:empirical_spoofing_diagnostics}
-\small
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{lrrrrrrr}
-\toprule
-Instrument & Executions & Matched events & Clients & Alerts & Max WMSCI & FPM$>0$ & REV$>0$ \\
-\midrule
-Risanamento & 15,341 & 417 & 15 & 10 & 93.09 & 40.5\% & 18.4\% \\
-Nexi        &  5,402 & 657 &  9 &  6 & 38.63 & 68.3\% & 42.2\% \\
-Ferrari     &  3,498 & 427 &  6 &  4 & 15.61 & 67.4\% & 38.6\% \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-The table highlights two empirical points. First, matched-withdrawal evidence is not specific to one instrument: the
-same event definition recovers repeated same-client opposite-side withdrawals in all three samples. Second, the economic
-price-response diagnostics are heterogeneous. Risanamento contains the largest WMSCI events and the most extreme
-withdrawal-to-fill ratios, but only a minority of matched events have positive mid-price reversion after cancellation.
-Nexi and Ferrari have lower maximum WMSCI values but a larger fraction of matched events with favorable pre-fill movement
-and post-cancel reversion. This is why the implementation keeps WMSCI, repetition, and price-response diagnostics as
-separate pieces of evidence rather than collapsing them into a single proof-of-intent score.
 
 \section{Model}
 \label{sec:model}
@@ -496,6 +468,150 @@ controls the decay of informational visibility at deeper levels. The product for
 spoofer: a deceptive order should be sufficiently far from the touch to reduce execution risk, but not so far that it
 becomes irrelevant for short-horizon imbalance signals.
 
+\begin{figure}[htbp]
+    \centering
+    \resizebox{0.95\textwidth}{!}{%
+    \begin{tikzpicture}[
+        x=0.55cm,
+        y=3.1cm,
+        font=\footnotesize,
+        axis/.style={->, thick},
+        visibility/.style={very thick, blue!70!black},
+        protection/.style={very thick, orange!80!black},
+        kernel/.style={very thick, red!75!black},
+        weightbar/.style={fill=red!35, draw=red!75!black},
+        note/.style={draw=gray!45, rounded corners=2pt, fill=white, align=left, text width=3.9cm, inner sep=4pt}
+    ]
+        % Left panel: unnormalised ingredients, with the product rescaled to unit peak.
+        \draw[axis] (0,0) -- (10.8,0) node[right] {distance $d$};
+        \draw[axis] (0,0) -- (0,1.12) node[above, align=center] {relative weight};
+        \foreach \x in {0,2,4,6,8,10} {
+            \draw (\x,0.02) -- (\x,-0.02) node[below] {\x};
+        }
+        \foreach \y/\lab in {0.5/$0.5$,1/$1$} {
+            \draw (0.06,\y) -- (-0.06,\y) node[left] {\lab};
+        }
+
+        \draw[visibility]
+            plot[smooth] coordinates {(0,1.000) (1,0.705) (2,0.497) (3,0.350) (4,0.247) (5,0.174) (6,0.122) (7,0.086) (8,0.061) (9,0.043) (10,0.030)};
+        \draw[protection]
+            plot[smooth] coordinates {(0,0.000) (1,0.699) (2,0.909) (3,0.973) (4,0.992) (5,0.998) (6,0.999) (7,1.000) (8,1.000) (9,1.000) (10,1.000)};
+        \draw[kernel]
+            plot[smooth] coordinates {(0,0.000) (1,1.000) (2,0.917) (3,0.691) (4,0.497) (5,0.352) (6,0.248) (7,0.175) (8,0.123) (9,0.087) (10,0.061)};
+        \node[visibility, anchor=west] at (5.85,0.20) {$e^{-\lambda d}$};
+        \node[protection, anchor=west] at (5.85,0.93) {$1-e^{-\kappa d}$};
+        \node[kernel, anchor=west] at (1.35,0.82) {product};
+
+        % Right panel: discrete normalised top-n kernel weights.
+        \begin{scope}[xshift=13.2cm, y=9.6cm]
+            \draw[axis] (0,0) -- (10.8,0) node[right] {level $k$};
+            \draw[axis] (0,0) -- (0,0.30) node[above] {$\omega_k$};
+            \foreach \x in {1,2,3,4,5,6,7,8,9,10} {
+                \draw (\x,0.004) -- (\x,-0.004) node[below] {\x};
+            }
+            \foreach \y/\lab in {0.1/$0.1$,0.2/$0.2$} {
+                \draw (0.06,\y) -- (-0.06,\y) node[left] {\lab};
+            }
+            \foreach \x/\h in {1/0.241,2/0.221,3/0.166,4/0.120,5/0.085,6/0.060,7/0.042,8/0.030,9/0.021,10/0.015} {
+                \draw[weightbar] (\x-0.28,0) rectangle (\x+0.28,\h);
+            }
+            \node[note] at (7.55,0.245)
+            {$n=10$, $d_k=k$\\
+            $\lambda=0.35$, $\kappa=1.2$\\[1pt]
+            weights sum to one};
+        \end{scope}
+    \end{tikzpicture}%
+    }
+    \caption{Behavior of the depth kernel in \cref{eq:depth_kernel}. The visibility term decreases with distance from
+    the touch, the execution-risk protection term increases, and their product concentrates weight at near-but-not-zero
+    depths before the normalization distributes mass over the selected top-$n$ levels. The numerical profile is
+    illustrative; $\lambda$ and $\kappa$ should be calibrated to venue-specific depth and execution-risk conditions.}
+    \label{fig:depth_kernel_behavior}
+\end{figure}
+
+\paragraph{Instrument-specific empirical depth kernel.}
+For the empirical implementation, the depth kernel is fitted directly rather than through separate parametric choices of
+$\kappa$ and $\lambda$. Let $m$ index the instrument and let $\mathcal{T}_m$ denote the full available sample for that
+instrument. For each side $s$ and level $k$, first estimate the probability that the level is reached by aggressive order
+flow over a horizon $H$ consistent with the post-execution cancellation window. Let $R^{m,s}_{t,k}(H)$ be the indicator
+that level $k$ on side $s$ at time $t$ is reached during $[t,t+H]$; an ask level is reached by buy market orders and a
+bid level symmetrically by sell market orders. The empirical hit probability is
+\begin{equation}
+    \widehat p^{m,s}_{k}(H)
+    =
+    \frac{
+        \sum_{t\in\mathcal{T}_{m}}R^{m,s}_{t,k}(H)
+    }{
+        \sum_{t\in\mathcal{T}_{m}}\mathbb{I}\{\text{level }k\text{ is observable on side }s\}
+    }.
+    \label{eq:empirical_hit_probability}
+\end{equation}
+This gives a nonparametric execution-risk profile for each instrument. We convert it into a protection-from-execution
+profile, for example
+\begin{equation}
+    \widehat\rho^{m,s}_{k}(H)=1-\widehat p^{m,s}_{k}(H),
+    \label{eq:empirical_protection_profile}
+\end{equation}
+with optional clipping or flooring only to avoid degenerate zero weights in finite samples.
+
+The second ingredient is an empirical visibility profile. For each instrument, estimate how much level $k$ contributes
+to short-horizon book information on the full sample. We use the absolute covariance between a normalized level-$k$
+imbalance contribution $Z^{m,s}_{t,k}$ and the subsequent signed mid-price change $\Delta M^m_{t,H}$:
+\begin{equation}
+    \widehat\nu^{m,s}_{k}(H)
+    =
+    \left|
+        \widehat{\operatorname{Cov}}_{t\in\mathcal{T}_m}
+        \left(Z^{m,s}_{t,k},\Delta M^m_{t,H}\right)
+    \right|.
+    \label{eq:empirical_visibility_covariance}
+\end{equation}
+The absolute value makes the visibility profile nonnegative while preserving the magnitude of the level-specific
+association. The same covariance definition is used across all levels of a given instrument, and the kernel is fitted
+separately for each instrument.
+
+The fully empirical kernel is then defined instrument by instrument as
+\begin{equation}
+    \widehat\omega^{m,s}_{k}(H)
+    =
+    \frac{
+        \widehat\nu^{m,s}_{k}(H)\,\widehat\rho^{m,s}_{k}(H)
+    }{
+        \sum_{\ell=1}^{n}\widehat\nu^{m,s}_{\ell}(H)\,\widehat\rho^{m,s}_{\ell}(H)
+    }.
+    \label{eq:empirical_depth_kernel}
+\end{equation}
+In empirical runs, $\omega^{s}_{k}(t)$ in the formulas below is replaced by
+$\widehat\omega^{m,s}_{k}(H)$ for the corresponding instrument. All events for instrument $m$ use this same fitted
+kernel; it is not re-estimated by client, event, or alert outcome. When a scalar summary is useful, we report the
+exposure-weighted log-linear decay slope of $\widehat p^{m,s}_{k}(H)$ across depth as an implied
+$\widehat\kappa^{m}$ summary of execution risk, and the observation-weighted log-linear decay slope of
+$\widehat\nu^{m,s}_{k}(H)$ as an implied $\widehat\lambda^{m}$ summary of visibility. The operational kernel, however,
+uses the empirical hit-probability and covariance profiles themselves rather than substituting a common exponential
+shape. The resulting weights remain interpretable: levels receive high mass only when they are still informative for
+short-horizon book dynamics and are sufficiently protected from immediate execution. This is the preferred empirical
+version for the present samples because it lets Risanamento, Nexi, and Ferrari have different depth profiles instead of
+forcing a common exponential shape across instruments.
+
+\begin{table}[htbp]
+\centering
+\caption{Full-sample empirical top-$5$ depth-kernel calibration at horizon $H=10$ seconds. The weights are the operational
+object used by the empirical runs; $\widehat\kappa$ and $\widehat\lambda$ are collapsed instrument-level log-decay
+summaries. A value of $\widehat\lambda=0$ means that the empirical visibility-covariance profile does not exhibit a
+positive exponential decay over the observed levels, not that the visibility component is zero.}
+\label{tab:empirical_depth_kernel_calibration}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Instrument & Kernel rows & $\widehat\kappa$ & $\widehat\lambda$ \\
+\midrule
+Risanamento & 1,004 & 0.823 & 0.000 \\
+Nexi        &   357 & 0.450 & 0.000 \\
+Ferrari     &   226 & 0.984 & 0.154 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 The agent's weighted top-$n$ liquidity on side $s$ is then
 \begin{equation}
     L^{i,s}_{n}(t)
@@ -599,7 +715,7 @@ deceptive profile for execution $e$ only if its first observed posting time $\ta
     0 \leq t_e-\tau_o \leq \Theta .
     \label{eq:deceptive_age_window}
 \end{equation}
-In the empirical implementation below we use $\Theta=10$ minutes as an exploratory default. The candidate deceptive
+In the empirical implementation below we use $\Theta=90$ seconds as an exploratory default. The candidate deceptive
 orders used for episode attribution are therefore restricted to same-client top-$n$ orders posted within this
 pre-execution window. This restriction is essential because a sophisticated spoofer may maintain a nearly balanced
 background market-making profile while adding a short-lived deceptive layer before the fill. If the conditionality score
@@ -635,7 +751,7 @@ depth as in \Cref{eq:relative_agent_depth}. The episode-conditioned imbalance is
 This object measures the incremental liquidity layer that appeared shortly before execution $e$, rather than the
 client's entire standing book. The subsequent conditionality indices are computed on this episode-conditioned profile.
 
-The multilevel analogue of the Spoofing Conditionality Index is
+We define the \textit{Spoofing Conditionality Index} as
 \begin{equation}
     \operatorname{SCI}^{i}_{e,n}
     =
@@ -669,11 +785,11 @@ We therefore define the \textit{Multilevel Spoofing Conditionality Index} as
 \begin{equation}
     \operatorname{MSCI}^{i}_{e,n}
     =
-    \operatorname{SCI}^{i}_{e,n}\,
-    C^{i,\bar{s}_e}_{e,n}\,
-    \left[
+    \underbrace{\operatorname{SCI}^{i}_{e,n}}_{\text{shape change}}\,
+    \underbrace{C^{i,\bar{s}_e}_{e,n}}_{\text{opposite side collapse}}\,
+    \underbrace{\left[
         C^{i,\bar{s}_e}_{e,n}-C^{i,s_e}_{e,n}
-    \right]_{+}.
+    \right]_{+}}_{\text{asymmetry}}
     \label{eq:msci}
 \end{equation}
 This score is high only when three conditions hold simultaneously: the recently posted top-$n$ layer changes abruptly,
@@ -730,80 +846,80 @@ the imbalance, MSCI may be close to zero. WMSCI can still be high if, after the 
 900 of the 1,000 opposite-side shares quickly. The evidentiary object is then not a large normalized imbalance jump, but
 the size and speed of the matched withdrawal relative to the small execution.
 
-\begin{figure}[htbp]
-    \centering
-    \resizebox{0.88\textwidth}{!}{%
-    \begin{tikzpicture}[
-        x=1cm,
-        y=1cm,
-        font=\footnotesize,
-        panel/.style={draw=gray!45, rounded corners=4pt, fill=gray!3},
-        axis/.style={->, thick},
-        pre/.style={fill=orange!70!black, draw=orange!70!black},
-        post/.style={fill=orange!25, draw=orange!80!black},
-        bidbar/.style={fill=green!55!black, draw=green!55!black},
-        cancel/.style={-{Latex[length=2.4mm]}, very thick, red!75!black},
-        callout/.style={draw=gray!45, rounded corners=2pt, fill=white, align=left, text width=5.5cm, inner sep=4pt},
-        formula/.style={draw=gray!45, rounded corners=2pt, fill=white, align=center, text width=4.0cm, inner sep=4pt}
-    ]
-        \draw[panel] (-0.35,3.95) rectangle (12.35,8.95);
-        \draw[panel] (-0.35,-1.20) rectangle (12.35,3.45);
+% \begin{figure}[htbp]
+%     \centering
+%     \resizebox{0.88\textwidth}{!}{%
+%     \begin{tikzpicture}[
+%         x=1cm,
+%         y=1cm,
+%         font=\footnotesize,
+%         panel/.style={draw=gray!45, rounded corners=4pt, fill=gray!3},
+%         axis/.style={->, thick},
+%         pre/.style={fill=orange!70!black, draw=orange!70!black},
+%         post/.style={fill=orange!25, draw=orange!80!black},
+%         bidbar/.style={fill=green!55!black, draw=green!55!black},
+%         cancel/.style={-{Latex[length=2.4mm]}, very thick, red!75!black},
+%         callout/.style={draw=gray!45, rounded corners=2pt, fill=white, align=left, text width=5.5cm, inner sep=4pt},
+%         formula/.style={draw=gray!45, rounded corners=2pt, fill=white, align=center, text width=4.0cm, inner sep=4pt}
+%     ]
+%         \draw[panel] (-0.35,3.95) rectangle (12.35,8.95);
+%         \draw[panel] (-0.35,-1.20) rectangle (12.35,3.45);
 
-        \node[font=\bfseries\large, anchor=west] at (0.10,8.58)
-        {MSCI: episode-conditioned profile collapse};
-        \node[font=\bfseries\large, anchor=west] at (0.10,3.08)
-        {WMSCI: matched withdrawal after a small fill};
+%         \node[font=\bfseries\large, anchor=west] at (0.10,8.58)
+%         {MSCI: episode-conditioned profile collapse};
+%         \node[font=\bfseries\large, anchor=west] at (0.10,3.08)
+%         {WMSCI: matched withdrawal after a small fill};
 
-        % Left panel: DWI-style before/after profile collapse.
-        \draw[axis] (0.70,4.55) -- (0.70,7.35) node[above, align=center] {weighted\\liquidity};
-        \draw[axis] (0.70,4.55) -- (6.75,4.55);
+%         % Left panel: DWI-style before/after profile collapse.
+%         \draw[axis] (0.70,4.55) -- (0.70,7.35) node[above, align=center] {weighted\\liquidity};
+%         \draw[axis] (0.70,4.55) -- (6.75,4.55);
 
-        \draw[bidbar] (1.25,4.55) rectangle (2.00,5.40);
-        \draw[pre] (3.25,4.55) rectangle (4.00,7.05);
-        \draw[post] (5.45,4.55) rectangle (6.20,4.95);
-        \draw[cancel] (4.10,6.75) -- (5.35,5.05);
+%         \draw[bidbar] (1.25,4.55) rectangle (2.00,5.40);
+%         \draw[pre] (3.25,4.55) rectangle (4.00,7.05);
+%         \draw[post] (5.45,4.55) rectangle (6.20,4.95);
+%         \draw[cancel] (4.10,6.75) -- (5.35,5.05);
 
-        \node[align=center, text width=1.45cm] at (1.62,4.05) {same side\\after fill};
-        \node[align=center, text width=1.55cm] at (3.62,4.05) {recent opposite\\layer before};
-        \node[align=center, text width=1.55cm] at (5.82,4.05) {recent opposite\\layer after};
-        \node[callout] at (9.10,6.85)
-        {High MSCI means the recently posted client-conditioned top-$n$ layer visibly collapses on the opposite side of the execution.};
-        \node[formula] at (9.10,5.15)
-        {MSCI conditions:\\
-        $\operatorname{SCI}$ high\\
-        $C^{i,\bar{s}_e}_{e,n}>C^{i,s_e}_{e,n}$\\
-        $\Rightarrow$ high score};
+%         \node[align=center, text width=1.45cm] at (1.62,4.05) {same side\\after fill};
+%         \node[align=center, text width=1.55cm] at (3.62,4.05) {recent opposite\\layer before};
+%         \node[align=center, text width=1.55cm] at (5.82,4.05) {recent opposite\\layer after};
+%         \node[callout] at (9.10,6.85)
+%         {High MSCI means the recently posted client-conditioned top-$n$ layer visibly collapses on the opposite side of the execution.};
+%         \node[formula] at (9.10,5.15)
+%         {MSCI conditions:\\
+%         $\operatorname{SCI}$ high\\
+%         $C^{i,\bar{s}_e}_{e,n}>C^{i,s_e}_{e,n}$\\
+%         $\Rightarrow$ high score};
 
-        % Right panel: small fill followed by large same-client cancellation.
-        \draw[axis] (0.70,-0.25) -- (6.15,-0.25);
-        \node[align=center, anchor=west] at (6.35,-0.25) {event time};
-        \foreach \x/\lab in {1.45/before,3.45/fill,5.45/cancel} {
-            \draw[gray!55, dashed] (\x,-0.40) -- (\x,2.15);
-            \node[align=center] at (\x,-0.72) {\lab};
-        }
+%         % Right panel: small fill followed by large same-client cancellation.
+%         \draw[axis] (0.70,-0.25) -- (6.15,-0.25);
+%         \node[align=center, anchor=west] at (6.35,-0.25) {event time};
+%         \foreach \x/\lab in {1.45/before,3.45/fill,5.45/cancel} {
+%             \draw[gray!55, dashed] (\x,-0.40) -- (\x,2.15);
+%             \node[align=center] at (\x,-0.72) {\lab};
+%         }
 
-        \draw[pre] (1.10,-0.05) rectangle (1.80,1.95);
-        \node[align=center, anchor=south] at (1.45,2.10) {$Q^{i,\bar{s}_e}_{e,n}=1{,}000$};
-        \draw[bidbar] (3.20,-0.05) rectangle (3.70,0.18);
-        \node[align=center, anchor=south] at (3.45,0.38) {small fill\\$Q_e=10$};
-        \draw[post] (5.10,-0.05) rectangle (5.80,0.18);
-        \node[align=center, anchor=south] at (5.45,0.38) {900 shares\\withdrawn};
-        \draw[cancel] (1.85,1.75) .. controls (3.00,2.75) and (4.35,2.75) .. (5.05,0.35);
+%         \draw[pre] (1.10,-0.05) rectangle (1.80,1.95);
+%         \node[align=center, anchor=south] at (1.45,2.10) {$Q^{i,\bar{s}_e}_{e,n}=1{,}000$};
+%         \draw[bidbar] (3.20,-0.05) rectangle (3.70,0.18);
+%         \node[align=center, anchor=south] at (3.45,0.38) {small fill\\$Q_e=10$};
+%         \draw[post] (5.10,-0.05) rectangle (5.80,0.18);
+%         \node[align=center, anchor=south] at (5.45,0.38) {900 shares\\withdrawn};
+%         \draw[cancel] (1.85,1.75) .. controls (3.00,2.75) and (4.35,2.75) .. (5.05,0.35);
 
-        \node[callout] at (9.10,1.80)
-        {High WMSCI means the same client withdraws a large opposite-side candidate profile shortly after a small fill.};
-        \node[formula] at (9.10,0.20)
-        {Recent-layer DWI\\collapse may be muted\\
-        matched withdrawal evidence remains strong};
-    \end{tikzpicture}%
-    }
-    \caption{Different evidentiary roles of MSCI and WMSCI. MSCI is high when the recently posted client-conditioned
-    top-$n$ layer exhibits a large opposite-side collapse after one execution. WMSCI is high when a small execution is
-    followed by a large, fast, same-client cancellation of the opposite-side candidate orders, even if the normalized DWI
-    movement of the recent layer is small. Both are event-level scores; client-session risk is obtained only after
-    aggregating such events.}
-    \label{fig:msci_wmsci_intuition}
-\end{figure}
+%         \node[callout] at (9.10,1.80)
+%         {High WMSCI means the same client withdraws a large opposite-side candidate profile shortly after a small fill.};
+%         \node[formula] at (9.10,0.20)
+%         {Recent-layer DWI\\collapse may be muted\\
+%         matched withdrawal evidence remains strong};
+%     \end{tikzpicture}%
+%     }
+%     \caption{Different evidentiary roles of MSCI and WMSCI. MSCI is high when the recently posted client-conditioned
+%     top-$n$ layer exhibits a large opposite-side collapse after one execution. WMSCI is high when a small execution is
+%     followed by a large, fast, same-client cancellation of the opposite-side candidate orders, even if the normalized DWI
+%     movement of the recent layer is small. Both are event-level scores; client-session risk is obtained only after
+%     aggregating such events.}
+%     \label{fig:msci_wmsci_intuition}
+% \end{figure}
 
 \subsubsection{Multilevel Conditional Probability Score}
 \label{subsec:mcps}
@@ -973,12 +1089,136 @@ liquidity after the execution of the bona fide order. The operational procedure 
 This order-level reconstruction prevents ordinary repricing of the book from being mechanically interpreted as
 cancellation of deceptive liquidity, thereby reducing false positives for legitimate market makers.
 
-As a diagnostic case, widening the post-execution cancellation window from one to thirty seconds on the Risanamento data
-for 10 September 2024 recovers fourteen same-client opposite-side cancellation events, mostly for client 17295. Their
-MSCI values are zero because the distance-weighted profile does not produce a large net DWI collapse, but their WMSCI
-values are positive: the largest event has $\operatorname{WMSCI}=14.30$, an executed quantity of 67 shares, and a
-subsequent opposite-side withdrawal roughly 2704 times the execution size after about 23 seconds. This example motivates
-reporting WMSCI alongside MSCI rather than treating either score as a complete detector in isolation.
+As a diagnostic case, the all-sample run below uses a short $10$-second post-execution cancellation window and a
+$90$-second candidate-order age filter. Under this stricter timing rule, many matched events still have small or muted
+MSCI values because the distance-weighted profile does not always produce a large net DWI collapse, while WMSCI remains
+positive when a small execution is followed by a large same-client opposite-side withdrawal. This motivates reporting
+WMSCI alongside MSCI rather than treating either score as a complete detector in isolation.
+
+\section{Results}
+\label{sec:results}
+
+\subsection{Cross-Instrument Detection Summary}
+\label{subsec:cross_instrument_results}
+
+\Cref{tab:empirical_spoofing_diagnostics} reports the exploratory top-$5$ results obtained by applying the same
+episode-conditioned reconstruction to the three samples with the full-sample empirical depth kernels from
+\cref{tab:empirical_depth_kernel_calibration} at $H=10$ seconds. A matched event is a small passive execution followed by
+same-client cancellation of an opposite-side candidate order inside the $10$-second post-execution window. The price
+response columns report the fraction of matched events with positive signed mid-price favorable pre-fill movement
+($\operatorname{FPM}>0$) or post-cancel reversion ($\operatorname{REV}>0$). These quantities are descriptive
+surveillance diagnostics, not labels of manipulation.
+
+\begin{table}[htbp]
+\centering
+\caption{Exploratory top-$5$ spoofing-compatible detections across the three samples. Matched events are small passive
+executions followed by same-client cancellation of an opposite-side candidate order inside the post-execution window.
+The price-response shares report the fraction of matched events with positive signed mid-price favorable pre-fill movement
+or post-cancel reversion.}
+\label{tab:empirical_spoofing_diagnostics}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrrr}
+\toprule
+Instrument & Executions & Matched events & Clients & Alerts & Max WMSCI & FPM$>0$ & REV$>0$ \\
+\midrule
+Risanamento & 15,341 & 219 & 10 &  4 & 93.09 & 44.7\% & 13.2\% \\
+Nexi        &  5,402 & 573 &  9 &  5 & 25.70 & 62.1\% & 30.7\% \\
+Ferrari     &  3,498 & 364 &  5 &  5 & 14.75 & 58.0\% & 33.5\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The first result is that matched-withdrawal evidence is not confined to one instrument. The same rule identifies 219
+matched events in Risanamento, 573 in Nexi, and 364 in Ferrari, involving 10, 9, and 5 distinct clients, respectively.
+The absolute number of matched events is largest for Nexi, whereas the most extreme event severity is observed in
+Risanamento, where the maximum WMSCI reaches 93.09 and the largest withdrawal-to-fill ratio in the matched set reaches
+18,200. Ferrari produces fewer clients and less extreme WMSCI values, but still shows repeated matched withdrawals under
+the same reconstruction rule.
+
+The second result is that WMSCI severity and price-response consistency are not the same signal. Risanamento contains the
+largest WMSCI events and the most extreme withdrawal-to-fill ratios, but only 44.7\% of matched events have positive
+favorable pre-fill mid-price movement and only 13.2\% have positive post-cancel mid-price reversion. Nexi and Ferrari
+have lower maximum WMSCI values, but materially stronger price-response consistency: approximately 62\% and 58\% of
+matched events have favorable pre-fill movement and roughly 31\% and 34\%, respectively, have post-cancel reversion. This
+supports the decision to keep matched-withdrawal severity, repetition, and price response as separate evidentiary
+dimensions instead of collapsing them into a single proof-of-intent score.
+
+\subsection{Client-Level Concentration}
+\label{subsec:client_level_results}
+
+The matched events are concentrated in a small number of client identifiers. \Cref{tab:top_client_results} reports the
+largest client-level clusters by instrument. The purpose of this table is not to identify a manipulator, but to show which
+client sessions an analyst would inspect first and which component of the evidence is driving prioritization.
+
+\begin{table}[htbp]
+\centering
+\caption{Largest client-level matched-withdrawal clusters by instrument. W/F is the maximum withdrawal-to-fill ratio
+among the client's matched events. FPM$>0$ and REV$>0$ are client-level fractions of matched events with positive signed
+mid-price favorable movement and reversion.}
+\label{tab:top_client_results}
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{llrrrrr}
+\toprule
+Instrument & Client & Events & Max WMSCI & Mean WMSCI & Max W/F & FPM$>0$ / REV$>0$ \\
+\midrule
+Risanamento & 17295 & 130 & 93.09 & 4.80 & 18,200 & 35.4\% / 14.6\% \\
+Risanamento & 0 & 43 & 6.10 & 1.34 & 31.8 & 79.1\% / 14.0\% \\
+Risanamento & 1000004133 & 37 & 13.94 & 2.00 & 88.5 & 40.5\% / 10.8\% \\
+Nexi & 23523 & 322 & 25.70 & 2.18 & 2,100 & 68.3\% / 19.6\% \\
+Nexi & 0 & 160 & 10.70 & 1.55 & 96.2 & 64.4\% / 50.6\% \\
+Nexi & 31425 & 62 & 23.50 & 4.14 & 140.7 & 16.1\% / 22.6\% \\
+Ferrari & 23523 & 214 & 14.75 & 1.23 & 53 & 59.3\% / 19.6\% \\
+Ferrari & 0 & 132 & 13.20 & 0.99 & 48 & 59.1\% / 56.8\% \\
+Ferrari & 10250181 & 10 & 2.86 & 1.25 & 6.2 & 30.0\% / 0.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The Risanamento evidence is dominated by client 17295, which accounts for 130 matched events and contains the largest
+WMSCI event in the sample. However, its price-response diagnostics are mixed: only 35.4\% of its matched events show a
+positive favorable pre-fill mid-price movement and 14.6\% show positive reversion. Client 0 shows a higher favorable
+pre-fill movement share, while client 1000004133 has fewer matched events but larger WMSCI severity than client 0. These
+patterns are strong matched-withdrawal cues, but they do not by themselves establish economically effective price
+pressure.
+
+Nexi and Ferrari show a different profile. In both instruments, client 23523 is the largest matched-event cluster, while
+the anonymized or missing client identifier ``0'' also appears frequently. The repeated appearance of client 23523 across
+Nexi and Ferrari is a useful surveillance cue because it suggests that the pattern is not isolated to a single instrument.
+At the same time, the price-response shares differ by client: in Nexi, client 23523 has many matched events and high WMSCI
+severity, whereas client 0 has a higher fraction of post-cancel reversions. This illustrates why the event
+review dashboard should preserve order-level context, LOB snapshots, and the full zoom-window event table rather than
+ranking clients only by a scalar score.
+
+\subsection{Analyst Alert Prioritization}
+\label{subsec:alert_prioritization_results}
+
+The final ``alert'' column in \cref{tab:empirical_spoofing_diagnostics} is an analyst-prioritization output, not a
+calibrated probability of manipulation. In the prototype implementation, client sessions are first filtered by a minimum
+number of repeated matched-withdrawal events. The remaining sessions are ranked by a simple heuristic alert score that
+uses only the primary review evidence: repeated matched withdrawal, maximum event severity, and price-response
+consistency:
+\begin{equation}
+\begin{aligned}
+    A_i ={}&
+    0.50\operatorname{MES}_i
+    +0.30\frac{\min\{\log(1+\max_e \operatorname{WMSCI}^{i}_{e}),5\}}{5}
+    +0.20\frac{\operatorname{FPM}^{+}_i+\operatorname{REV}^{+}_i}{2},
+\end{aligned}
+\label{eq:alert_score}
+\end{equation}
+where $\operatorname{MES}_i$ is the matched-event share, $\operatorname{FPM}^{+}_i$ and $\operatorname{REV}^{+}_i$
+are the fractions of matched events with positive signed mid-price favorable movement and reversion. MSCI and
+side-symmetry diagnostics remain available as secondary context, but they do not create a primary matched-withdrawal
+alert without repeated WMSCI evidence. The weights in \cref{eq:alert_score} are deliberately heuristic; they only rank
+cases for human review. They should be recalibrated or replaced when analyst labels, negative controls, or venue-specific
+supervision objectives become available.
+
+With the current thresholds, the prototype produces 4 analyst-review alerts in Risanamento, 5 in Nexi, and 5 in
+Ferrari. These counts should be interpreted as workload estimates under the chosen parameterization. They are useful for
+triage design because they connect detector sensitivity to a finite number of cases that can be inspected with the
+event-review dashboard, but they should not be interpreted as the number of spoofing episodes in the data.
 
 
 % We propose two agent-specific metrics based on the

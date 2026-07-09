@@ -136,12 +136,18 @@ def _side_depth_metadata(
     tick_size: float,
     kappa: float,
     lambda_: float,
+    empirical_weights_by_rank: Mapping[int, float] | None = None,
 ) -> dict[float, dict[str, float]]:
     if not levels:
         return {}
     best_price = levels[0][0]
     distances = [shifted_depth_distance_ticks(side, price, best_price, tick_size) for price, _ in levels]
-    weights = depth_kernel_weights(distances, kappa=kappa, lambda_=lambda_)
+    if empirical_weights_by_rank is None:
+        weights = depth_kernel_weights(distances, kappa=kappa, lambda_=lambda_)
+    else:
+        weights = [float(empirical_weights_by_rank.get(rank, 0.0)) for rank in range(1, len(levels) + 1)]
+        total = sum(weights)
+        weights = [value / total for value in weights] if total > 0 else [0.0 for _ in weights]
     return {
         price: {
             "delta_ticks": _distance_ticks(side, price, best_price, tick_size),
@@ -164,6 +170,7 @@ def compute_client_top_n_exposures(
     event_ts: datetime | None,
     include_level_columns: bool = True,
     client_ids: set[str] | None = None,
+    empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> list[dict[str, Any]]:
     if top_n <= 0:
         raise ValueError("top_n must be positive")
@@ -194,7 +201,14 @@ def compute_client_top_n_exposures(
         for side, side_levels in levels.items()
     }
     side_meta = {
-        side: _side_depth_metadata(side_levels, side=side, tick_size=tick_size, kappa=kappa, lambda_=lambda_)
+        side: _side_depth_metadata(
+            side_levels,
+            side=side,
+            tick_size=tick_size,
+            kappa=kappa,
+            lambda_=lambda_,
+            empirical_weights_by_rank=empirical_kernel_weights.get(side) if empirical_kernel_weights is not None else None,
+        )
         for side, side_levels in levels.items()
     }
 
@@ -384,6 +398,7 @@ def _candidate_deceptive_order_rows(
     lambda_: float,
     order_first_seen_ts: Mapping[str, datetime | None],
     max_deceptive_order_age_seconds: float = 600.0,
+    empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> list[dict[str, Any]]:
     deceptive_side = execution["deceptive_side"]
     levels = _market_levels(active_orders, side=deceptive_side, top_n=top_n)
@@ -397,6 +412,7 @@ def _candidate_deceptive_order_rows(
         tick_size=tick_size,
         kappa=kappa,
         lambda_=lambda_,
+        empirical_weights_by_rank=empirical_kernel_weights.get(deceptive_side) if empirical_kernel_weights is not None else None,
     )
 
     rows: list[dict[str, Any]] = []
@@ -572,6 +588,7 @@ def _stream_metric_inputs(
     include_level_columns: bool = True,
     max_deceptive_order_age_seconds: float = 600.0,
     state_client_ids: set[str] | None = None,
+    empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     config = LOBConfig(top_n=max(top_n, 1), snapshot_mode="none")
     sorted_events = sort_events(raw_events)
@@ -623,6 +640,7 @@ def _stream_metric_inputs(
                 lambda_=lambda_,
                 order_first_seen_ts=order_first_seen_ts,
                 max_deceptive_order_age_seconds=max_deceptive_order_age_seconds,
+                empirical_kernel_weights=empirical_kernel_weights,
             )
             execution.update(_candidate_deceptive_order_summary(candidates))
             execution_rows.append(execution)
@@ -665,6 +683,7 @@ def _stream_metric_inputs(
                 event_ts=event_ts,
                 include_level_columns=include_level_columns,
                 client_ids=state_client_ids,
+                empirical_kernel_weights=empirical_kernel_weights,
             )
         )
 
@@ -686,6 +705,7 @@ def compute_client_metric_time_series(
     max_rows: int | None = None,
     include_level_columns: bool = True,
     state_client_ids: set[str] | None = None,
+    empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> pl.DataFrame:
     state_df, _, _, _, _ = _stream_metric_inputs(
         raw_events,
@@ -696,6 +716,7 @@ def compute_client_metric_time_series(
         max_rows=max_rows,
         include_level_columns=include_level_columns,
         state_client_ids=state_client_ids,
+        empirical_kernel_weights=empirical_kernel_weights,
     )
     return state_df
 
@@ -724,34 +745,52 @@ def _group_state_rows(states: pl.DataFrame) -> dict[tuple[Any, str], list[dict[s
     return groups
 
 
+def _state_group_cache(values: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[int], list[datetime]]:
+    if not values:
+        return [], [], []
+    cache = values[0].get("_lookup_cache")
+    if cache is None:
+        indexed = [item for item in values if item.get("sort_index") is not None]
+        # _group_state_rows already sorts by sort_index, then timestamp.  Cache the arrays once;
+        # rebuilding them per execution is quadratic on large client sessions.
+        indexes = [int(item["sort_index"]) for item in indexed]
+        times = [item["_ts"] for item in indexed]
+        cache = (indexed, indexes, times)
+        values[0]["_lookup_cache"] = cache
+    return cache
+
+
 def _lookup_pre_state(values: list[dict[str, Any]], event_ts: datetime, sort_index: int | None) -> dict[str, Any] | None:
     if not values:
         return None
-    if sort_index is not None:
-        values_with_index = [item for item in values if item.get("sort_index") is not None]
-        indexes = [int(item["sort_index"]) for item in values_with_index]
+    indexed, indexes, times = _state_group_cache(values)
+    if sort_index is not None and indexes:
         idx = bisect.bisect_left(indexes, int(sort_index)) - 1
-        return values_with_index[idx] if idx >= 0 else None
-    eligible = [item for item in values if item["_ts"] < event_ts]
-    return eligible[-1] if eligible else None
+        return indexed[idx] if idx >= 0 else None
+    idx = bisect.bisect_left(times, event_ts) - 1
+    return indexed[idx] if idx >= 0 else None
 
 
 def _lookup_post_state(values: list[dict[str, Any]], end_ts: datetime, sort_index: int | None) -> dict[str, Any] | None:
     if not values:
         return None
-    eligible = [item for item in values if item["_ts"] <= end_ts]
-    if sort_index is not None:
-        eligible = [item for item in eligible if item.get("sort_index") is not None and int(item["sort_index"]) > int(sort_index)]
-    return eligible[-1] if eligible else None
+    indexed, indexes, times = _state_group_cache(values)
+    if not indexed:
+        return None
+    hi = bisect.bisect_right(times, end_ts)
+    if sort_index is not None and indexes:
+        lo = bisect.bisect_right(indexes, int(sort_index))
+        if lo >= hi:
+            return None
+    return indexed[hi - 1] if hi > 0 else None
 
 
 def _lookup_state_at_or_after_index(values: list[dict[str, Any]], sort_index: int | None) -> dict[str, Any] | None:
     if sort_index is None:
         return None
-    values_with_index = [item for item in values if item.get("sort_index") is not None]
-    indexes = [int(item["sort_index"]) for item in values_with_index]
+    indexed, indexes, _ = _state_group_cache(values)
     idx = bisect.bisect_left(indexes, int(sort_index))
-    return values_with_index[idx] if idx < len(values_with_index) else None
+    return indexed[idx] if idx < len(indexed) else None
 
 
 def _execution_price_direction(execution_side: str | None) -> float | None:
@@ -1102,6 +1141,7 @@ def compute_exploratory_metrics(
     include_level_columns: bool = True,
     max_deceptive_order_age_seconds: float = 600.0,
     state_client_ids: set[str] | None = None,
+    empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> ExploratoryMetricsResult:
     state_df, execution_df, candidate_df, cancel_df, rejected_df = _stream_metric_inputs(
         raw_events,
@@ -1113,6 +1153,7 @@ def compute_exploratory_metrics(
         include_level_columns=include_level_columns,
         max_deceptive_order_age_seconds=max_deceptive_order_age_seconds,
         state_client_ids=state_client_ids,
+        empirical_kernel_weights=empirical_kernel_weights,
     )
     execution_df = attach_sci_window_metrics(
         execution_df,
