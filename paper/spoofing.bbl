@@ -6,71 +6,55 @@ J.~Chen, P.-F. Hsieh, and J.~J. Yang.
 \newblock {\em Pacific-Basin Finance Journal}, 97:103077, 2026.
 
 \bibitem{DebieEtAl2023}
-P.~Debie, C.~Gardebroek, S.~Hageboeck, P.~van Leeuwen, L.~Moneta, A.~Naumann,
-  J.~M.~E. Pennings, A.~A. Trujillo-Barrera, and M.~E. Verhulst.
-\newblock Unravelling the {JPMorgan} spoofing case using particle physics
-  visualization methods.
+P.~Debie, C.~Gardebroek, S.~Hageboeck, P.~van Leeuwen, L.~Moneta, A.~Naumann, J.~M.~E. Pennings, A.~A. Trujillo-Barrera, and M.~E. Verhulst.
+\newblock Unravelling the {JPMorgan} spoofing case using particle physics visualization methods.
 \newblock {\em European Financial Management}, 29(1):288--326, 2023.
 
 \bibitem{EU5962014}
 {European Parliament and Council of the European Union}.
-\newblock Regulation (eu) no 596/2014 of the european parliament and of the
-  council of 16 april 2014 on market abuse (market abuse regulation).
+\newblock Regulation (eu) no 596/2014 of the european parliament and of the council of 16 april 2014 on market abuse (market abuse regulation).
 \newblock \url{https://eur-lex.europa.eu/eli/reg/2014/596/oj/eng}, 2014.
 \newblock Official Journal of the European Union, L 173, 12 June 2014, p. 1.
 
 \bibitem{FabreChallet2025}
 T.~Fabre and D.~Challet.
-\newblock Learning the spoofability of limit order books with interpretable
-  probabilistic neural networks.
+\newblock Learning the spoofability of limit order books with interpretable probabilistic neural networks.
 \newblock {\em arXiv preprint arXiv:2504.15908}, 2025.
 
 \bibitem{KangMuNing2023}
 L.~Kang, T.-J. Mu, and X.~Ning.
-\newblock Conspiracy spoofing orders detection with transformer-based deep
-  graph learning.
-\newblock In {\em Advanced Data Mining and Applications}, Lecture Notes in
-  Computer Science, pages 489--503, 2023.
+\newblock Conspiracy spoofing orders detection with transformer-based deep graph learning.
+\newblock In {\em Advanced Data Mining and Applications}, Lecture Notes in Computer Science, pages 489--503, 2023.
 
 \bibitem{KangMuNing2024}
 L.~Kang, T.-J. Mu, and X.~Ning.
-\newblock Spoofing transaction detection with group perceptual enhanced graph
-  neural network.
-\newblock In {\em Machine Learning and Knowledge Discovery in Databases.
-  Applied Data Science Track}, Lecture Notes in Computer Science, pages
-  106--122, 2024.
+\newblock Spoofing transaction detection with group perceptual enhanced graph neural network.
+\newblock In {\em Machine Learning and Knowledge Discovery in Databases. Applied Data Science Track}, Lecture Notes in Computer Science, pages 106--122, 2024.
 
 \bibitem{LeeEomPark2013}
 E.~J. Lee, K.~S. Eom, and K.~S. Park.
-\newblock Microstructure-based manipulation: Strategic behavior and performance
-  of spoofing traders.
+\newblock Microstructure-based manipulation: Strategic behavior and performance of spoofing traders.
 \newblock {\em Journal of Financial Markets}, 16(2):227--252, 2013.
 
 \bibitem{LiPolukarovaVentre2023}
 H.~Li, M.~Polukarova, and C.~Ventre.
-\newblock Detecting financial market manipulation with statistical physics
-  tools.
-\newblock In {\em Proceedings of the 4th {ACM} International Conference on {AI}
-  in Finance}, pages 565--573, 2023.
+\newblock Detecting financial market manipulation with statistical physics tools.
+\newblock In {\em Proceedings of the 4th {ACM} International Conference on {AI} in Finance}, pages 565--573, 2023.
 
 \bibitem{MendoncaDeGenaro2020}
 L.~Mendon{\c c}a and A.~De~Genaro.
-\newblock Detection and analysis of occurrences of spoofing in the {Brazilian}
-  capital market.
-\newblock {\em Journal of Financial Regulation and Compliance}, 28(3):369--408,
-  2020.
+\newblock Detection and analysis of occurrences of spoofing in the {Brazilian} capital market.
+\newblock {\em Journal of Financial Regulation and Compliance}, 28(3):369--408, 2020.
 
 \bibitem{StenforsEtAl2023}
 A.~Stenfors, M.~Doraghi, C.~Soviany, M.~Susai, and K.~Vakili.
 \newblock Cross-market spoofing.
-\newblock {\em Journal of International Financial Markets, Institutions and
-  Money}, 83:101735, 2023.
+\newblock {\em Journal of International Financial Markets, Institutions and Money}, 83:101735, 2023.
 
 \bibitem{StenforsSusai2021}
 A.~Stenfors and M.~Susai.
 \newblock Spoofing and pinging in foreign exchange markets.
-\newblock {\em Journal of International Financial Markets, Institutions and
-  Money}, 70:101278, 2021.
+\newblock {\em Journal of International Financial Markets, Institutions and Money}, 70:101278, 2021.
 
 \bibitem{TaoDayLingDrapeau2022}
 X.~Tao, A.~Day, L.~Ling, and S.~Drapeau.
@@ -79,14 +63,12 @@ X.~Tao, A.~Day, L.~Ling, and S.~Drapeau.
 
 \bibitem{TuccellaNadlerSerban2021}
 J.-N. Tuccella, P.~Nadler, and O.~{\c S}erban.
-\newblock Protecting retail investors from order book spoofing using a
-  {GRU}-based detection model.
+\newblock Protecting retail investors from order book spoofing using a {GRU}-based detection model.
 \newblock {\em arXiv preprint arXiv:2110.03687}, 2021.
 
 \bibitem{XiangEtAl2025}
 S.~Xiang, Y.~Jiang, Y.~Chen, D.~Cheng, G.~Zhao, and C.~Jiang.
-\newblock Generative dynamic graph representation learning for conspiracy
-  spoofing detection.
+\newblock Generative dynamic graph representation learning for conspiracy spoofing detection.
 \newblock In {\em Proceedings of the {ACM} Web Conference 2025}, 2025.
 
 \end{thebibliography}

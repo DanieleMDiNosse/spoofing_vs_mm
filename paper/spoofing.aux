@@ -59,94 +59,98 @@
 \newlabel{subsec:multilevel_dwi@cref}{{[subsubsection][2][5,1]5.1.2}{[1][7][]7}}
 \newlabel{eq:depth_kernel}{{4}{7}{Multilevel Distance-Weighted Imbalance}{equation.5.4}{}}
 \newlabel{eq:depth_kernel@cref}{{[equation][4][]4}{[1][7][]7}}
-\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Behavior of the depth kernel in \cref  {eq:depth_kernel}. The visibility term decreases with distance from the touch, the execution-risk protection term increases, and their product concentrates weight at near-but-not-zero depths before the normalization distributes mass over the selected top-$n$ levels. The numerical profile is illustrative; $\lambda $ and $\kappa $ should be calibrated to venue-specific depth and execution-risk conditions.}}{7}{figure.caption.5}\protected@file@percent }
-\newlabel{fig:depth_kernel_behavior}{{3}{7}{Behavior of the depth kernel in \cref {eq:depth_kernel}. The visibility term decreases with distance from the touch, the execution-risk protection term increases, and their product concentrates weight at near-but-not-zero depths before the normalization distributes mass over the selected top-$n$ levels. The numerical profile is illustrative; $\lambda $ and $\kappa $ should be calibrated to venue-specific depth and execution-risk conditions}{figure.caption.5}{}}
-\newlabel{fig:depth_kernel_behavior@cref}{{[figure][3][]3}{[1][7][]7}}
-\@writefile{toc}{\contentsline {paragraph}{Instrument-specific empirical depth kernel.}{7}{section*.6}\protected@file@percent }
-\newlabel{eq:empirical_hit_probability}{{5}{8}{Instrument-specific empirical depth kernel}{equation.5.5}{}}
-\newlabel{eq:empirical_hit_probability@cref}{{[equation][5][]5}{[1][8][]8}}
-\newlabel{eq:empirical_protection_profile}{{6}{8}{Instrument-specific empirical depth kernel}{equation.5.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Empirical depth kernel used in the analysis.}{7}{section*.6}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Conceptual illustration of the parametric candidate in \cref  {eq:depth_kernel}. Visibility decreases with distance from the touch, protection from immediate execution increases, and their product represents the trade-off between the two. The right panel shows the resulting normalized weights for one illustrative parameter choice. This figure motivates the economic construction; the empirical analysis uses the instrument-specific kernel in \cref  {eq:empirical_depth_kernel} rather than these parametric weights.}}{8}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:depth_kernel_behavior}{{3}{8}{Conceptual illustration of the parametric candidate in \cref {eq:depth_kernel}. Visibility decreases with distance from the touch, protection from immediate execution increases, and their product represents the trade-off between the two. The right panel shows the resulting normalized weights for one illustrative parameter choice. This figure motivates the economic construction; the empirical analysis uses the instrument-specific kernel in \cref {eq:empirical_depth_kernel} rather than these parametric weights}{figure.caption.5}{}}
+\newlabel{fig:depth_kernel_behavior@cref}{{[figure][3][]3}{[1][7][]8}}
+\newlabel{eq:empirical_hit_probability}{{5}{8}{Empirical depth kernel used in the analysis}{equation.5.5}{}}
+\newlabel{eq:empirical_hit_probability@cref}{{[equation][5][]5}{[1][7][]8}}
+\newlabel{eq:empirical_protection_profile}{{6}{8}{Empirical depth kernel used in the analysis}{equation.5.6}{}}
 \newlabel{eq:empirical_protection_profile@cref}{{[equation][6][]6}{[1][8][]8}}
-\newlabel{eq:empirical_visibility_covariance}{{7}{8}{Instrument-specific empirical depth kernel}{equation.5.7}{}}
-\newlabel{eq:empirical_visibility_covariance@cref}{{[equation][7][]7}{[1][8][]8}}
-\newlabel{eq:empirical_depth_kernel}{{8}{8}{Instrument-specific empirical depth kernel}{equation.5.8}{}}
-\newlabel{eq:empirical_depth_kernel@cref}{{[equation][8][]8}{[1][8][]8}}
-\newlabel{eq:weighted_topn_liquidity}{{9}{8}{Instrument-specific empirical depth kernel}{equation.5.9}{}}
-\newlabel{eq:weighted_topn_liquidity@cref}{{[equation][9][]9}{[1][8][]8}}
+\newlabel{eq:total_topn_market_depth}{{7}{8}{Empirical depth kernel used in the analysis}{equation.5.7}{}}
+\newlabel{eq:total_topn_market_depth@cref}{{[equation][7][]7}{[1][8][]8}}
+\newlabel{eq:normalized_level_contribution}{{8}{8}{Empirical depth kernel used in the analysis}{equation.5.8}{}}
+\newlabel{eq:normalized_level_contribution@cref}{{[equation][8][]8}{[1][8][]8}}
+\newlabel{eq:empirical_visibility_covariance}{{9}{8}{Empirical depth kernel used in the analysis}{equation.5.9}{}}
+\newlabel{eq:empirical_visibility_covariance@cref}{{[equation][9][]9}{[1][8][]8}}
+\newlabel{eq:empirical_depth_kernel}{{10}{9}{Empirical depth kernel used in the analysis}{equation.5.10}{}}
+\newlabel{eq:empirical_depth_kernel@cref}{{[equation][10][]10}{[1][9][]9}}
 \@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Full-sample empirical top-$5$ depth-kernel calibration at horizon $H=10$ seconds. The weights are the operational object used by the empirical runs; $\setbox \z@ \hbox {\mathsurround \z@ $\textstyle \kappa $}\mathaccent "0362{\kappa }$ and $\setbox \z@ \hbox {\mathsurround \z@ $\textstyle \lambda $}\mathaccent "0362{\lambda }$ are collapsed instrument-level log-decay summaries. A value of $\setbox \z@ \hbox {\mathsurround \z@ $\textstyle \lambda $}\mathaccent "0362{\lambda }=0$ means that the empirical visibility-covariance profile does not exhibit a positive exponential decay over the observed levels, not that the visibility component is zero.}}{9}{table.caption.7}\protected@file@percent }
 \newlabel{tab:empirical_depth_kernel_calibration}{{2}{9}{Full-sample empirical top-$5$ depth-kernel calibration at horizon $H=10$ seconds. The weights are the operational object used by the empirical runs; $\widehat \kappa $ and $\widehat \lambda $ are collapsed instrument-level log-decay summaries. A value of $\widehat \lambda =0$ means that the empirical visibility-covariance profile does not exhibit a positive exponential decay over the observed levels, not that the visibility component is zero}{table.caption.7}{}}
-\newlabel{tab:empirical_depth_kernel_calibration@cref}{{[table][2][]2}{[1][8][]9}}
-\newlabel{eq:multilevel_dwi}{{10}{9}{Instrument-specific empirical depth kernel}{equation.5.10}{}}
-\newlabel{eq:multilevel_dwi@cref}{{[equation][10][]10}{[1][8][]9}}
-\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Stylized event-time behavior of the multilevel distance-weighted imbalance. A spoofing episode produces a large top-$n$ imbalance and, after the small opposite-side execution, a rapid return toward zero when the deceptive profile is cancelled. Inventory rebalancing by a market maker should evolve more smoothly.}}{9}{figure.caption.8}\protected@file@percent }
-\newlabel{fig:topn_imbalance_dynamics}{{4}{9}{Stylized event-time behavior of the multilevel distance-weighted imbalance. A spoofing episode produces a large top-$n$ imbalance and, after the small opposite-side execution, a rapid return toward zero when the deceptive profile is cancelled. Inventory rebalancing by a market maker should evolve more smoothly}{figure.caption.8}{}}
-\newlabel{fig:topn_imbalance_dynamics@cref}{{[figure][4][]4}{[1][9][]9}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.3}Conditionality and Intent Isolation}{9}{subsubsection.5.1.3}\protected@file@percent }
-\newlabel{subsec:multilevel_conditionality}{{5.1.3}{9}{Conditionality and Intent Isolation}{subsubsection.5.1.3}{}}
-\newlabel{subsec:multilevel_conditionality@cref}{{[subsubsection][3][5,1]5.1.3}{[1][9][]9}}
-\newlabel{eq:deceptive_age_window}{{12}{10}{Conditionality and Intent Isolation}{equation.5.12}{}}
-\newlabel{eq:deceptive_age_window@cref}{{[equation][12][]12}{[1][10][]10}}
-\newlabel{eq:episode_conditioned_liquidity}{{13}{10}{Conditionality and Intent Isolation}{equation.5.13}{}}
-\newlabel{eq:episode_conditioned_liquidity@cref}{{[equation][13][]13}{[1][10][]10}}
-\newlabel{eq:episode_conditioned_dwi}{{14}{10}{Conditionality and Intent Isolation}{equation.5.14}{}}
-\newlabel{eq:episode_conditioned_dwi@cref}{{[equation][14][]14}{[1][10][]10}}
-\newlabel{eq:topn_sci}{{15}{10}{Conditionality and Intent Isolation}{equation.5.15}{}}
-\newlabel{eq:topn_sci@cref}{{[equation][15][]15}{[1][10][]10}}
-\newlabel{eq:side_collapse}{{16}{11}{Conditionality and Intent Isolation}{equation.5.16}{}}
-\newlabel{eq:side_collapse@cref}{{[equation][16][]16}{[1][10][]11}}
-\newlabel{eq:msci}{{17}{11}{Conditionality and Intent Isolation}{equation.5.17}{}}
-\newlabel{eq:msci@cref}{{[equation][17][]17}{[1][11][]11}}
-\newlabel{eq:weighted_withdrawal}{{18}{11}{Conditionality and Intent Isolation}{equation.5.18}{}}
-\newlabel{eq:weighted_withdrawal@cref}{{[equation][18][]18}{[1][11][]11}}
-\newlabel{eq:wmsci}{{19}{11}{Conditionality and Intent Isolation}{equation.5.19}{}}
-\newlabel{eq:wmsci@cref}{{[equation][19][]19}{[1][11][]11}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.4}Multilevel Conditional Probability Score}{12}{subsubsection.5.1.4}\protected@file@percent }
-\newlabel{subsec:mcps}{{5.1.4}{12}{Multilevel Conditional Probability Score}{subsubsection.5.1.4}{}}
-\newlabel{subsec:mcps@cref}{{[subsubsection][4][5,1]5.1.4}{[1][12][]12}}
-\newlabel{eq:mcps}{{20}{12}{Multilevel Conditional Probability Score}{equation.5.20}{}}
-\newlabel{eq:mcps@cref}{{[equation][20][]20}{[1][12][]12}}
-\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Operational interpretation of the Multilevel Conditional Probability Score. Each point is one execution for the agent. The score increases when the multilevel conditionality index repeatedly exceeds the threshold $\gamma _n$.}}{12}{figure.caption.9}\protected@file@percent }
-\newlabel{fig:mcps_score}{{5}{12}{Operational interpretation of the Multilevel Conditional Probability Score. Each point is one execution for the agent. The score increases when the multilevel conditionality index repeatedly exceeds the threshold $\gamma _n$}{figure.caption.9}{}}
-\newlabel{fig:mcps_score@cref}{{[figure][5][]5}{[1][12][]12}}
+\newlabel{tab:empirical_depth_kernel_calibration@cref}{{[table][2][]2}{[1][9][]9}}
+\newlabel{eq:weighted_topn_liquidity}{{11}{9}{Empirical depth kernel used in the analysis}{equation.5.11}{}}
+\newlabel{eq:weighted_topn_liquidity@cref}{{[equation][11][]11}{[1][9][]9}}
+\newlabel{eq:multilevel_dwi}{{12}{9}{Empirical depth kernel used in the analysis}{equation.5.12}{}}
+\newlabel{eq:multilevel_dwi@cref}{{[equation][12][]12}{[1][9][]9}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Stylized event-time behavior of the multilevel distance-weighted imbalance. A spoofing episode produces a large top-$n$ imbalance and, after the small opposite-side execution, a rapid return toward zero when the deceptive profile is cancelled. Inventory rebalancing by a market maker should evolve more smoothly.}}{10}{figure.caption.8}\protected@file@percent }
+\newlabel{fig:topn_imbalance_dynamics}{{4}{10}{Stylized event-time behavior of the multilevel distance-weighted imbalance. A spoofing episode produces a large top-$n$ imbalance and, after the small opposite-side execution, a rapid return toward zero when the deceptive profile is cancelled. Inventory rebalancing by a market maker should evolve more smoothly}{figure.caption.8}{}}
+\newlabel{fig:topn_imbalance_dynamics@cref}{{[figure][4][]4}{[1][10][]10}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.3}Conditionality and Intent Isolation}{10}{subsubsection.5.1.3}\protected@file@percent }
+\newlabel{subsec:multilevel_conditionality}{{5.1.3}{10}{Conditionality and Intent Isolation}{subsubsection.5.1.3}{}}
+\newlabel{subsec:multilevel_conditionality@cref}{{[subsubsection][3][5,1]5.1.3}{[1][10][]10}}
+\newlabel{eq:deceptive_age_window}{{14}{10}{Conditionality and Intent Isolation}{equation.5.14}{}}
+\newlabel{eq:deceptive_age_window@cref}{{[equation][14][]14}{[1][10][]10}}
+\newlabel{eq:episode_conditioned_liquidity}{{15}{11}{Conditionality and Intent Isolation}{equation.5.15}{}}
+\newlabel{eq:episode_conditioned_liquidity@cref}{{[equation][15][]15}{[1][11][]11}}
+\newlabel{eq:episode_conditioned_dwi}{{16}{11}{Conditionality and Intent Isolation}{equation.5.16}{}}
+\newlabel{eq:episode_conditioned_dwi@cref}{{[equation][16][]16}{[1][11][]11}}
+\newlabel{eq:topn_sci}{{17}{11}{Conditionality and Intent Isolation}{equation.5.17}{}}
+\newlabel{eq:topn_sci@cref}{{[equation][17][]17}{[1][11][]11}}
+\newlabel{eq:side_collapse}{{18}{11}{Conditionality and Intent Isolation}{equation.5.18}{}}
+\newlabel{eq:side_collapse@cref}{{[equation][18][]18}{[1][11][]11}}
+\newlabel{eq:msci}{{19}{11}{Conditionality and Intent Isolation}{equation.5.19}{}}
+\newlabel{eq:msci@cref}{{[equation][19][]19}{[1][11][]11}}
+\newlabel{eq:weighted_withdrawal}{{20}{12}{Conditionality and Intent Isolation}{equation.5.20}{}}
+\newlabel{eq:weighted_withdrawal@cref}{{[equation][20][]20}{[1][12][]12}}
+\newlabel{eq:wmsci}{{21}{12}{Conditionality and Intent Isolation}{equation.5.21}{}}
+\newlabel{eq:wmsci@cref}{{[equation][21][]21}{[1][12][]12}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.4}Multilevel Conditional Probability Score}{13}{subsubsection.5.1.4}\protected@file@percent }
+\newlabel{subsec:mcps}{{5.1.4}{13}{Multilevel Conditional Probability Score}{subsubsection.5.1.4}{}}
+\newlabel{subsec:mcps@cref}{{[subsubsection][4][5,1]5.1.4}{[1][12][]13}}
+\newlabel{eq:mcps}{{22}{13}{Multilevel Conditional Probability Score}{equation.5.22}{}}
+\newlabel{eq:mcps@cref}{{[equation][22][]22}{[1][13][]13}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Operational interpretation of the Multilevel Conditional Probability Score. Each point is one execution for the agent. The score increases when the multilevel conditionality index repeatedly exceeds the threshold $\gamma _n$.}}{13}{figure.caption.9}\protected@file@percent }
+\newlabel{fig:mcps_score}{{5}{13}{Operational interpretation of the Multilevel Conditional Probability Score. Each point is one execution for the agent. The score increases when the multilevel conditionality index repeatedly exceeds the threshold $\gamma _n$}{figure.caption.9}{}}
+\newlabel{fig:mcps_score@cref}{{[figure][5][]5}{[1][13][]13}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.5}Price-Response Diagnostics}{13}{subsubsection.5.1.5}\protected@file@percent }
 \newlabel{subsec:price_response_diagnostics}{{5.1.5}{13}{Price-Response Diagnostics}{subsubsection.5.1.5}{}}
 \newlabel{subsec:price_response_diagnostics@cref}{{[subsubsection][5][5,1]5.1.5}{[1][13][]13}}
-\newlabel{eq:price_response_direction}{{22}{13}{Price-Response Diagnostics}{equation.5.22}{}}
-\newlabel{eq:price_response_direction@cref}{{[equation][22][]22}{[1][13][]13}}
-\newlabel{eq:favorable_price_move}{{23}{13}{Price-Response Diagnostics}{equation.5.23}{}}
-\newlabel{eq:favorable_price_move@cref}{{[equation][23][]23}{[1][13][]13}}
-\newlabel{eq:price_reversion}{{24}{13}{Price-Response Diagnostics}{equation.5.24}{}}
-\newlabel{eq:price_reversion@cref}{{[equation][24][]24}{[1][13][]13}}
-\newlabel{eq:execution_advantage}{{25}{13}{Price-Response Diagnostics}{equation.5.25}{}}
-\newlabel{eq:execution_advantage@cref}{{[equation][25][]25}{[1][13][]13}}
+\newlabel{eq:price_response_direction}{{24}{14}{Price-Response Diagnostics}{equation.5.24}{}}
+\newlabel{eq:price_response_direction@cref}{{[equation][24][]24}{[1][14][]14}}
+\newlabel{eq:favorable_price_move}{{25}{14}{Price-Response Diagnostics}{equation.5.25}{}}
+\newlabel{eq:favorable_price_move@cref}{{[equation][25][]25}{[1][14][]14}}
+\newlabel{eq:price_reversion}{{26}{14}{Price-Response Diagnostics}{equation.5.26}{}}
+\newlabel{eq:price_reversion@cref}{{[equation][26][]26}{[1][14][]14}}
+\newlabel{eq:execution_advantage}{{27}{14}{Price-Response Diagnostics}{equation.5.27}{}}
+\newlabel{eq:execution_advantage@cref}{{[equation][27][]27}{[1][14][]14}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.6}Event Reconstruction}{14}{subsubsection.5.1.6}\protected@file@percent }
 \newlabel{subsec:event_reconstruction}{{5.1.6}{14}{Event Reconstruction}{subsubsection.5.1.6}{}}
 \newlabel{subsec:event_reconstruction@cref}{{[subsubsection][6][5,1]5.1.6}{[1][14][]14}}
 \@writefile{toc}{\contentsline {section}{\numberline {6}Results}{15}{section.6}\protected@file@percent }
 \newlabel{sec:results}{{6}{15}{Results}{section.6}{}}
-\newlabel{sec:results@cref}{{[section][6][]6}{[1][14][]15}}
+\newlabel{sec:results@cref}{{[section][6][]6}{[1][15][]15}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Cross-Instrument Detection Summary}{15}{subsection.6.1}\protected@file@percent }
 \newlabel{subsec:cross_instrument_results}{{6.1}{15}{Cross-Instrument Detection Summary}{subsection.6.1}{}}
-\newlabel{subsec:cross_instrument_results@cref}{{[subsection][1][6]6.1}{[1][14][]15}}
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Exploratory top-$5$ spoofing-compatible detections across the three samples. Matched events are small passive executions followed by same-client cancellation of an opposite-side candidate order inside the post-execution window. The price-response shares report the fraction of matched events with positive signed mid-price favorable pre-fill movement or post-cancel reversion.}}{15}{table.caption.10}\protected@file@percent }
-\newlabel{tab:empirical_spoofing_diagnostics}{{3}{15}{Exploratory top-$5$ spoofing-compatible detections across the three samples. Matched events are small passive executions followed by same-client cancellation of an opposite-side candidate order inside the post-execution window. The price-response shares report the fraction of matched events with positive signed mid-price favorable pre-fill movement or post-cancel reversion}{table.caption.10}{}}
-\newlabel{tab:empirical_spoofing_diagnostics@cref}{{[table][3][]3}{[1][15][]15}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Client-Level Concentration}{15}{subsection.6.2}\protected@file@percent }
-\newlabel{subsec:client_level_results}{{6.2}{15}{Client-Level Concentration}{subsection.6.2}{}}
-\newlabel{subsec:client_level_results@cref}{{[subsection][2][6]6.2}{[1][15][]15}}
+\newlabel{subsec:cross_instrument_results@cref}{{[subsection][1][6]6.1}{[1][15][]15}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Exploratory top-$5$ spoofing-compatible detections across the three samples. Matched events are small passive executions followed by same-client cancellation of an opposite-side candidate order inside the post-execution window. The price-response shares report the fraction of matched events with positive signed mid-price favorable pre-fill movement or post-cancel reversion.}}{16}{table.caption.10}\protected@file@percent }
+\newlabel{tab:empirical_spoofing_diagnostics}{{3}{16}{Exploratory top-$5$ spoofing-compatible detections across the three samples. Matched events are small passive executions followed by same-client cancellation of an opposite-side candidate order inside the post-execution window. The price-response shares report the fraction of matched events with positive signed mid-price favorable pre-fill movement or post-cancel reversion}{table.caption.10}{}}
+\newlabel{tab:empirical_spoofing_diagnostics@cref}{{[table][3][]3}{[1][15][]16}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Client-Level Concentration}{16}{subsection.6.2}\protected@file@percent }
+\newlabel{subsec:client_level_results}{{6.2}{16}{Client-Level Concentration}{subsection.6.2}{}}
+\newlabel{subsec:client_level_results@cref}{{[subsection][2][6]6.2}{[1][16][]16}}
 \@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Largest client-level matched-withdrawal clusters by instrument. W/F is the maximum withdrawal-to-fill ratio among the client's matched events. FPM$>0$ and REV$>0$ are client-level fractions of matched events with positive signed mid-price favorable movement and reversion.}}{16}{table.caption.11}\protected@file@percent }
 \newlabel{tab:top_client_results}{{4}{16}{Largest client-level matched-withdrawal clusters by instrument. W/F is the maximum withdrawal-to-fill ratio among the client's matched events. FPM$>0$ and REV$>0$ are client-level fractions of matched events with positive signed mid-price favorable movement and reversion}{table.caption.11}{}}
-\newlabel{tab:top_client_results@cref}{{[table][4][]4}{[1][15][]16}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Analyst Alert Prioritization}{16}{subsection.6.3}\protected@file@percent }
-\newlabel{subsec:alert_prioritization_results}{{6.3}{16}{Analyst Alert Prioritization}{subsection.6.3}{}}
-\newlabel{subsec:alert_prioritization_results@cref}{{[subsection][3][6]6.3}{[1][16][]16}}
-\newlabel{eq:alert_score}{{26}{16}{Analyst Alert Prioritization}{equation.6.26}{}}
-\newlabel{eq:alert_score@cref}{{[equation][26][]26}{[1][16][]16}}
+\newlabel{tab:top_client_results@cref}{{[table][4][]4}{[1][16][]16}}
 \bibstyle{abbrv}
 \bibdata{references}
 \bibcite{ChenHsiehYang2026}{{1}{}{{}}{{}}}
 \bibcite{DebieEtAl2023}{{2}{}{{}}{{}}}
 \bibcite{EU5962014}{{3}{}{{}}{{}}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Analyst Alert Prioritization}{17}{subsection.6.3}\protected@file@percent }
+\newlabel{subsec:alert_prioritization_results}{{6.3}{17}{Analyst Alert Prioritization}{subsection.6.3}{}}
+\newlabel{subsec:alert_prioritization_results@cref}{{[subsection][3][6]6.3}{[1][17][]17}}
+\newlabel{eq:alert_score}{{28}{17}{Analyst Alert Prioritization}{equation.6.28}{}}
+\newlabel{eq:alert_score@cref}{{[equation][28][]28}{[1][17][]17}}
 \bibcite{FabreChallet2025}{{4}{}{{}}{{}}}
 \bibcite{KangMuNing2023}{{5}{}{{}}{{}}}
 \bibcite{KangMuNing2024}{{6}{}{{}}{{}}}

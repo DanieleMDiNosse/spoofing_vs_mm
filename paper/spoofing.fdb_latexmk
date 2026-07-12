@@ -1,14 +1,15 @@
 # Fdb version 4
-["bibtex spoofing"] 1783616221.10985 "spoofing.aux" "spoofing.bbl" "spoofing" 1783616222.39592 0
+["bibtex spoofing"] 1783671717.27873 "spoofing.aux" "spoofing.bbl" "spoofing" 1783850111.33639 0
   "./references.bib" 1777296515.34536 5549 2f21d7b9b928e411dedaa08075e7dae3 ""
   "/usr/share/texlive/texmf-dist/bibtex/bst/base/abbrv.bst" 1292289607 20329 b5fed53e10044d0f8112183785c759b1 ""
-  "spoofing.aux" 1783616222.21677 18273 88c430097d041cff9b51befd6919ffb4 "pdflatex"
+  "spoofing.aux" 1783850111.16152 18811 9eab8577127b713f8719aaa69d936918 "pdflatex"
   (generated)
   "spoofing.bbl"
   "spoofing.blg"
   (rewritten before read)
-["pdflatex"] 1783616221.19616 "spoofing.tex" "spoofing.pdf" "spoofing" 1783616222.39609 0
+["pdflatex"] 1783850110.08926 "/home/danielemdn/Documents/repositories/spoofing_detection/paper/spoofing.tex" "spoofing.pdf" "spoofing" 1783850111.33658 0
   "/etc/texmf/web2c/texmf.cnf" 1769361868.29643 475 c0e671620eb5563b2130f56340a5fde8 ""
+  "/home/danielemdn/Documents/repositories/spoofing_detection/paper/spoofing.tex" 1783850109.8339 76014 996ff15cebe597c5b1eb19947cf85b54 ""
   "/usr/share/texlive/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/jknappen/ec/ecrm1095.tfm" 1136768653 3584 929cdff2b7a8c11bd4d49fd68cb0ae70 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/public/amsfonts/symbols/msam10.tfm" 1246382020 916 f87d7c45f9c908e672703b83b72241a3 ""
@@ -168,6 +169,7 @@
   "/usr/share/texmf/fonts/enc/dvips/lm/lm-ts1.enc" 1254269338 3031 6c4d3515bf7115d8518af1c9ab97ca44 ""
   "/usr/share/texmf/fonts/tfm/public/lm/ec-lmbx10.tfm" 1254269338 12076 b54175e02101bea1addf6b2d0197ed12 ""
   "/usr/share/texmf/fonts/tfm/public/lm/ec-lmbx12.tfm" 1254269338 12088 d750ac78274fa7c9f73ba09914c04f8a ""
+  "/usr/share/texmf/fonts/tfm/public/lm/ec-lmbx8.tfm" 1254269338 12076 360d279d01701e9e9f0f2427c1d230fe ""
   "/usr/share/texmf/fonts/tfm/public/lm/ec-lmbx9.tfm" 1254269338 12080 8da3d5e88196e4de175949ad7749b42f ""
   "/usr/share/texmf/fonts/tfm/public/lm/ec-lmr10.tfm" 1254269338 12056 7e13df7fe4cbce21b072ba7c4f4deb6e ""
   "/usr/share/texmf/fonts/tfm/public/lm/ec-lmr12.tfm" 1254269338 12092 7b1546e2d096cfd5dcbd4049b0b1ec2e ""
@@ -209,6 +211,7 @@
   "/usr/share/texmf/fonts/tfm/public/lm/ts1-lmr9.tfm" 1254269338 1576 219e49590ff1846c6e9d9797f3bd2972 ""
   "/usr/share/texmf/fonts/type1/public/lm/lmbx10.pfb" 1255129361 121021 1bf809ce4a594679006bd72263eba59b ""
   "/usr/share/texmf/fonts/type1/public/lm/lmbx12.pfb" 1255129361 116908 1fca96723793882c2e0160350c192fc8 ""
+  "/usr/share/texmf/fonts/type1/public/lm/lmbx8.pfb" 1255129361 125241 1d6de6a4ab0d08571b46009b6426dace ""
   "/usr/share/texmf/fonts/type1/public/lm/lmbx9.pfb" 1255129361 126646 439622e6fd57f388c9979d39c4fce535 ""
   "/usr/share/texmf/fonts/type1/public/lm/lmex10.pfb" 1254269338 23055 2e5b42921de910eaa97b85df04ca4891 ""
   "/usr/share/texmf/fonts/type1/public/lm/lmmi10.pfb" 1254269338 30388 702fae6a5f0e6e9c48a1d872b442ffcf ""
@@ -239,10 +242,10 @@
   "/usr/share/texmf/web2c/texmf.cnf" 1707919699 40399 f2c302f7d2af602abb742093540a5834 ""
   "/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map" 1781186137.07178 5349216 bf3a80e68d946c7acd95ff030fd9bb63 ""
   "/var/lib/texmf/web2c/pdftex/pdflatex.fmt" 1772126331 6831208 d2f0d249532bdb35075dfaab5e991280 ""
-  "spoofing.aux" 1783616222.21677 18273 88c430097d041cff9b51befd6919ffb4 "pdflatex"
-  "spoofing.bbl" 1783616221.19074 3657 d1f8bcb11a6f3a15e3b093bf83b64b7c "bibtex spoofing"
-  "spoofing.out" 1783616222.21677 3551 c46c87607aaf5a59973ac641bb10e38d "pdflatex"
-  "spoofing.tex" 1783616187.47018 73508 577843ab1c75daa709770977d070b274 ""
+  "spoofing.aux" 1783850111.16152 18811 9eab8577127b713f8719aaa69d936918 "pdflatex"
+  "spoofing.bbl" 1783671717.32134 3621 d34b6458d4078084d7331a987ac80722 "bibtex spoofing"
+  "spoofing.out" 1783850111.16152 3551 c46c87607aaf5a59973ac641bb10e38d "pdflatex"
+  "spoofing.tex" 1783850109.8339 76014 996ff15cebe597c5b1eb19947cf85b54 ""
   (generated)
   "spoofing.aux"
   "spoofing.log"
