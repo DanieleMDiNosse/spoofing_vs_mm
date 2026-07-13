@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "analyze_spoofing_event_with_llm.py"
+PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "spoofing_surveillance_analyst.md"
 
 
 def _load_module():
@@ -22,6 +23,20 @@ def test_compose_prompt_combines_instruction_and_dossier():
     assert "SYSTEM INSTRUCTIONS" in text
     assert "# Event dossier: S10" in text
     assert "Now analyze the event dossier" in text
+
+
+def test_default_prompt_prioritizes_matched_withdrawal_and_price_response_evidence():
+    text = PROMPT_PATH.read_text().lower()
+
+    assert "wmsci" in text
+    assert "withdrawal-to-fill ratio" in text
+    assert "cancellation delay" in text
+    assert "favorable pre-fill price movement" in text
+    assert "post-cancel reversion" in text
+    assert "execution advantage" in text
+    assert "msci" in text
+    assert "secondary" in text
+    assert "not causal evidence" in text
 
 
 def test_write_analysis_artifacts_saves_response_and_metadata(tmp_path):

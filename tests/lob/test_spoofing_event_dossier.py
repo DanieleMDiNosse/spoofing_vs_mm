@@ -100,8 +100,16 @@ def test_render_dossier_markdown_contains_core_sections():
         "DWI_post_window": -0.1,
         "SCI": 0.6,
         "MSCI": 0.3,
+        "WMSCI_event": 4.2,
         "candidate_deceptive_visible_qty_pre": 1000,
         "matched_deceptive_cancel_visible_qty_window": 800,
+        "matched_deceptive_cancel_fraction_window": 0.8,
+        "matched_deceptive_cancel_min_delay_seconds": 0.2,
+        "matched_deceptive_cancel_max_delay_seconds": 0.7,
+        "withdrawal_to_fill_ratio": 8.0,
+        "favorable_mid_move_pre_fill": 0.02,
+        "post_cancel_mid_reversion": 0.01,
+        "execution_price_advantage_vs_posture_mid": 0.03,
     }
     log = pl.DataFrame([{"sort_index": 10, "event_ts": "2024-01-01T10:00:00", "event_class": "fill"}])
     depth = pl.DataFrame(
@@ -127,6 +135,12 @@ def test_render_dossier_markdown_contains_core_sections():
     assert "## Actual event log" in text
     assert "DWI_pre_window" in text
     assert "MSCI" in text
+    assert "WMSCI_event: 4.2" in text
+    assert "withdrawal_to_fill_ratio: 8.0" in text
+    assert "matched_deceptive_cancel_min_delay_seconds: 0.2" in text
+    assert "favorable_mid_move_pre_fill: 0.02" in text
+    assert "post_cancel_mid_reversion: 0.01" in text
+    assert "execution_price_advantage_vs_posture_mid: 0.03" in text
 
 
 def test_build_parameter_robustness_uses_sort_index_across_runs(tmp_path):

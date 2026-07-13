@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The LLM review explains candidate spoofing-like events selected by the DWI/MSCI/MCPS model. It does not decide legal intent and it is not evidence by itself. It is a structured aid for human surveillance review.
+The LLM review explains candidate spoofing-like events selected by the matched-withdrawal model. It treats WMSCI, withdrawal-to-fill scale, and cancellation timing as primary event evidence; price response as a separate economic-consistency check; and DWI/MSCI as secondary shape evidence. It does not decide legal intent and it is not evidence by itself. It is a structured aid for human surveillance review.
 
 ## Generate one event dossier
 
