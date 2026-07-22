@@ -73,11 +73,26 @@ def test_summary_report_explains_msci_mcps_without_old_terms(tmp_path: Path):
     )
 
     report = output.read_text()
+    populations = module._population_metadata()
+
+    assert populations["analytical_event_population"] == "all_passive_execution_clusters"
+    assert populations["mcps_population"] == "all_attributable_client_execution_clusters"
+    assert populations["review_event_selection"] == "canonically_assigned_matched_withdrawal_clusters_only"
     assert "Multilevel top-n spoofing surveillance metrics" in report
     assert "DWI" in report
     assert "MSCI" in report
     assert "MCPS" in report
     assert "Top clients by MCPS" in report
     assert "candidate deceptive profile" in report
+    assert "MCPS population: all attributable-client execution clusters" in report
+    assert "review-event selection: canonically assigned matched-withdrawal clusters only" in report
+    assert "Top execution clusters by MSCI (finite MSCI only)" in report
+    assert "clusters_with_observed_post_window_state" in report
+    assert "client × partition_id" not in report
+    assert "dependent matched pairs" not in report
+    assert "unadjusted exploratory diagnostic" not in report
+    assert "no multiple-testing correction" not in report
+    assert "no prespecified hard calipers" not in report
+    assert "event selection: matched deceptive-order cancellations only" not in report
     assert "fake" not in report.lower()
     assert "old" not in report.lower()

@@ -5,6 +5,7 @@ import polars as pl
 CLIENT_SESSION_FEATURE_SCHEMA = {
     "client_id": pl.Utf8,
     "event_count": pl.UInt32,
+    "raw_fill_message_count": pl.UInt32,
     "msci_exceedance_count": pl.UInt32,
     "mcps_at_threshold": pl.Float64,
     "max_MSCI": pl.Float64,
@@ -44,7 +45,14 @@ def compute_client_session_features(executions: pl.DataFrame, *, msci_threshold:
     missing = [column for column in required if column not in executions.columns]
     if missing:
         raise ValueError(f"missing execution metric columns: {missing}")
+    if "execution_cluster_id" in executions.columns:
+        cluster_ids = executions.filter(pl.col("execution_cluster_id").is_not_null()).get_column(
+            "execution_cluster_id"
+        )
+        if cluster_ids.is_duplicated().any():
+            raise ValueError("execution_metrics must contain at most one row per execution_cluster_id")
     optional_defaults = {
+        "child_fill_count": 1,
         "has_matched_deceptive_cancel_window": False,
         "WMSCI_event": None,
         "withdrawal_to_fill_ratio": None,
@@ -94,6 +102,7 @@ def compute_client_session_features(executions: pl.DataFrame, *, msci_threshold:
         .agg(
             [
                 pl.len().cast(pl.UInt32).alias("event_count"),
+                pl.col("child_fill_count").fill_null(1).sum().cast(pl.UInt32).alias("raw_fill_message_count"),
                 pl.col("msci_exceeds_threshold").sum().cast(pl.UInt32).alias("msci_exceedance_count"),
                 pl.col("MSCI").max().alias("max_MSCI"),
                 pl.col("MSCI").mean().alias("mean_MSCI"),

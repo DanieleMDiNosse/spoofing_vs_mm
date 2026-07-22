@@ -89,6 +89,14 @@ def build_empirical_depth_kernel(
     if profile.is_empty():
         return profile
 
+    loader_keys = ["instrument_id", "side", "rank"]
+    duplicate_keys = profile.group_by(loader_keys).len().filter(pl.col("len") > 1)
+    if not duplicate_keys.is_empty():
+        raise ValueError(
+            "duplicate empirical kernel profile rows for instrument_id/side/rank; "
+            "pool snapshot observations before constructing weights"
+        )
+
     with_components = profile.with_columns(
         protection_component=(1.0 - pl.col("hit_probability")).clip(lower_bound=protection_floor),
         visibility_component=pl.col("visibility_covariance").abs().clip(lower_bound=visibility_floor),
@@ -97,10 +105,13 @@ def build_empirical_depth_kernel(
     totals = with_components.group_by(["instrument_id", "side"]).agg(
         pl.col("raw_weight").sum().alias("raw_weight_total")
     )
+    invalid_totals = totals.filter(
+        ~pl.col("raw_weight_total").is_finite() | (pl.col("raw_weight_total") <= 0)
+    )
+    if not invalid_totals.is_empty():
+        raise ValueError("empirical kernel has a non-finite or zero total raw weight for an instrument/side")
     out = with_components.join(totals, on=["instrument_id", "side"], how="left").with_columns(
-        kernel_weight=pl.when(pl.col("raw_weight_total") > 0)
-        .then(pl.col("raw_weight") / pl.col("raw_weight_total"))
-        .otherwise(0.0)
+        kernel_weight=pl.col("raw_weight") / pl.col("raw_weight_total")
     )
     return out.drop("raw_weight_total").sort(["instrument_id", "side", "rank"])
 
@@ -161,7 +172,7 @@ def estimate_hit_probability_profile(snapshots: pl.DataFrame, fills: pl.DataFram
             return max(prices[lo:hi]) >= price
         return min(prices[lo:hi]) <= price
 
-    grouped: dict[tuple[Any, str, int, float], dict[str, Any]] = {}
+    grouped: dict[tuple[Any, str, int], dict[str, Any]] = {}
     for row in snapshots.iter_rows(named=True):
         ts = _to_seconds(row.get("event_ts"))
         price = row.get("price")
@@ -169,18 +180,19 @@ def estimate_hit_probability_profile(snapshots: pl.DataFrame, fills: pl.DataFram
         side = row.get("side")
         if ts is None or price is None or visible_qty <= 0 or side not in {"bid", "ask"}:
             continue
-        key = (row.get("instrument_id"), str(side), int(row.get("rank")), float(row.get("depth_distance_ticks")))
+        key = (row.get("instrument_id"), str(side), int(row.get("rank")))
         bucket = grouped.setdefault(
             key,
             {
                 "instrument_id": row.get("instrument_id"),
                 "side": str(side),
                 "rank": int(row.get("rank")),
-                "depth_distance_ticks": float(row.get("depth_distance_ticks")),
+                "depth_distance_ticks_sum": 0.0,
                 "exposure_count": 0,
                 "hit_count": 0,
             },
         )
+        bucket["depth_distance_ticks_sum"] += float(row.get("depth_distance_ticks"))
         bucket["exposure_count"] += 1
         partition_id = row.get("partition_id")
         snapshot_price = float(price)
@@ -197,7 +209,13 @@ def estimate_hit_probability_profile(snapshots: pl.DataFrame, fills: pl.DataFram
     rows = []
     for bucket in grouped.values():
         exposure = bucket["exposure_count"]
-        rows.append({**bucket, "hit_probability": bucket["hit_count"] / exposure if exposure else None})
+        rows.append(
+            {
+                **{key: value for key, value in bucket.items() if key != "depth_distance_ticks_sum"},
+                "depth_distance_ticks": bucket["depth_distance_ticks_sum"] / exposure if exposure else None,
+                "hit_probability": bucket["hit_count"] / exposure if exposure else None,
+            }
+        )
     return pl.DataFrame(rows, infer_schema_length=None).sort(["instrument_id", "side", "rank"]) if rows else _empty_profile()
 
 
@@ -247,28 +265,29 @@ def estimate_visibility_covariance_profile(snapshots: pl.DataFrame) -> pl.DataFr
             }
         )
 
-    grouped: dict[tuple[Any, str, int, float], list[tuple[float, float]]] = defaultdict(list)
+    grouped: dict[tuple[Any, str, int], list[tuple[float, float, float]]] = defaultdict(list)
     for row in rows:
-        grouped[(row["instrument_id"], row["side"], row["rank"], row["depth_distance_ticks"])].append(
-            (row["level_contribution"], row["delta_mid"])
+        grouped[(row["instrument_id"], row["side"], row["rank"])].append(
+            (row["level_contribution"], row["delta_mid"], row["depth_distance_ticks"])
         )
 
     out = []
-    for (instrument_id, side, rank, distance), values in grouped.items():
-        xs = [x for x, _ in values]
-        ys = [y for _, y in values]
+    for (instrument_id, side, rank), values in grouped.items():
+        xs = [x for x, _, _ in values]
+        ys = [y for _, y, _ in values]
+        distances = [distance for _, _, distance in values]
         if len(values) < 2:
             covariance = 0.0
         else:
             xbar = sum(xs) / len(xs)
             ybar = sum(ys) / len(ys)
-            covariance = sum((x - xbar) * (y - ybar) for x, y in values) / len(values)
+            covariance = sum((x - xbar) * (y - ybar) for x, y, _ in values) / len(values)
         out.append(
             {
                 "instrument_id": instrument_id,
                 "side": side,
                 "rank": rank,
-                "depth_distance_ticks": distance,
+                "visibility_depth_distance_ticks": sum(distances) / len(distances),
                 "visibility_observation_count": len(values),
                 "visibility_covariance": abs(covariance),
             }
@@ -367,15 +386,58 @@ def _attach_future_mid(snapshots: pl.DataFrame, *, horizon_seconds: float) -> pl
     future_mid_by_key: dict[tuple[Any, int], float | None] = {}
     finite_horizon = math.isfinite(float(horizon_seconds))
     for partition_id, rows in by_partition.items():
-        for idx, snapshot in enumerate(rows):
-            future_mid = None
-            snapshot_ts = snapshot.get("ts_seconds")
-            for candidate in rows[idx + 1 :]:
-                if finite_horizon and snapshot_ts is not None and candidate.get("ts_seconds") is not None:
-                    if float(candidate["ts_seconds"]) > float(snapshot_ts) + float(horizon_seconds):
-                        break
-                if candidate.get("mid") is not None:
-                    future_mid = float(candidate["mid"])
+        timestamps = [row.get("ts_seconds") for row in rows]
+        mids = [float(row["mid"]) if row.get("mid") is not None else None for row in rows]
+        timestamps_are_monotone = all(
+            timestamp is not None for timestamp in timestamps
+        ) and all(
+            float(timestamps[idx]) <= float(timestamps[idx + 1])
+            for idx in range(len(timestamps) - 1)
+        )
+
+        future_mids: list[float | None]
+        if finite_horizon and timestamps_are_monotone:
+            last_finite_mid_index: list[int] = []
+            last_index = -1
+            for idx, mid in enumerate(mids):
+                if mid is not None:
+                    last_index = idx
+                last_finite_mid_index.append(last_index)
+
+            future_mids = []
+            right = 0
+            for idx, snapshot_ts in enumerate(timestamps):
+                right = max(right, idx)
+                limit = float(snapshot_ts) + float(horizon_seconds)
+                while right + 1 < len(rows) and float(timestamps[right + 1]) <= limit:
+                    right += 1
+                future_index = last_finite_mid_index[right]
+                future_mids.append(mids[future_index] if future_index > idx else None)
+        elif not finite_horizon:
+            final_finite_mid_index = max(
+                (idx for idx, mid in enumerate(mids) if mid is not None),
+                default=-1,
+            )
+            future_mids = [
+                mids[final_finite_mid_index] if final_finite_mid_index > idx else None
+                for idx in range(len(rows))
+            ]
+        else:
+            # Keep the original semantics for malformed partitions. Valid
+            # calibration partitions use the linear-time path above.
+            future_mids = []
+            for idx, snapshot_ts in enumerate(timestamps):
+                future_mid = None
+                for candidate_idx in range(idx + 1, len(rows)):
+                    candidate_ts = timestamps[candidate_idx]
+                    if snapshot_ts is not None and candidate_ts is not None:
+                        if float(candidate_ts) > float(snapshot_ts) + float(horizon_seconds):
+                            break
+                    if mids[candidate_idx] is not None:
+                        future_mid = mids[candidate_idx]
+                future_mids.append(future_mid)
+
+        for snapshot, future_mid in zip(rows, future_mids, strict=True):
             future_mid_by_key[(partition_id, int(snapshot["snapshot_id"]))] = future_mid
 
     return snapshots.with_columns(
@@ -461,6 +523,11 @@ def _attach_decay_summaries(kernel: pl.DataFrame) -> pl.DataFrame:
     summary_rows = []
     for (instrument_id, side), group in kernel.group_by(["instrument_id", "side"]):
         distances = group["depth_distance_ticks"].to_list()
+        visibility_distances = (
+            group["visibility_depth_distance_ticks"].to_list()
+            if "visibility_depth_distance_ticks" in group.columns
+            else distances
+        )
         hit_prob = group["hit_probability"].to_list()
         visibility = group["visibility_covariance"].to_list()
         exposure_weights = group["exposure_count"].to_list()
@@ -470,7 +537,7 @@ def _attach_decay_summaries(kernel: pl.DataFrame) -> pl.DataFrame:
                 "instrument_id": instrument_id,
                 "side": side,
                 "kappa_hat_side": fit_log_decay_slope(distances, hit_prob, weights=exposure_weights),
-                "lambda_hat_side": fit_log_decay_slope(distances, visibility, weights=visibility_weights),
+                "lambda_hat_side": fit_log_decay_slope(visibility_distances, visibility, weights=visibility_weights),
             }
         )
     side_summary = pl.DataFrame(summary_rows, infer_schema_length=None)
@@ -542,9 +609,13 @@ def calibrate_empirical_depth_kernel(
         return hit_profile
     profile = hit_profile.join(
         visibility_profile,
-        on=["instrument_id", "side", "rank", "depth_distance_ticks"],
+        on=["instrument_id", "side", "rank"],
         how="left",
-    ).with_columns(pl.col("visibility_covariance").fill_null(0.0))
+    ).with_columns(
+        pl.col("visibility_covariance").fill_null(0.0),
+        pl.col("visibility_depth_distance_ticks")
+        .fill_null(pl.col("depth_distance_ticks")),
+    )
     if "visibility_observation_count" not in profile.columns:
         profile = profile.with_columns(pl.lit(0).alias("visibility_observation_count"))
     profile = profile.with_columns(pl.col("visibility_observation_count").fill_null(0))
@@ -561,10 +632,19 @@ def load_empirical_kernel_weights(path: Path | str, *, instrument_id: str | None
     missing = sorted(required - set(df.columns))
     if missing:
         raise ValueError(f"missing empirical kernel columns: {', '.join(missing)}")
+    if "instrument_id" in df.columns and instrument_id is None and df["instrument_id"].n_unique() > 1:
+        raise ValueError("empirical kernel contains multiple instruments; pass instrument_id explicitly")
+    duplicate_keys = df.group_by(["side", "rank"]).len().filter(pl.col("len") > 1)
+    if not duplicate_keys.is_empty():
+        raise ValueError(
+            "duplicate empirical kernel rows for side/rank; regenerate the artifact with pooled rank-level calibration"
+        )
     weights: dict[str, dict[int, float]] = {}
     for side, group in df.group_by("side"):
         side_name = side[0] if isinstance(side, tuple) else side
         raw = {int(row["rank"]): float(row["kernel_weight"]) for row in group.iter_rows(named=True)}
         total = sum(raw.values())
-        weights[str(side_name)] = {rank: value / total for rank, value in raw.items()} if total > 0 else raw
+        if not math.isfinite(total) or total <= 0:
+            raise ValueError(f"empirical kernel weights for side {side_name!r} must have a positive finite total")
+        weights[str(side_name)] = {rank: value / total for rank, value in raw.items()}
     return weights

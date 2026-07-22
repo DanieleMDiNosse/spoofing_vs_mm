@@ -7,8 +7,8 @@
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
 \newlabel{sec:introduction}{{1}{1}{Introduction}{section.1}{}}
 \newlabel{sec:introduction@cref}{{[section][1][]1}{[1][1][]1}}
-\@writefile{toc}{\contentsline {section}{\numberline {2}The Microstructural Divergence: Market Making Versus Spoofing}{2}{section.2}\protected@file@percent }
-\newlabel{sec:mm_vs_spoofing}{{2}{2}{The Microstructural Divergence: Market Making Versus Spoofing}{section.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Market Making Versus Spoofing}{2}{section.2}\protected@file@percent }
+\newlabel{sec:mm_vs_spoofing}{{2}{2}{Market Making Versus Spoofing}{section.2}{}}
 \newlabel{sec:mm_vs_spoofing@cref}{{[section][2][]2}{[1][2][]2}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.1}The Market Maker's Problem}{2}{subsection.2.1}\protected@file@percent }
 \newlabel{subsec:market_maker}{{2.1}{2}{The Market Maker's Problem}{subsection.2.1}{}}
@@ -16,141 +16,158 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.2}The Spoofer's Problem}{3}{subsection.2.2}\protected@file@percent }
 \newlabel{subsec:spoofing}{{2.2}{3}{The Spoofer's Problem}{subsection.2.2}{}}
 \newlabel{subsec:spoofing@cref}{{[subsection][2][2]2.2}{[1][3][]3}}
-\@writefile{toc}{\contentsline {section}{\numberline {3}Existing Approaches}{3}{section.3}\protected@file@percent }
-\newlabel{sec:existing_approaches}{{3}{3}{Existing Approaches}{section.3}{}}
-\newlabel{sec:existing_approaches@cref}{{[section][3][]3}{[1][3][]3}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Stylized differences used to construct the surveillance diagnostics. These differences describe economic benchmarks, not observed intent or necessary conditions for either activity.}}{3}{table.caption.2}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:surveillance-models}{{1}{3}{Stylized differences used to construct the surveillance diagnostics. These differences describe economic benchmarks, not observed intent or necessary conditions for either activity}{table.caption.2}{}}
+\newlabel{tab:surveillance-models@cref}{{[table][1][]1}{[1][3][]3}}
 \citation{LeeEomPark2013}
 \citation{MendoncaDeGenaro2020}
 \citation{StenforsSusai2021}
 \citation{StenforsEtAl2023}
 \citation{ChenHsiehYang2026}
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Core Differentiators for Surveillance Models}}{4}{table.caption.2}\protected@file@percent }
-\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
-\newlabel{tab:surveillance-models}{{1}{4}{Core Differentiators for Surveillance Models}{table.caption.2}{}}
-\newlabel{tab:surveillance-models@cref}{{[table][1][]1}{[1][3][]4}}
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Method families in the spoofing-detection literature. The categories are not mutually exclusive, but they highlight the main modeling choice made by each strand of work.}}{4}{figure.caption.3}\protected@file@percent }
-\newlabel{fig:method_taxonomy}{{1}{4}{Method families in the spoofing-detection literature. The categories are not mutually exclusive, but they highlight the main modeling choice made by each strand of work}{figure.caption.3}{}}
-\newlabel{fig:method_taxonomy@cref}{{[figure][1][]1}{[1][4][]4}}
 \citation{TaoDayLingDrapeau2022}
 \citation{LiPolukarovaVentre2023}
 \citation{DebieEtAl2023}
 \citation{FabreChallet2025}
 \citation{TuccellaNadlerSerban2021}
 \citation{KangMuNing2023,KangMuNing2024,XiangEtAl2025}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Existing Approaches}{4}{section.3}\protected@file@percent }
+\newlabel{sec:existing_approaches}{{3}{4}{Existing Approaches}{section.3}{}}
+\newlabel{sec:existing_approaches@cref}{{[section][3][]3}{[1][4][]4}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Method families in the spoofing-detection literature. The categories can overlap; each column identifies the main object or representation used by a strand of work.}}{4}{figure.caption.3}\protected@file@percent }
+\newlabel{fig:method_taxonomy}{{1}{4}{Method families in the spoofing-detection literature. The categories can overlap; each column identifies the main object or representation used by a strand of work}{figure.caption.3}{}}
+\newlabel{fig:method_taxonomy@cref}{{[figure][1][]1}{[1][4][]4}}
 \@writefile{toc}{\contentsline {section}{\numberline {4}Data}{5}{section.4}\protected@file@percent }
 \newlabel{sec:data}{{4}{5}{Data}{section.4}{}}
 \newlabel{sec:data@cref}{{[section][4][]4}{[1][5][]5}}
 \@writefile{toc}{\contentsline {section}{\numberline {5}Model}{5}{section.5}\protected@file@percent }
 \newlabel{sec:model}{{5}{5}{Model}{section.5}{}}
 \newlabel{sec:model@cref}{{[section][5][]5}{[1][5][]5}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}A Spatio-Temporal Framework for Spoofing Detection}{6}{subsection.5.1}\protected@file@percent }
-\newlabel{sec:spoofer_timeline}{{5.1}{6}{A Spatio-Temporal Framework for Spoofing Detection}{subsection.5.1}{}}
-\newlabel{sec:spoofer_timeline@cref}{{[subsection][1][5]5.1}{[1][5][]6}}
-\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Schematic top-$n$ spoofing timeline. The large non-bona fide order is represented as an agent-specific depth profile over several bid levels, while the bona fide order sits close to the opposite best quote. The same construction applies symmetrically to sell- and buy-intent episodes.}}{6}{figure.caption.4}\protected@file@percent }
-\newlabel{fig:topn_spoofing_timeline}{{2}{6}{Schematic top-$n$ spoofing timeline. The large non-bona fide order is represented as an agent-specific depth profile over several bid levels, while the bona fide order sits close to the opposite best quote. The same construction applies symmetrically to sell- and buy-intent episodes}{figure.caption.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}A Spatio-Temporal Framework for Spoofing Detection}{5}{subsection.5.1}\protected@file@percent }
+\newlabel{sec:spoofer_timeline}{{5.1}{5}{A Spatio-Temporal Framework for Spoofing Detection}{subsection.5.1}{}}
+\newlabel{sec:spoofer_timeline@cref}{{[subsection][1][5]5.1}{[1][5][]5}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Schematic top-$n$ timeline for the hypothesized spoofing mechanism. The large candidate posture forms an agent-specific depth profile over several bid levels, while the smaller order rests near the opposite best quote. The construction applies symmetrically to candidate buy- and sell-intent episodes.}}{6}{figure.caption.4}\protected@file@percent }
+\newlabel{fig:topn_spoofing_timeline}{{2}{6}{Schematic top-$n$ timeline for the hypothesized spoofing mechanism. The large candidate posture forms an agent-specific depth profile over several bid levels, while the smaller order rests near the opposite best quote. The construction applies symmetrically to candidate buy- and sell-intent episodes}{figure.caption.4}{}}
 \newlabel{fig:topn_spoofing_timeline@cref}{{[figure][2][]2}{[1][5][]6}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.1}Top-$n$ Agent-Specific Depth Profiles}{6}{subsubsection.5.1.1}\protected@file@percent }
-\newlabel{subsec:topn_depth_profiles}{{5.1.1}{6}{Top-$n$ Agent-Specific Depth Profiles}{subsubsection.5.1.1}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.1}Top-$n$ Participant-Specific Depth Profiles}{6}{subsubsection.5.1.1}\protected@file@percent }
+\newlabel{subsec:topn_depth_profiles}{{5.1.1}{6}{\texorpdfstring {Top-$n$}{Top-n} Participant-Specific Depth Profiles}{subsubsection.5.1.1}{}}
 \newlabel{subsec:topn_depth_profiles@cref}{{[subsubsection][1][5,1]5.1.1}{[1][6][]6}}
-\newlabel{eq:relative_agent_depth}{{3}{7}{Top-$n$ Agent-Specific Depth Profiles}{equation.5.3}{}}
+\newlabel{eq:relative_agent_depth}{{3}{7}{\texorpdfstring {Top-$n$}{Top-n} Participant-Specific Depth Profiles}{equation.5.3}{}}
 \newlabel{eq:relative_agent_depth@cref}{{[equation][3][]3}{[1][7][]7}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.2}Multilevel Distance-Weighted Imbalance}{7}{subsubsection.5.1.2}\protected@file@percent }
 \newlabel{subsec:multilevel_dwi}{{5.1.2}{7}{Multilevel Distance-Weighted Imbalance}{subsubsection.5.1.2}{}}
 \newlabel{subsec:multilevel_dwi@cref}{{[subsubsection][2][5,1]5.1.2}{[1][7][]7}}
-\newlabel{eq:depth_kernel}{{4}{7}{Multilevel Distance-Weighted Imbalance}{equation.5.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{Economic intuition and a stylized parametric benchmark.}{7}{section*.5}\protected@file@percent }
+\newlabel{eq:depth_kernel}{{4}{7}{Economic intuition and a stylized parametric benchmark}{equation.5.4}{}}
 \newlabel{eq:depth_kernel@cref}{{[equation][4][]4}{[1][7][]7}}
-\@writefile{toc}{\contentsline {paragraph}{Empirical depth kernel used in the analysis.}{7}{section*.6}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Conceptual illustration of the parametric candidate in \cref  {eq:depth_kernel}. Visibility decreases with distance from the touch, protection from immediate execution increases, and their product represents the trade-off between the two. The right panel shows the resulting normalized weights for one illustrative parameter choice. This figure motivates the economic construction; the empirical analysis uses the instrument-specific kernel in \cref  {eq:empirical_depth_kernel} rather than these parametric weights.}}{8}{figure.caption.5}\protected@file@percent }
-\newlabel{fig:depth_kernel_behavior}{{3}{8}{Conceptual illustration of the parametric candidate in \cref {eq:depth_kernel}. Visibility decreases with distance from the touch, protection from immediate execution increases, and their product represents the trade-off between the two. The right panel shows the resulting normalized weights for one illustrative parameter choice. This figure motivates the economic construction; the empirical analysis uses the instrument-specific kernel in \cref {eq:empirical_depth_kernel} rather than these parametric weights}{figure.caption.5}{}}
-\newlabel{fig:depth_kernel_behavior@cref}{{[figure][3][]3}{[1][7][]8}}
-\newlabel{eq:empirical_hit_probability}{{5}{8}{Empirical depth kernel used in the analysis}{equation.5.5}{}}
-\newlabel{eq:empirical_hit_probability@cref}{{[equation][5][]5}{[1][7][]8}}
-\newlabel{eq:empirical_protection_profile}{{6}{8}{Empirical depth kernel used in the analysis}{equation.5.6}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Conceptual depth kernel in \cref  {eq:depth_kernel}. The left panel shows decreasing visibility, increasing protection from immediate execution, and their product. The right panel shows normalized weights for one illustrative parameter choice. The empirical analysis uses the instrument- and side-specific kernel in \cref  {eq:empirical_depth_kernel}, not these parametric weights.}}{7}{figure.caption.6}\protected@file@percent }
+\newlabel{fig:depth_kernel_behavior}{{3}{7}{Conceptual depth kernel in \cref {eq:depth_kernel}. The left panel shows decreasing visibility, increasing protection from immediate execution, and their product. The right panel shows normalized weights for one illustrative parameter choice. The empirical analysis uses the instrument- and side-specific kernel in \cref {eq:empirical_depth_kernel}, not these parametric weights}{figure.caption.6}{}}
+\newlabel{fig:depth_kernel_behavior@cref}{{[figure][3][]3}{[1][7][]7}}
+\@writefile{toc}{\contentsline {paragraph}{Operational empirical depth kernel.}{7}{section*.7}\protected@file@percent }
+\newlabel{eq:empirical_hit_probability}{{5}{8}{Operational empirical depth kernel}{equation.5.5}{}}
+\newlabel{eq:empirical_hit_probability@cref}{{[equation][5][]5}{[1][8][]8}}
+\newlabel{eq:empirical_protection_profile}{{6}{8}{Operational empirical depth kernel}{equation.5.6}{}}
 \newlabel{eq:empirical_protection_profile@cref}{{[equation][6][]6}{[1][8][]8}}
-\newlabel{eq:total_topn_market_depth}{{7}{8}{Empirical depth kernel used in the analysis}{equation.5.7}{}}
+\newlabel{eq:total_topn_market_depth}{{7}{8}{Operational empirical depth kernel}{equation.5.7}{}}
 \newlabel{eq:total_topn_market_depth@cref}{{[equation][7][]7}{[1][8][]8}}
-\newlabel{eq:normalized_level_contribution}{{8}{8}{Empirical depth kernel used in the analysis}{equation.5.8}{}}
+\newlabel{eq:normalized_level_contribution}{{8}{8}{Operational empirical depth kernel}{equation.5.8}{}}
 \newlabel{eq:normalized_level_contribution@cref}{{[equation][8][]8}{[1][8][]8}}
-\newlabel{eq:empirical_visibility_covariance}{{9}{8}{Empirical depth kernel used in the analysis}{equation.5.9}{}}
-\newlabel{eq:empirical_visibility_covariance@cref}{{[equation][9][]9}{[1][8][]8}}
-\newlabel{eq:empirical_depth_kernel}{{10}{9}{Empirical depth kernel used in the analysis}{equation.5.10}{}}
-\newlabel{eq:empirical_depth_kernel@cref}{{[equation][10][]10}{[1][9][]9}}
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Full-sample empirical top-$5$ depth-kernel calibration at horizon $H=10$ seconds. The weights are the operational object used by the empirical runs; $\setbox \z@ \hbox {\mathsurround \z@ $\textstyle \kappa $}\mathaccent "0362{\kappa }$ and $\setbox \z@ \hbox {\mathsurround \z@ $\textstyle \lambda $}\mathaccent "0362{\lambda }$ are collapsed instrument-level log-decay summaries. A value of $\setbox \z@ \hbox {\mathsurround \z@ $\textstyle \lambda $}\mathaccent "0362{\lambda }=0$ means that the empirical visibility-covariance profile does not exhibit a positive exponential decay over the observed levels, not that the visibility component is zero.}}{9}{table.caption.7}\protected@file@percent }
-\newlabel{tab:empirical_depth_kernel_calibration}{{2}{9}{Full-sample empirical top-$5$ depth-kernel calibration at horizon $H=10$ seconds. The weights are the operational object used by the empirical runs; $\widehat \kappa $ and $\widehat \lambda $ are collapsed instrument-level log-decay summaries. A value of $\widehat \lambda =0$ means that the empirical visibility-covariance profile does not exhibit a positive exponential decay over the observed levels, not that the visibility component is zero}{table.caption.7}{}}
+\newlabel{eq:empirical_visibility_covariance}{{9}{9}{Operational empirical depth kernel}{equation.5.9}{}}
+\newlabel{eq:empirical_visibility_covariance@cref}{{[equation][9][]9}{[1][8][]9}}
+\newlabel{eq:empirical_kernel_floors}{{10}{9}{Operational empirical depth kernel}{equation.5.10}{}}
+\newlabel{eq:empirical_kernel_floors@cref}{{[equation][10][]10}{[1][9][]9}}
+\newlabel{eq:empirical_depth_kernel}{{11}{9}{Operational empirical depth kernel}{equation.5.11}{}}
+\newlabel{eq:empirical_depth_kernel@cref}{{[equation][11][]11}{[1][9][]9}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Operational full-sample empirical top-$10$ depth-kernel weights at horizon $H=10$ seconds. Values are rounded to three decimal places and sum to one within each instrument and side before rounding. These weights, rather than fitted exponential parameters, enter the empirical spoofing metrics.}}{9}{table.caption.8}\protected@file@percent }
+\newlabel{tab:empirical_depth_kernel_calibration}{{2}{9}{Operational full-sample empirical top-$10$ depth-kernel weights at horizon $H=10$ seconds. Values are rounded to three decimal places and sum to one within each instrument and side before rounding. These weights, rather than fitted exponential parameters, enter the empirical spoofing metrics}{table.caption.8}{}}
 \newlabel{tab:empirical_depth_kernel_calibration@cref}{{[table][2][]2}{[1][9][]9}}
-\newlabel{eq:weighted_topn_liquidity}{{11}{9}{Empirical depth kernel used in the analysis}{equation.5.11}{}}
-\newlabel{eq:weighted_topn_liquidity@cref}{{[equation][11][]11}{[1][9][]9}}
-\newlabel{eq:multilevel_dwi}{{12}{9}{Empirical depth kernel used in the analysis}{equation.5.12}{}}
-\newlabel{eq:multilevel_dwi@cref}{{[equation][12][]12}{[1][9][]9}}
-\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Stylized event-time behavior of the multilevel distance-weighted imbalance. A spoofing episode produces a large top-$n$ imbalance and, after the small opposite-side execution, a rapid return toward zero when the deceptive profile is cancelled. Inventory rebalancing by a market maker should evolve more smoothly.}}{10}{figure.caption.8}\protected@file@percent }
-\newlabel{fig:topn_imbalance_dynamics}{{4}{10}{Stylized event-time behavior of the multilevel distance-weighted imbalance. A spoofing episode produces a large top-$n$ imbalance and, after the small opposite-side execution, a rapid return toward zero when the deceptive profile is cancelled. Inventory rebalancing by a market maker should evolve more smoothly}{figure.caption.8}{}}
-\newlabel{fig:topn_imbalance_dynamics@cref}{{[figure][4][]4}{[1][10][]10}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.3}Conditionality and Intent Isolation}{10}{subsubsection.5.1.3}\protected@file@percent }
-\newlabel{subsec:multilevel_conditionality}{{5.1.3}{10}{Conditionality and Intent Isolation}{subsubsection.5.1.3}{}}
-\newlabel{subsec:multilevel_conditionality@cref}{{[subsubsection][3][5,1]5.1.3}{[1][10][]10}}
-\newlabel{eq:deceptive_age_window}{{14}{10}{Conditionality and Intent Isolation}{equation.5.14}{}}
-\newlabel{eq:deceptive_age_window@cref}{{[equation][14][]14}{[1][10][]10}}
-\newlabel{eq:episode_conditioned_liquidity}{{15}{11}{Conditionality and Intent Isolation}{equation.5.15}{}}
-\newlabel{eq:episode_conditioned_liquidity@cref}{{[equation][15][]15}{[1][11][]11}}
-\newlabel{eq:episode_conditioned_dwi}{{16}{11}{Conditionality and Intent Isolation}{equation.5.16}{}}
-\newlabel{eq:episode_conditioned_dwi@cref}{{[equation][16][]16}{[1][11][]11}}
-\newlabel{eq:topn_sci}{{17}{11}{Conditionality and Intent Isolation}{equation.5.17}{}}
-\newlabel{eq:topn_sci@cref}{{[equation][17][]17}{[1][11][]11}}
-\newlabel{eq:side_collapse}{{18}{11}{Conditionality and Intent Isolation}{equation.5.18}{}}
-\newlabel{eq:side_collapse@cref}{{[equation][18][]18}{[1][11][]11}}
-\newlabel{eq:msci}{{19}{11}{Conditionality and Intent Isolation}{equation.5.19}{}}
-\newlabel{eq:msci@cref}{{[equation][19][]19}{[1][11][]11}}
-\newlabel{eq:weighted_withdrawal}{{20}{12}{Conditionality and Intent Isolation}{equation.5.20}{}}
-\newlabel{eq:weighted_withdrawal@cref}{{[equation][20][]20}{[1][12][]12}}
-\newlabel{eq:wmsci}{{21}{12}{Conditionality and Intent Isolation}{equation.5.21}{}}
-\newlabel{eq:wmsci@cref}{{[equation][21][]21}{[1][12][]12}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.4}Multilevel Conditional Probability Score}{13}{subsubsection.5.1.4}\protected@file@percent }
-\newlabel{subsec:mcps}{{5.1.4}{13}{Multilevel Conditional Probability Score}{subsubsection.5.1.4}{}}
-\newlabel{subsec:mcps@cref}{{[subsubsection][4][5,1]5.1.4}{[1][12][]13}}
-\newlabel{eq:mcps}{{22}{13}{Multilevel Conditional Probability Score}{equation.5.22}{}}
-\newlabel{eq:mcps@cref}{{[equation][22][]22}{[1][13][]13}}
-\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Operational interpretation of the Multilevel Conditional Probability Score. Each point is one execution for the agent. The score increases when the multilevel conditionality index repeatedly exceeds the threshold $\gamma _n$.}}{13}{figure.caption.9}\protected@file@percent }
-\newlabel{fig:mcps_score}{{5}{13}{Operational interpretation of the Multilevel Conditional Probability Score. Each point is one execution for the agent. The score increases when the multilevel conditionality index repeatedly exceeds the threshold $\gamma _n$}{figure.caption.9}{}}
-\newlabel{fig:mcps_score@cref}{{[figure][5][]5}{[1][13][]13}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.5}Price-Response Diagnostics}{13}{subsubsection.5.1.5}\protected@file@percent }
-\newlabel{subsec:price_response_diagnostics}{{5.1.5}{13}{Price-Response Diagnostics}{subsubsection.5.1.5}{}}
-\newlabel{subsec:price_response_diagnostics@cref}{{[subsubsection][5][5,1]5.1.5}{[1][13][]13}}
+\newlabel{eq:side_averaged_empirical_kernel}{{12}{10}{Operational empirical depth kernel}{equation.5.12}{}}
+\newlabel{eq:side_averaged_empirical_kernel@cref}{{[equation][12][]12}{[1][10][]10}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Full-sample empirical top-$10$ depth-kernel profiles at $H=10$ seconds. Each line is the arithmetic mean of the separately normalized bid and ask weights in \cref  {eq:side_averaged_empirical_kernel}. The mean permits one curve per instrument on a common rank axis and is used only for visualization. Surveillance metrics use the underlying side-specific kernels.}}{10}{figure.caption.9}\protected@file@percent }
+\newlabel{fig:empirical_top10_kernel_profiles}{{4}{10}{Full-sample empirical top-$10$ depth-kernel profiles at $H=10$ seconds. Each line is the arithmetic mean of the separately normalized bid and ask weights in \cref {eq:side_averaged_empirical_kernel}. The mean permits one curve per instrument on a common rank axis and is used only for visualization. Surveillance metrics use the underlying side-specific kernels}{figure.caption.9}{}}
+\newlabel{fig:empirical_top10_kernel_profiles@cref}{{[figure][4][]4}{[1][10][]10}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Side-specific empirical visibility proxy by book rank. Each panel shows the stored \texttt  {visibility\_component} values from the full-sample top-$10$, $h=10$-second calibration. Separate axis multipliers preserve the instrument-specific price units; vertical magnitudes should not be compared across instruments.}}{10}{figure.caption.10}\protected@file@percent }
+\newlabel{fig:empirical_topn_visibility_profiles}{{5}{10}{Side-specific empirical visibility proxy by book rank. Each panel shows the stored \texttt {visibility\_component} values from the full-sample top-$10$, $h=10$-second calibration. Separate axis multipliers preserve the instrument-specific price units; vertical magnitudes should not be compared across instruments}{figure.caption.10}{}}
+\newlabel{fig:empirical_topn_visibility_profiles@cref}{{[figure][5][]5}{[1][10][]10}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Side-specific empirical execution-risk proxy by book rank. The plotted quantity is the stored $h$-second reach probability $p_k^{i,s}$ (\texttt  {hit\_probability}) from the full-sample top-$10$, $h=10$-second calibration. The empirical kernel uses its protection complement $\rho _k^{i,s}=1-p_k^{i,s}$.}}{11}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:empirical_topn_execution_risk_profiles}{{6}{11}{Side-specific empirical execution-risk proxy by book rank. The plotted quantity is the stored $h$-second reach probability $p_k^{i,s}$ (\texttt {hit\_probability}) from the full-sample top-$10$, $h=10$-second calibration. The empirical kernel uses its protection complement $\rho _k^{i,s}=1-p_k^{i,s}$}{figure.caption.11}{}}
+\newlabel{fig:empirical_topn_execution_risk_profiles@cref}{{[figure][6][]6}{[1][10][]11}}
+\newlabel{eq:weighted_topn_liquidity}{{13}{11}{Operational empirical depth kernel}{equation.5.13}{}}
+\newlabel{eq:weighted_topn_liquidity@cref}{{[equation][13][]13}{[1][11][]11}}
+\newlabel{eq:multilevel_dwi}{{14}{11}{Operational empirical depth kernel}{equation.5.14}{}}
+\newlabel{eq:multilevel_dwi@cref}{{[equation][14][]14}{[1][11][]11}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Stylized cluster-time behavior of the multilevel distance-weighted imbalance. In the spoofing-compatible pattern, a large top-$n$ imbalance returns rapidly toward zero after the smaller opposite-side execution because the candidate profile is cancelled. The illustrative market-making path shows smoother inventory rebalancing.}}{12}{figure.caption.12}\protected@file@percent }
+\newlabel{fig:topn_imbalance_dynamics}{{7}{12}{Stylized cluster-time behavior of the multilevel distance-weighted imbalance. In the spoofing-compatible pattern, a large top-$n$ imbalance returns rapidly toward zero after the smaller opposite-side execution because the candidate profile is cancelled. The illustrative market-making path shows smoother inventory rebalancing}{figure.caption.12}{}}
+\newlabel{fig:topn_imbalance_dynamics@cref}{{[figure][7][]7}{[1][11][]12}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.3}Conditional Withdrawal Reconstruction}{12}{subsubsection.5.1.3}\protected@file@percent }
+\newlabel{subsec:multilevel_conditionality}{{5.1.3}{12}{Conditional Withdrawal Reconstruction}{subsubsection.5.1.3}{}}
+\newlabel{subsec:multilevel_conditionality@cref}{{[subsubsection][3][5,1]5.1.3}{[1][12][]12}}
+\newlabel{eq:deceptive_age_window}{{16}{12}{Conditional Withdrawal Reconstruction}{equation.5.16}{}}
+\newlabel{eq:deceptive_age_window@cref}{{[equation][16][]16}{[1][12][]12}}
+\newlabel{eq:episode_conditioned_liquidity}{{17}{13}{Conditional Withdrawal Reconstruction}{equation.5.17}{}}
+\newlabel{eq:episode_conditioned_liquidity@cref}{{[equation][17][]17}{[1][13][]13}}
+\newlabel{eq:episode_conditioned_dwi}{{18}{13}{Conditional Withdrawal Reconstruction}{equation.5.18}{}}
+\newlabel{eq:episode_conditioned_dwi@cref}{{[equation][18][]18}{[1][13][]13}}
+\newlabel{eq:topn_sci}{{19}{13}{Conditional Withdrawal Reconstruction}{equation.5.19}{}}
+\newlabel{eq:topn_sci@cref}{{[equation][19][]19}{[1][13][]13}}
+\newlabel{eq:side_collapse}{{20}{13}{Conditional Withdrawal Reconstruction}{equation.5.20}{}}
+\newlabel{eq:side_collapse@cref}{{[equation][20][]20}{[1][13][]13}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.4}Canonical Matched Withdrawal}{13}{subsubsection.5.1.4}\protected@file@percent }
+\newlabel{subsec:canonical_matched_withdrawal}{{5.1.4}{13}{Canonical Matched Withdrawal}{subsubsection.5.1.4}{}}
+\newlabel{subsec:canonical_matched_withdrawal@cref}{{[subsubsection][4][5,1]5.1.4}{[1][13][]13}}
+\newlabel{eq:canonical_cancel_assignment}{{21}{13}{Canonical Matched Withdrawal}{equation.5.21}{}}
+\newlabel{eq:canonical_cancel_assignment@cref}{{[equation][21][]21}{[1][13][]13}}
+\citation{Stoikov02122018}
+\newlabel{eq:assigned_withdrawal}{{22}{14}{Canonical Matched Withdrawal}{equation.5.22}{}}
+\newlabel{eq:assigned_withdrawal@cref}{{[equation][22][]22}{[1][14][]14}}
+\newlabel{eq:assigned_withdrawal_share}{{23}{14}{Canonical Matched Withdrawal}{equation.5.23}{}}
+\newlabel{eq:assigned_withdrawal_share@cref}{{[equation][23][]23}{[1][14][]14}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.5}Price-Response Diagnostics}{14}{subsubsection.5.1.5}\protected@file@percent }
+\newlabel{subsec:price_response_diagnostics}{{5.1.5}{14}{Price-Response Diagnostics}{subsubsection.5.1.5}{}}
+\newlabel{subsec:price_response_diagnostics@cref}{{[subsubsection][5][5,1]5.1.5}{[1][14][]14}}
 \newlabel{eq:price_response_direction}{{24}{14}{Price-Response Diagnostics}{equation.5.24}{}}
 \newlabel{eq:price_response_direction@cref}{{[equation][24][]24}{[1][14][]14}}
-\newlabel{eq:favorable_price_move}{{25}{14}{Price-Response Diagnostics}{equation.5.25}{}}
-\newlabel{eq:favorable_price_move@cref}{{[equation][25][]25}{[1][14][]14}}
-\newlabel{eq:price_reversion}{{26}{14}{Price-Response Diagnostics}{equation.5.26}{}}
-\newlabel{eq:price_reversion@cref}{{[equation][26][]26}{[1][14][]14}}
-\newlabel{eq:execution_advantage}{{27}{14}{Price-Response Diagnostics}{equation.5.27}{}}
-\newlabel{eq:execution_advantage@cref}{{[equation][27][]27}{[1][14][]14}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.6}Event Reconstruction}{14}{subsubsection.5.1.6}\protected@file@percent }
-\newlabel{subsec:event_reconstruction}{{5.1.6}{14}{Event Reconstruction}{subsubsection.5.1.6}{}}
-\newlabel{subsec:event_reconstruction@cref}{{[subsubsection][6][5,1]5.1.6}{[1][14][]14}}
-\@writefile{toc}{\contentsline {section}{\numberline {6}Results}{15}{section.6}\protected@file@percent }
-\newlabel{sec:results}{{6}{15}{Results}{section.6}{}}
-\newlabel{sec:results@cref}{{[section][6][]6}{[1][15][]15}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Cross-Instrument Detection Summary}{15}{subsection.6.1}\protected@file@percent }
-\newlabel{subsec:cross_instrument_results}{{6.1}{15}{Cross-Instrument Detection Summary}{subsection.6.1}{}}
-\newlabel{subsec:cross_instrument_results@cref}{{[subsection][1][6]6.1}{[1][15][]15}}
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Exploratory top-$5$ spoofing-compatible detections across the three samples. Matched events are small passive executions followed by same-client cancellation of an opposite-side candidate order inside the post-execution window. The price-response shares report the fraction of matched events with positive signed mid-price favorable pre-fill movement or post-cancel reversion.}}{16}{table.caption.10}\protected@file@percent }
-\newlabel{tab:empirical_spoofing_diagnostics}{{3}{16}{Exploratory top-$5$ spoofing-compatible detections across the three samples. Matched events are small passive executions followed by same-client cancellation of an opposite-side candidate order inside the post-execution window. The price-response shares report the fraction of matched events with positive signed mid-price favorable pre-fill movement or post-cancel reversion}{table.caption.10}{}}
-\newlabel{tab:empirical_spoofing_diagnostics@cref}{{[table][3][]3}{[1][15][]16}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Client-Level Concentration}{16}{subsection.6.2}\protected@file@percent }
-\newlabel{subsec:client_level_results}{{6.2}{16}{Client-Level Concentration}{subsection.6.2}{}}
-\newlabel{subsec:client_level_results@cref}{{[subsection][2][6]6.2}{[1][16][]16}}
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Largest client-level matched-withdrawal clusters by instrument. W/F is the maximum withdrawal-to-fill ratio among the client's matched events. FPM$>0$ and REV$>0$ are client-level fractions of matched events with positive signed mid-price favorable movement and reversion.}}{16}{table.caption.11}\protected@file@percent }
-\newlabel{tab:top_client_results}{{4}{16}{Largest client-level matched-withdrawal clusters by instrument. W/F is the maximum withdrawal-to-fill ratio among the client's matched events. FPM$>0$ and REV$>0$ are client-level fractions of matched events with positive signed mid-price favorable movement and reversion}{table.caption.11}{}}
-\newlabel{tab:top_client_results@cref}{{[table][4][]4}{[1][16][]16}}
+\newlabel{eq:favorable_price_move}{{25}{15}{Price-Response Diagnostics}{equation.5.25}{}}
+\newlabel{eq:favorable_price_move@cref}{{[equation][25][]25}{[1][14][]15}}
+\newlabel{eq:price_reversion}{{26}{15}{Price-Response Diagnostics}{equation.5.26}{}}
+\newlabel{eq:price_reversion@cref}{{[equation][26][]26}{[1][15][]15}}
+\newlabel{eq:execution_advantage}{{27}{15}{Price-Response Diagnostics}{equation.5.27}{}}
+\newlabel{eq:execution_advantage@cref}{{[equation][27][]27}{[1][15][]15}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.6}Event Reconstruction}{15}{subsubsection.5.1.6}\protected@file@percent }
+\newlabel{subsec:event_reconstruction}{{5.1.6}{15}{Event Reconstruction}{subsubsection.5.1.6}{}}
+\newlabel{subsec:event_reconstruction@cref}{{[subsubsection][6][5,1]5.1.6}{[1][15][]15}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Results}{16}{section.6}\protected@file@percent }
+\newlabel{sec:results}{{6}{16}{Results}{section.6}{}}
+\newlabel{sec:results@cref}{{[section][6][]6}{[1][16][]16}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Cross-Instrument Detection Summary}{16}{subsection.6.1}\protected@file@percent }
+\newlabel{subsec:cross_instrument_results}{{6.1}{16}{Cross-Instrument Detection Summary}{subsection.6.1}{}}
+\newlabel{subsec:cross_instrument_results@cref}{{[subsection][1][6]6.1}{[1][16][]16}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Cluster-level exploratory attributed-withdrawal diagnostics. Raw fills remain audit objects; clusters are the analytical unit. Assigned cancellations are counted once by the canonical assignment rule.}}{17}{table.caption.13}\protected@file@percent }
+\newlabel{tab:empirical_spoofing_diagnostics}{{3}{17}{Cluster-level exploratory attributed-withdrawal diagnostics. Raw fills remain audit objects; clusters are the analytical unit. Assigned cancellations are counted once by the canonical assignment rule}{table.caption.13}{}}
+\newlabel{tab:empirical_spoofing_diagnostics@cref}{{[table][3][]3}{[1][16][]17}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Largest attributable client-level rapid-withdrawal groups. Unknown or missing client identifiers are excluded from this tabulation and reported separately in the generated CSV.}}{17}{table.caption.14}\protected@file@percent }
+\newlabel{tab:top_client_results}{{4}{17}{Largest attributable client-level rapid-withdrawal groups. Unknown or missing client identifiers are excluded from this tabulation and reported separately in the generated CSV}{table.caption.14}{}}
+\newlabel{tab:top_client_results@cref}{{[table][4][]4}{[1][16][]17}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Risanamento}{17}{subsection.6.2}\protected@file@percent }
+\newlabel{subsec:risanamento_results}{{6.2}{17}{Risanamento}{subsection.6.2}{}}
+\newlabel{subsec:risanamento_results@cref}{{[subsection][2][6]6.2}{[1][17][]17}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Nexi}{17}{subsection.6.3}\protected@file@percent }
+\newlabel{subsec:nexi_results}{{6.3}{17}{Nexi}{subsection.6.3}{}}
+\newlabel{subsec:nexi_results@cref}{{[subsection][3][6]6.3}{[1][17][]17}}
 \bibstyle{abbrv}
 \bibdata{references}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Ferrari}{18}{subsection.6.4}\protected@file@percent }
+\newlabel{subsec:ferrari_results}{{6.4}{18}{Ferrari}{subsection.6.4}{}}
+\newlabel{subsec:ferrari_results@cref}{{[subsection][4][6]6.4}{[1][18][]18}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Client-Level Attribution and Interpretation}{18}{subsection.6.5}\protected@file@percent }
+\newlabel{subsec:client_level_results}{{6.5}{18}{Client-Level Attribution and Interpretation}{subsection.6.5}{}}
+\newlabel{subsec:client_level_results@cref}{{[subsection][5][6]6.5}{[1][18][]18}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Discussion and Conclusion}{18}{section.7}\protected@file@percent }
+\newlabel{sec:discussion_conclusion}{{7}{18}{Discussion and Conclusion}{section.7}{}}
+\newlabel{sec:discussion_conclusion@cref}{{[section][7][]7}{[1][18][]18}}
 \bibcite{ChenHsiehYang2026}{{1}{}{{}}{{}}}
 \bibcite{DebieEtAl2023}{{2}{}{{}}{{}}}
 \bibcite{EU5962014}{{3}{}{{}}{{}}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Analyst Alert Prioritization}{17}{subsection.6.3}\protected@file@percent }
-\newlabel{subsec:alert_prioritization_results}{{6.3}{17}{Analyst Alert Prioritization}{subsection.6.3}{}}
-\newlabel{subsec:alert_prioritization_results@cref}{{[subsection][3][6]6.3}{[1][17][]17}}
-\newlabel{eq:alert_score}{{28}{17}{Analyst Alert Prioritization}{equation.6.28}{}}
-\newlabel{eq:alert_score@cref}{{[equation][28][]28}{[1][17][]17}}
 \bibcite{FabreChallet2025}{{4}{}{{}}{{}}}
 \bibcite{KangMuNing2023}{{5}{}{{}}{{}}}
 \bibcite{KangMuNing2024}{{6}{}{{}}{{}}}
@@ -159,8 +176,9 @@
 \bibcite{MendoncaDeGenaro2020}{{9}{}{{}}{{}}}
 \bibcite{StenforsEtAl2023}{{10}{}{{}}{{}}}
 \bibcite{StenforsSusai2021}{{11}{}{{}}{{}}}
-\bibcite{TaoDayLingDrapeau2022}{{12}{}{{}}{{}}}
-\bibcite{TuccellaNadlerSerban2021}{{13}{}{{}}{{}}}
-\bibcite{XiangEtAl2025}{{14}{}{{}}{{}}}
+\bibcite{Stoikov02122018}{{12}{}{{}}{{}}}
+\bibcite{TaoDayLingDrapeau2022}{{13}{}{{}}{{}}}
+\bibcite{TuccellaNadlerSerban2021}{{14}{}{{}}{{}}}
+\bibcite{XiangEtAl2025}{{15}{}{{}}{{}}}
 \providecommand\NAT@force@numbers{}\NAT@force@numbers
-\gdef \@abspage@last{18}
+\gdef \@abspage@last{20}

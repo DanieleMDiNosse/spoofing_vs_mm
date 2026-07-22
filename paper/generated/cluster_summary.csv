@@ -1,0 +1,4 @@
+instrument,execution_cluster_count,raw_fill_message_count,matched_cluster_count,assigned_cancellation_count,attributable_client_count,matched_attributable_client_count,unknown_client_matched_cluster_count,positive_fpm_mid_share,positive_reversion_mid_share
+Risanamento,14257,15341,44,46,658,3,23,0.5909090909090909,0.11363636363636363
+Nexi,4738,5402,365,522,447,8,84,0.6410958904109589,0.27945205479452057
+Ferrari,3153,3498,248,312,247,4,72,0.6290322580645161,0.29838709677419356

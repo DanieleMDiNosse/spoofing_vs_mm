@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="it-IT" xml:lang="it-IT">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Nota di lavoro per la call del 22 luglio 2026" />
+  <title>Screening di sequenze compatibili con spoofing</title>
+  <style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+.display.math{display: block; text-align: center; margin: 0.5rem auto;}
+</style>
+  <style type="text/css">@page {
+size: A4;
+margin: 18mm 17mm 20mm;
+}
+:root {
+--ink: #1f2933;
+--muted: #5f6c78;
+--blue: #174a73;
+--blue-soft: #eaf2f8;
+--gold: #a66a12;
+--border: #d7dee5;
+--paper: #ffffff;
+--canvas: #edf1f4;
+}
+* { box-sizing: border-box; }
+html {
+background: var(--canvas);
+color: var(--ink);
+font-family: "DejaVu Sans", Arial, sans-serif;
+font-size: 15px;
+line-height: 1.55;
+}
+body {
+width: min(980px, calc(100% - 32px));
+margin: 24px auto;
+padding: 46px 58px 64px;
+background: var(--paper);
+box-shadow: 0 3px 18px rgba(25, 43, 58, 0.10);
+}
+header#title-block-header {
+border-top: 8px solid var(--blue);
+border-bottom: 1px solid var(--border);
+padding: 26px 0 24px;
+margin-bottom: 28px;
+}
+h1.title {
+margin: 0 0 8px;
+color: var(--blue);
+font-size: 2.15rem;
+line-height: 1.13;
+letter-spacing: -0.025em;
+}
+p.subtitle {
+margin: 0 0 14px;
+color: var(--muted);
+font-size: 1.15rem;
+}
+p.author, p.date {
+margin: 2px 0;
+color: var(--muted);
+font-size: 0.9rem;
+}
+nav#TOC {
+margin: 24px 0 42px;
+padding: 18px 22px;
+background: #f7f9fb;
+border-left: 5px solid var(--blue);
+}
+nav#TOC ul { margin: 0.2rem 0; padding-left: 1.2rem; }
+nav#TOC a { color: var(--ink); text-decoration: none; }
+nav#TOC a:hover { color: var(--blue); text-decoration: underline; }
+h1, h2, h3 {
+color: var(--blue);
+line-height: 1.25;
+break-after: avoid;
+}
+h1 {
+margin: 2.3rem 0 0.8rem;
+padding-bottom: 0.35rem;
+border-bottom: 2px solid var(--blue);
+font-size: 1.65rem;
+}
+h2 { margin: 1.8rem 0 0.55rem; font-size: 1.28rem; }
+h3 { margin: 1.4rem 0 0.45rem; font-size: 1.05rem; }
+p { margin: 0.55rem 0 0.85rem; }
+li { margin: 0.22rem 0; }
+blockquote {
+margin: 1.1rem 0 1.35rem;
+padding: 13px 18px;
+background: var(--blue-soft);
+border-left: 5px solid var(--blue);
+color: #243746;
+break-inside: avoid;
+}
+blockquote p { margin: 0.3rem 0; }
+strong { color: #162a3a; }
+code {
+padding: 0.08em 0.3em;
+border-radius: 3px;
+background: #eef1f3;
+color: #7a2f2f;
+font-family: "DejaVu Sans Mono", monospace;
+font-size: 0.87em;
+overflow-wrap: anywhere;
+}
+pre {
+padding: 14px 16px;
+overflow-x: auto;
+background: #263746;
+color: #f5f7f8;
+border-radius: 4px;
+font-size: 0.83rem;
+}
+pre code { padding: 0; background: transparent; color: inherit; }
+table {
+width: 100%;
+margin: 1rem 0 1.45rem;
+border-collapse: collapse;
+font-size: 0.88rem;
+break-inside: auto;
+}
+thead { background: var(--blue); color: white; }
+th { text-align: left; font-weight: 650; }
+th, td {
+padding: 8px 9px;
+border: 1px solid var(--border);
+vertical-align: top;
+}
+tbody tr:nth-child(even) { background: #f7f9fb; }
+tbody tr:hover { background: #edf4f8; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 2rem 0; }
+a { color: var(--blue); }
+@media print {
+html { background: white; font-size: 10.1pt; }
+body {
+width: auto;
+margin: 0;
+padding: 0;
+box-shadow: none;
+}
+nav#TOC { break-after: page; }
+h1 { break-before: auto; }
+table, blockquote, pre { break-inside: avoid; }
+a { color: inherit; text-decoration: none; }
+}
+@media (max-width: 700px) {
+html { font-size: 14px; }
+body { width: 100%; margin: 0; padding: 24px 20px 40px; box-shadow: none; }
+table { display: block; overflow-x: auto; white-space: nowrap; }
+h1.title { font-size: 1.75rem; }
+}
+</style>
+  
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Screening di sequenze compatibili con spoofing</h1>
+<p class="subtitle">Metodo, risultati preliminari e punti di discussione
+con CONSOB</p>
+<p class="author">Nota di lavoro per la call del 22 luglio 2026</p>
+<p class="date">21 luglio 2026</p>
+</header>
+<nav id="TOC" role="doc-toc">
+<h2 id="toc-title">Indice</h2>
+<ul>
+<li><a href="#come-usare-questo-report" id="toc-come-usare-questo-report">Come usare questo report</a></li>
+<li><a href="#messaggio-centrale" id="toc-messaggio-centrale">Messaggio
+centrale</a>
+<ul>
+<li><a href="#in-una-frase" id="toc-in-una-frase">In una frase</a></li>
+<li><a href="#quattro-punti-da-far-arrivare-subito" id="toc-quattro-punti-da-far-arrivare-subito">Quattro punti da far
+arrivare subito</a></li>
+<li><a href="#apertura-consigliata-della-call-60-secondi" id="toc-apertura-consigliata-della-call-60-secondi">Apertura consigliata
+della call — 60 secondi</a></li>
+</ul></li>
+<li><a href="#perché-il-problema-richiede-una-sequenza" id="toc-perché-il-problema-richiede-una-sequenza">Perché il problema
+richiede una sequenza</a></li>
+<li><a href="#dati-e-perimetro-effettivo" id="toc-dati-e-perimetro-effettivo">Dati e perimetro effettivo</a>
+<ul>
+<li><a href="#campioni-analizzati" id="toc-campioni-analizzati">Campioni
+analizzati</a></li>
+<li><a href="#informazione-utilizzata" id="toc-informazione-utilizzata">Informazione utilizzata</a></li>
+<li><a href="#stato-della-ricostruzione-del-book" id="toc-stato-della-ricostruzione-del-book">Stato della ricostruzione
+del book</a></li>
+</ul></li>
+<li><a href="#metodo-in-sei-passaggi" id="toc-metodo-in-sei-passaggi">Metodo in sei passaggi</a>
+<ul>
+<li><a href="#ricostruzione-del-book-e-dei-partecipanti" id="toc-ricostruzione-del-book-e-dei-partecipanti">1. Ricostruzione del
+book e dei partecipanti</a></li>
+<li><a href="#consolidamento-dei-fill-in-esecuzioni-economiche" id="toc-consolidamento-dei-fill-in-esecuzioni-economiche">2.
+Consolidamento dei fill in esecuzioni economiche</a></li>
+<li><a href="#profilo-recente-sul-lato-opposto" id="toc-profilo-recente-sul-lato-opposto">3. Profilo recente sul lato
+opposto</a></li>
+<li><a href="#ritiro-rapido-e-posteriorità-nellordinamento" id="toc-ritiro-rapido-e-posteriorità-nellordinamento">4. Ritiro rapido e
+posteriorità nell’ordinamento</a></li>
+<li><a href="#confronto-auto-controllato" id="toc-confronto-auto-controllato">5. Confronto
+auto-controllato</a></li>
+<li><a href="#gate-descrittivo-completo" id="toc-gate-descrittivo-completo">6. Gate descrittivo completo</a></li>
+</ul></li>
+<li><a href="#il-ruolo-del-kernel-di-profondità" id="toc-il-ruolo-del-kernel-di-profondità">Il ruolo del kernel di
+profondità</a></li>
+<li><a href="#risultati-verificati" id="toc-risultati-verificati">Risultati verificati</a>
+<ul>
+<li><a href="#funnel-per-strumento" id="toc-funnel-per-strumento">Funnel
+per strumento</a></li>
+<li><a href="#confronto-aggregato-trattatocontrollo" id="toc-confronto-aggregato-trattatocontrollo">Confronto aggregato
+trattato–controllo</a></li>
+<li><a href="#unità-nexi-che-supera-lo-screen-non-aggiustato" id="toc-unità-nexi-che-supera-lo-screen-non-aggiustato">Unità Nexi che
+supera lo screen non aggiustato</a></li>
+<li><a href="#i-28-eventi-nexi-del-gate-completo" id="toc-i-28-eventi-nexi-del-gate-completo">I 28 eventi Nexi del gate
+completo</a></li>
+</ul></li>
+<li><a href="#lettura-sostanziale-dei-risultati" id="toc-lettura-sostanziale-dei-risultati">Lettura sostanziale dei
+risultati</a>
+<ul>
+<li><a href="#ciò-che-i-risultati-mostrano" id="toc-ciò-che-i-risultati-mostrano">Ciò che i risultati
+mostrano</a></li>
+<li><a href="#ciò-che-i-risultati-non-mostrano" id="toc-ciò-che-i-risultati-non-mostrano">Ciò che i risultati non
+mostrano</a></li>
+<li><a href="#interpretazione-più-prudente" id="toc-interpretazione-più-prudente">Interpretazione più
+prudente</a></li>
+</ul></li>
+<li><a href="#limiti-da-dichiarare-prima-che-vengano-chiesti" id="toc-limiti-da-dichiarare-prima-che-vengano-chiesti">Limiti da
+dichiarare prima che vengano chiesti</a>
+<ul>
+<li><a href="#perimetro-ridotto-ed-eterogeneo" id="toc-perimetro-ridotto-ed-eterogeneo">1. Perimetro ridotto ed
+eterogeneo</a></li>
+<li><a href="#copertura-degli-identificativi-client" id="toc-copertura-degli-identificativi-client">2. Copertura degli
+identificativi client</a></li>
+<li><a href="#molteplicità-e-dipendenza-temporale" id="toc-molteplicità-e-dipendenza-temporale">3. Molteplicità e
+dipendenza temporale</a></li>
+<li><a href="#qualità-del-matching" id="toc-qualità-del-matching">4.
+Qualità del matching</a></li>
+<li><a href="#sensibilità-dei-parametri-non-ancora-riportata" id="toc-sensibilità-dei-parametri-non-ancora-riportata">5. Sensibilità
+dei parametri non ancora riportata</a></li>
+<li><a href="#ricostruzione-visibile-non-coda-completa" id="toc-ricostruzione-visibile-non-coda-completa">6. Ricostruzione
+visibile, non coda completa</a></li>
+<li><a href="#nessun-ground-truth-di-condotta" id="toc-nessun-ground-truth-di-condotta">7. Nessun ground truth di
+condotta</a></li>
+<li><a href="#kernel-stimato-in-sample" id="toc-kernel-stimato-in-sample">8. Kernel stimato in-sample</a></li>
+</ul></li>
+<li><a href="#prossimi-passi-proposti" id="toc-prossimi-passi-proposti">Prossimi passi proposti</a>
+<ul>
+<li><a href="#priorità-1-dossier-dei-28-episodi-nexi" id="toc-priorità-1-dossier-dei-28-episodi-nexi">Priorità 1 — dossier dei
+28 episodi Nexi</a></li>
+<li><a href="#priorità-2-robustezza-statistica-e-del-matching" id="toc-priorità-2-robustezza-statistica-e-del-matching">Priorità 2 —
+robustezza statistica e del matching</a></li>
+<li><a href="#priorità-3-estensione-e-validazione-esterna" id="toc-priorità-3-estensione-e-validazione-esterna">Priorità 3 —
+estensione e validazione esterna</a></li>
+</ul></li>
+<li><a href="#scaletta-consigliata-per-una-call-di-15-minuti" id="toc-scaletta-consigliata-per-una-call-di-15-minuti">Scaletta
+consigliata per una call di 15 minuti</a>
+<ul>
+<li><a href="#tre-domande-concrete-da-rivolgere-ai-funzionari" id="toc-tre-domande-concrete-da-rivolgere-ai-funzionari">Tre domande
+concrete da rivolgere ai funzionari</a></li>
+</ul></li>
+<li><a href="#domande-probabili-e-risposte-brevi" id="toc-domande-probabili-e-risposte-brevi">Domande probabili e risposte
+brevi</a></li>
+<li><a href="#lessico-consigliato" id="toc-lessico-consigliato">Lessico
+consigliato</a>
+<ul>
+<li><a href="#formulazioni-da-usare" id="toc-formulazioni-da-usare">Formulazioni da usare</a></li>
+<li><a href="#formulazioni-da-evitare" id="toc-formulazioni-da-evitare">Formulazioni da evitare</a></li>
+</ul></li>
+<li><a href="#provenienza-e-riproducibilità" id="toc-provenienza-e-riproducibilità">Provenienza e riproducibilità</a>
+<ul>
+<li><a href="#run-empirica-di-riferimento" id="toc-run-empirica-di-riferimento">Run empirica di
+riferimento</a></li>
+<li><a href="#fonti-numeriche-principali" id="toc-fonti-numeriche-principali">Fonti numeriche principali</a></li>
+</ul></li>
+<li><a href="#chiusura-consigliata" id="toc-chiusura-consigliata">Chiusura consigliata</a></li>
+</ul>
+</nav>
+<blockquote>
+<p><strong>Stato del documento — risultati preliminari, uso di
+lavoro.</strong><br />
+Il metodo produce indicatori di <em>screening</em> e dossier
+verificabili. Non attribuisce intenzionalità, non stima la prevalenza
+dello spoofing e non costituisce da solo evidenza di una violazione.</p>
+</blockquote>
+<h1 id="come-usare-questo-report">Come usare questo report</h1>
+<p>Questo documento serve a due scopi:</p>
+<ol type="1">
+<li>offrire una spiegazione sufficientemente dettagliata del metodo
+senza entrare nei passaggi matematici non necessari alla call;</li>
+<li>mantenere una separazione netta tra ciò che è stato osservato, ciò
+che è un’interpretazione economica e ciò che deve ancora essere
+validato.</li>
+</ol>
+<p>Per una call di circa 15 minuti, è sufficiente seguire le sezioni
+<strong>Messaggio centrale</strong>, <strong>Metodo in sei
+passaggi</strong>, <strong>Risultati</strong> e <strong>Limiti</strong>.
+Le sezioni finali contengono una scaletta temporizzata, risposte a
+domande probabili e la provenienza dei numeri.</p>
+<h1 id="messaggio-centrale">Messaggio centrale</h1>
+<h2 id="in-una-frase">In una frase</h2>
+<p>Abbiamo costruito una pipeline auditabile che ricostruisce il book
+visibile e cerca <strong>sequenze di ordini, esecuzioni e cancellazioni
+compatibili con il meccanismo dello spoofing</strong>; sui tre campioni
+disponibili emerge un nucleo ristretto di 28 episodi Nexi meritevoli di
+revisione, ma la concentrazione in un solo client-giornata e i limiti
+statistici e informativi non consentono ancora conclusioni
+confermative.</p>
+<h2 id="quattro-punti-da-far-arrivare-subito">Quattro punti da far
+arrivare subito</h2>
+<ol type="1">
+<li><strong>Non classifichiamo singoli messaggi.</strong> Ricostruiamo
+una sequenza economica: liquidità sul lato opposto, esecuzione del
+partecipante, ritiro rapido e andamento dei prezzi coerente con
+l’ipotesi.</li>
+<li><strong>Il confronto è intra-giornata e auto-controllato.</strong>
+Per ogni client confrontiamo ciò che accade dopo le sue esecuzioni con
+ancore di controllo costruite su esecuzioni di altri partecipanti,
+usando per il matching solo informazioni disponibili prima
+dell’evento.</li>
+<li><strong>Il risultato principale è selettivo, non diffuso.</strong>
+Il gate completo trattiene 28 eventi Nexi e zero negli altri due
+campioni. I 28 eventi appartengono tutti allo stesso client anonimizzato
+e alla stessa giornata.</li>
+<li><strong>È un risultato di triage.</strong> Il sistema ordina
+l’attenzione investigativa e conserva la provenienza di ogni legame; non
+dimostra l’intento, l’effetto causale sul prezzo o una violazione.</li>
+</ol>
+<h2 id="apertura-consigliata-della-call-60-secondi">Apertura consigliata
+della call — 60 secondi</h2>
+<blockquote>
+<p>«L’obiettivo non è assegnare automaticamente un’etichetta di
+spoofing, ma ridurre in modo tracciabile l’universo degli eventi da
+esaminare. Partiamo dai messaggi ordine per ordine, ricostruiamo il book
+visibile e cerchiamo una sequenza precisa: un profilo recente sul lato
+opposto, un’esecuzione passiva dello stesso client, il rapido ritiro di
+quel profilo e una dinamica di prezzo coerente. Confrontiamo poi la
+frequenza del ritiro dopo le esecuzioni proprie con controlli della
+stessa sessione. Sui campioni attuali il gate completo individua 28
+episodi Nexi, tutti concentrati in un client-giornata; Risanamento e
+Ferrari non producono episodi completi. È quindi un segnale
+investigativo circoscritto, non una conclusione
+sull’intenzionalità.»</p>
+</blockquote>
+<h1 id="perché-il-problema-richiede-una-sequenza">Perché il problema
+richiede una sequenza</h1>
+<p>Cancellare molti ordini o mostrare grandi quantità non è di per sé
+anomalo. Un market maker può aggiornare frequentemente le quotazioni,
+ridurre l’esposizione per rischio di inventario o reagire a informazione
+e selezione avversa. Di conseguenza:</p>
+<ul>
+<li>una soglia di quantità isolata genera facilmente falsi
+positivi;</li>
+<li>un elevato rapporto ordini/eseguiti non identifica il motivo delle
+cancellazioni;</li>
+<li>la sola asimmetria del book non collega il profilo di liquidità a
+una successiva esecuzione favorevole;</li>
+<li>l’intento non è osservato direttamente nei dati.</li>
+</ul>
+<p>La domanda operativa diventa quindi più specifica:</p>
+<blockquote>
+<p><strong>Un client ritira rapidamente liquidità recente sul lato
+opposto dopo una propria esecuzione, più spesso di quanto faccia in
+circostanze simili senza quella propria esecuzione, e il percorso del
+prezzo è compatibile con il meccanismo ipotizzato?</strong></p>
+</blockquote>
+<p>Il metodo scompone questa domanda in condizioni osservabili e
+conserva tutti gli identificativi necessari per tornare ai messaggi
+originari.</p>
+<h1 id="dati-e-perimetro-effettivo">Dati e perimetro effettivo</h1>
+<h2 id="campioni-analizzati">Campioni analizzati</h2>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 16%" />
+<col style="width: 22%" />
+<col style="width: 22%" />
+<col style="width: 22%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Strumento</th>
+<th style="text-align: right;">Periodo coperto</th>
+<th style="text-align: right;">Messaggi grezzi</th>
+<th style="text-align: right;">Partizioni di trading</th>
+<th>Natura del campione</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Risanamento</td>
+<td style="text-align: right;">giugno–novembre 2024</td>
+<td style="text-align: right;">143.018</td>
+<td style="text-align: right;">130</td>
+<td>multi-periodo</td>
+</tr>
+<tr class="even">
+<td>Nexi</td>
+<td style="text-align: right;">23 aprile 2024</td>
+<td style="text-align: right;">243.333</td>
+<td style="text-align: right;">1</td>
+<td>singola giornata</td>
+</tr>
+<tr class="odd">
+<td>Ferrari</td>
+<td style="text-align: right;">13 giugno 2024</td>
+<td style="text-align: right;">481.798</td>
+<td style="text-align: right;">1</td>
+<td>singola giornata</td>
+</tr>
+<tr class="even">
+<td><strong>Totale</strong></td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;"><strong>868.149</strong></td>
+<td style="text-align: right;"><strong>132</strong></td>
+<td>campioni eterogenei</td>
+</tr>
+</tbody>
+</table>
+<p>Le differenze tra strumenti sono <strong>descrittive</strong>, non
+confronti controllati: durate, composizione dei partecipanti, liquidità
+e regime di mercato non sono omogenei.</p>
+<h2 id="informazione-utilizzata">Informazione utilizzata</h2>
+<p>La pipeline usa messaggi order-level per ricostruire:</p>
+<ul>
+<li>stato del book visibile sui primi 10 livelli per lato;</li>
+<li>ciclo di vita degli ordini: inserimento, modifica, fill,
+cancellazione e altri eventi;</li>
+<li>lato, prezzo, quantità visibile e quantità residua;</li>
+<li>client anonimizzato e trading firm quando disponibili;</li>
+<li>timestamp e ordinamento originario della fonte;</li>
+<li>migliori prezzi, mid-price e microprice quando calcolabili.</li>
+</ul>
+<h2 id="stato-della-ricostruzione-del-book">Stato della ricostruzione
+del book</h2>
+<p>L’audit sui tre file riporta:</p>
+<ul>
+<li>868.149 righe normalizzate e riconciliate con gli input;</li>
+<li>tutte le colonne richieste presenti e nessun codice enumerativo
+ignoto nei campioni;</li>
+<li>nessuna duplicazione della chiave di ordinamento;</li>
+<li>zero stati locked/crossed prima o dopo l’evento nella ricostruzione
+corrente;</li>
+<li>zero categorie di errore bloccante.</li>
+</ul>
+<p>Questi controlli verificano coerenza contabile e alcune invarianti
+del book, <strong>non l’esatta posizione FIFO in coda</strong>. La
+ricostruzione è volutamente conservativa per gli ordini marketable: non
+li inserisce come liquidità passiva visibile quando la struttura
+multi-riga del feed li farebbe apparire temporaneamente
+locked/crossed.</p>
+<p>Sono inoltre propagate tre classi di avvertimento, non nascoste:</p>
+<ul>
+<li>17.245 eventi marketable non trattati come liquidità passiva
+resting;</li>
+<li>11.820 eventi non prezzati e non resting, prevalentemente
+market/stop-market;</li>
+<li>634.273 messaggi senza <code>NMSC_ORIGINALCLIENTIDSHORTCODE</code>
+compilato sulla singola riga.</li>
+</ul>
+<p>L’ultimo punto non impedisce la ricostruzione del book, ma limita
+l’attribuzione participant-level. I casi senza identificativo
+verificabile sono conteggiati separatamente e non devono essere
+interpretati come un unico attore economico.</p>
+<h1 id="metodo-in-sei-passaggi">Metodo in sei passaggi</h1>
+<h2 id="ricostruzione-del-book-e-dei-partecipanti">1. Ricostruzione del
+book e dei partecipanti</h2>
+<p>I messaggi sono ordinati per chiave temporale e sequenza sorgente.
+Per ogni evento si aggiorna lo stato del book visibile e si mantiene la
+storia dell’ordine e del client. Sono esclusi dalla profondità visibile
+gli eventi non resting o condizionali finché non diventano
+effettivamente visibili.</p>
+<p><strong>Perché conta:</strong> la misura non si basa sul volume
+aggregato del mercato, ma sul profilo che il singolo partecipante espone
+ai diversi livelli del book.</p>
+<h2 id="consolidamento-dei-fill-in-esecuzioni-economiche">2.
+Consolidamento dei fill in esecuzioni economiche</h2>
+<p>Un singolo ordine passivo può generare più righe di fill. Le righe
+vengono riunite in un <strong>cluster di esecuzione</strong> se
+condividono ordine passivo, client, lato, prezzo e partizione, se i fill
+consecutivi distano al massimo 100 millisecondi e non vi sono
+interruzioni del ciclo di vita.</p>
+<p>In questo modo l’unità analitica è l’esecuzione economica
+ricostruita, non ogni messaggio tecnico del feed. L’appartenenza delle
+righe originarie al cluster resta disponibile per audit.</p>
+<h2 id="profilo-recente-sul-lato-opposto">3. Profilo recente sul lato
+opposto</h2>
+<p>Per ciascun cluster si cercano ordini visibili dello stesso client
+sul lato opposto:</p>
+<ul>
+<li>presenti prima dell’esecuzione;</li>
+<li>osservati per la prima volta non più di 90 secondi prima;</li>
+<li>collocati nei primi 10 livelli del book.</li>
+</ul>
+<p>Il limite di 90 secondi evita di associare automaticamente
+all’episodio liquidità molto vecchia e strutturale.</p>
+<h2 id="ritiro-rapido-e-posteriorità-nellordinamento">4. Ritiro rapido e
+posteriorità nell’ordinamento</h2>
+<p>Dopo la fine del cluster si cercano riduzioni o cancellazioni del
+profilo candidato entro 2 secondi. Una cancellazione è eleggibile solo
+se segue l’ultimo fill sia nel timestamp sia nell’ordine della
+fonte.</p>
+<p>Ogni cancellazione fisica può essere assegnata a <strong>un solo
+cluster</strong>, con una regola deterministica. Questo evita di
+moltiplicare artificialmente la stessa azione su più episodi vicini.</p>
+<h2 id="confronto-auto-controllato">5. Confronto auto-controllato</h2>
+<p>Per ogni unità client–partizione si costruiscono coppie:</p>
+<ul>
+<li><strong>trattato:</strong> il client ha avuto una propria esecuzione
+passiva mentre esponeva il profilo candidato;</li>
+<li><strong>controllo:</strong> un altro client ha avuto un fill nella
+stessa partizione mentre il client focale esponeva un profilo
+comparabile, ma senza una propria esecuzione in quell’ancora.</li>
+</ul>
+<p>Il controllo viene scelto senza riutilizzare la stessa ancora fisica
+e usando solo caratteristiche pre-evento: numero di ordini candidati,
+quantità candidata, età del profilo e vicinanza temporale. Si confronta
+quindi la probabilità di ritiro entro 2 secondi con un test esatto per
+dati appaiati.</p>
+<p><strong>Interpretazione corretta:</strong> il confronto riduce alcune
+differenze stabili tra client, ma non crea da solo un esperimento
+causale. Attività intraday, volatilità, notizie e qualità del matching
+possono restare confondenti.</p>
+<h2 id="gate-descrittivo-completo">6. Gate descrittivo completo</h2>
+<p>Un evento entra nel dossier finale solo se sono contemporaneamente
+vere cinque condizioni:</p>
+<ol type="1">
+<li>l’unità client–partizione mostra un eccesso positivo di ritiro nel
+confronto appaiato, con soglia non aggiustata del 5%;</li>
+<li>esiste un ritiro attribuito entro 2 secondi dopo l’esecuzione;</li>
+<li>la quantità ritirata sul lato opposto supera la quantità
+eseguita;</li>
+<li>prima del fill il mid-price si è mosso nella direzione favorevole
+all’esecuzione;</li>
+<li>dopo il ritiro il prezzo mostra reversione nella finestra di 2
+secondi.</li>
+</ol>
+<p>Questo gate non è un punteggio opaco: per ogni riga è possibile
+vedere quale condizione passa o fallisce.</p>
+<h1 id="il-ruolo-del-kernel-di-profondità">Il ruolo del kernel di
+profondità</h1>
+<p>I primi 10 livelli non vengono trattati come equivalenti. Per ogni
+strumento e lato si stima un peso empirico per rango combinando:</p>
+<ul>
+<li>la probabilità che, entro 10 secondi, il miglior prezzo raggiunga
+quel livello;</li>
+<li>il grado di co-movimento osservato tra liquidità visibile e
+variazione del mid-price.</li>
+</ul>
+<p>I pesi sono normalizzati separatamente per bid e ask. In termini
+intuitivi, il kernel risponde alla domanda: <strong>quali parti del
+profilo visibile sono più informative nel campione di quello
+strumento?</strong></p>
+<p>Il kernel:</p>
+<ul>
+<li>è un input del modello di sorveglianza, non un’etichetta;</li>
+<li>non è interpretato come effetto causale della liquidità sul
+prezzo;</li>
+<li>è stimato sullo stesso campione e non è ancora validato
+out-of-sample;</li>
+<li>non è usato per rendere il gate finale dipendente da un punteggio
+arbitrario.</li>
+</ul>
+<h1 id="risultati-verificati">Risultati verificati</h1>
+<h2 id="funnel-per-strumento">Funnel per strumento</h2>
+<table>
+<thead>
+<tr class="header">
+<th>Misura</th>
+<th style="text-align: right;">Risanamento</th>
+<th style="text-align: right;">Nexi</th>
+<th style="text-align: right;">Ferrari</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Messaggi di fill passivo grezzi</td>
+<td style="text-align: right;">15.341</td>
+<td style="text-align: right;">5.402</td>
+<td style="text-align: right;">3.498</td>
+</tr>
+<tr class="even">
+<td>Cluster di esecuzione</td>
+<td style="text-align: right;">14.257</td>
+<td style="text-align: right;">4.738</td>
+<td style="text-align: right;">3.153</td>
+</tr>
+<tr class="odd">
+<td>Cluster con profilo candidato pre-fill</td>
+<td style="text-align: right;">1.290</td>
+<td style="text-align: right;">1.586</td>
+<td style="text-align: right;">1.220</td>
+</tr>
+<tr class="even">
+<td>Cluster con ritiro attribuito entro 2 s</td>
+<td style="text-align: right;">44</td>
+<td style="text-align: right;">365</td>
+<td style="text-align: right;">248</td>
+</tr>
+<tr class="odd">
+<td>di cui attribuibili a client noto</td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">281</td>
+<td style="text-align: right;">176</td>
+</tr>
+<tr class="even">
+<td>Cancellazioni fisiche assegnate</td>
+<td style="text-align: right;">46</td>
+<td style="text-align: right;">522</td>
+<td style="text-align: right;">312</td>
+</tr>
+<tr class="odd">
+<td>Coppie trattato–controllo</td>
+<td style="text-align: right;">954</td>
+<td style="text-align: right;">1.443</td>
+<td style="text-align: right;">1.012</td>
+</tr>
+<tr class="even">
+<td>Unità client–partizione valutate</td>
+<td style="text-align: right;">165</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">12</td>
+</tr>
+<tr class="odd">
+<td>Unità con eccesso positivo, p non aggiustato ≤ 5%</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr class="even">
+<td>Eventi che passano il gate completo</td>
+<td style="text-align: right;"><strong>0</strong></td>
+<td style="text-align: right;"><strong>28</strong></td>
+<td style="text-align: right;"><strong>0</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Percentuale di cluster con ritiro attribuito entro 2 secondi:</p>
+<ul>
+<li>Risanamento: <strong>0,31%</strong> dei cluster;</li>
+<li>Nexi: <strong>7,70%</strong>;</li>
+<li>Ferrari: <strong>7,87%</strong>.</li>
+</ul>
+<p>Questi tassi non sono prevalenza dello spoofing. In particolare, il
+matching meccanico include anche casi non attribuibili a un client noto:
+la quota attribuibile è 47,7% per Risanamento, 77,0% per Nexi e 71,0%
+per Ferrari.</p>
+<h2 id="confronto-aggregato-trattatocontrollo">Confronto aggregato
+trattato–controllo</h2>
+<table>
+<colgroup>
+<col style="width: 15%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Strumento</th>
+<th style="text-align: right;">Coppie</th>
+<th style="text-align: right;">Ritiri dopo esecuzione propria</th>
+<th style="text-align: right;">Ritiri nei controlli</th>
+<th style="text-align: right;">Differenza</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Risanamento</td>
+<td style="text-align: right;">954</td>
+<td style="text-align: right;">38 / 954 = 3,98%</td>
+<td style="text-align: right;">36 / 954 = 3,77%</td>
+<td style="text-align: right;">+0,21 punti percentuali</td>
+</tr>
+<tr class="even">
+<td>Nexi</td>
+<td style="text-align: right;">1.443</td>
+<td style="text-align: right;">325 / 1.443 = 22,52%</td>
+<td style="text-align: right;">293 / 1.443 = 20,30%</td>
+<td style="text-align: right;">+2,22 punti percentuali</td>
+</tr>
+<tr class="odd">
+<td>Ferrari</td>
+<td style="text-align: right;">1.012</td>
+<td style="text-align: right;">205 / 1.012 = 20,26%</td>
+<td style="text-align: right;">199 / 1.012 = 19,66%</td>
+<td style="text-align: right;">+0,59 punti percentuali</td>
+</tr>
+</tbody>
+</table>
+<p>Questa tabella aggrega unità molto diverse ed è solo descrittiva. Il
+test viene eseguito a livello client–partizione, non sul totale dello
+strumento.</p>
+<h2 id="unità-nexi-che-supera-lo-screen-non-aggiustato">Unità Nexi che
+supera lo screen non aggiustato</h2>
+<p>Una sola unità, riferita al client anonimizzato
+<strong>23523</strong> nella partizione del 23 aprile 2024, supera lo
+screen positivo al 5% non aggiustato:</p>
+<ul>
+<li>691 coppie appaiate;</li>
+<li>218 ritiri su 691 ancore trattate: <strong>31,55%</strong>;</li>
+<li>167 ritiri su 691 controlli: <strong>24,17%</strong>;</li>
+<li>differenza: <strong>+7,38 punti percentuali</strong>;</li>
+<li>coppie discordanti favorevoli: 148;</li>
+<li>coppie discordanti avverse: 97;</li>
+<li>p-value esatto unilaterale non aggiustato:
+<strong>0,000676</strong>.</li>
+</ul>
+<h3 id="cautela-statistica-essenziale">Cautela statistica
+essenziale</h3>
+<p>Lo screen è stato applicato a <strong>194 unità
+client–partizione</strong> complessive. Un audit aggiuntivo per questo
+report produce, per l’unità Nexi:</p>
+<ul>
+<li>p-value corretto Bonferroni: <strong>0,131</strong>;</li>
+<li>q-value Benjamini–Hochberg: <strong>0,131</strong>.</li>
+</ul>
+<p>Il risultato quindi <strong>non rimane sotto il 5% dopo correzione
+per molteplicità</strong>. Inoltre, le 691 coppie appartengono alla
+stessa sessione e possono presentare dipendenza temporale; il test
+esatto standard non risolve questa dipendenza. Il p-value va presentato
+come indicatore esplorativo, non come conferma statistica
+definitiva.</p>
+<h2 id="i-28-eventi-nexi-del-gate-completo">I 28 eventi Nexi del gate
+completo</h2>
+<p>I 28 eventi finali:</p>
+<ul>
+<li>appartengono tutti al client anonimizzato 23523 e alla stessa
+partizione;</li>
+<li>si distribuiscono tra le 09:00:50 e le 16:03:03;</li>
+<li>comprendono 20 esecuzioni sul bid e 8 sull’ask;</li>
+<li>rappresentano l’11,1% dei 252 cluster con ritiro attribuito per quel
+client;</li>
+<li>rappresentano lo 0,59% dei 4.738 cluster Nexi complessivi.</li>
+</ul>
+<p>Statistiche puramente descrittive dei 28 eventi selezionati:</p>
+<ul>
+<li>quantità eseguita mediana: 370 unità, intervallo 1–1.280;</li>
+<li>rapporto mediano tra quantità ritirata e quantità eseguita:
+2,48;</li>
+<li>movimento favorevole pre-fill mediano: 1,75 tick;</li>
+<li>reversione post-cancellazione mediana: 0,50 tick.</li>
+</ul>
+<p>Queste statistiche sono condizionate dal gate: movimento favorevole e
+reversione sono positivi <strong>per costruzione</strong>. Non possono
+quindi essere usati come prova indipendente dell’effetto del profilo sul
+prezzo.</p>
+<h1 id="lettura-sostanziale-dei-risultati">Lettura sostanziale dei
+risultati</h1>
+<h2 id="ciò-che-i-risultati-mostrano">Ciò che i risultati mostrano</h2>
+<ul>
+<li>La pipeline riesce a ridurre un universo di 868.149 messaggi a
+episodi ricostruibili, con chiavi e condizioni verificabili.</li>
+<li>Il ritiro rapido dopo fill è osservabile su tutti gli strumenti, ma
+il confronto con controlli simili è generalmente vicino alla
+parità.</li>
+<li>Solo una unità Nexi mostra un eccesso marcato di ritiro nel test non
+aggiustato.</li>
+<li>Il gate economico più restrittivo concentra ulteriormente l’evidenza
+in 28 eventi dello stesso client-giornata.</li>
+<li>La concentrazione è utile per il triage: suggerisce di esaminare un
+dossier coerente anziché centinaia di cancellazioni isolate.</li>
+</ul>
+<h2 id="ciò-che-i-risultati-non-mostrano">Ciò che i risultati non
+mostrano</h2>
+<ul>
+<li>Non mostrano che i 28 eventi siano 28 violazioni o 28 tentativi
+indipendenti.</li>
+<li>Non provano che il profilo di ordini abbia causato il movimento del
+prezzo.</li>
+<li>Non rivelano l’intento del partecipante.</li>
+<li>Non stimano la frequenza dello spoofing nei tre titoli o nel
+mercato.</li>
+<li>Non consentono di concludere che Nexi sia «più manipolata» di
+Risanamento o Ferrari.</li>
+<li>Non escludono spiegazioni di market making, gestione
+dell’inventario, aggiornamento di fair value o reazione a
+informazione.</li>
+</ul>
+<h2 id="interpretazione-più-prudente">Interpretazione più prudente</h2>
+<p>La formulazione consigliata è:</p>
+<blockquote>
+<p>«Nel campione Nexi del 23 aprile 2024, un client anonimizzato
+presenta un insieme concentrato di sequenze che soddisfano
+congiuntamente criteri temporali, di quantità e di percorso del prezzo
+compatibili con il meccanismo ipotizzato. Il risultato giustifica una
+revisione event-by-event e analisi di robustezza; non è sufficiente per
+inferire intenzionalità manipolativa.»</p>
+</blockquote>
+<h1 id="limiti-da-dichiarare-prima-che-vengano-chiesti">Limiti da
+dichiarare prima che vengano chiesti</h1>
+<h2 id="perimetro-ridotto-ed-eterogeneo">1. Perimetro ridotto ed
+eterogeneo</h2>
+<p>Due campioni coprono una sola giornata; Risanamento copre un periodo
+più lungo. Non esiste ancora una base omogenea per confronto tra titoli,
+periodi e regimi di volatilità.</p>
+<h2 id="copertura-degli-identificativi-client">2. Copertura degli
+identificativi client</h2>
+<p>Il codice client originario non è compilato in ogni messaggio. La
+storia ordine può propagare l’identità quando disponibile, ma una quota
+dei cluster matched resta non attribuibile. Questi eventi non vanno
+trasformati in conclusioni participant-level.</p>
+<h2 id="molteplicità-e-dipendenza-temporale">3. Molteplicità e
+dipendenza temporale</h2>
+<p>Lo screen corrente usa una soglia del 5% non aggiustata. Il solo
+risultato positivo non supera una correzione semplice sulle 194 unità.
+Le coppie della stessa giornata possono inoltre essere serialmente
+dipendenti.</p>
+<h2 id="qualità-del-matching">4. Qualità del matching</h2>
+<p>Per l’unità Nexi positiva, il numero di ordini candidati coincide
+esattamente nell’88,6% delle 691 coppie, ma non sono ancora imposti
+caliper di qualità. La distanza temporale mediana tra trattato e
+controllo è circa <strong>2 ore e 11 minuti</strong>; il 95° percentile
+è circa <strong>7 ore e 11 minuti</strong>. Questo può lasciare
+differenze di regime intraday non controllate.</p>
+<h2 id="sensibilità-dei-parametri-non-ancora-riportata">5. Sensibilità
+dei parametri non ancora riportata</h2>
+<p>Le conclusioni sono condizionate a scelte operative:</p>
+<ul>
+<li>100 ms per aggregare child fill;</li>
+<li>90 s di età massima del profilo candidato;</li>
+<li>2 s per il ritiro rapido;</li>
+<li>2 s per la reversione;</li>
+<li>10 livelli e 10 s per la struttura del kernel.</li>
+</ul>
+<p>Non è ancora disponibile una mappa di robustezza sistematica a
+finestre alternative.</p>
+<h2 id="ricostruzione-visibile-non-coda-completa">6. Ricostruzione
+visibile, non coda completa</h2>
+<p>Il book ricostruito rispetta le principali invarianti e conserva la
+provenienza degli eventi, ma non certifica l’esatta priorità FIFO. La
+gestione degli ordini marketable è conservativa e deve essere tenuta
+presente in qualunque interpretazione di profondità o permanenza.</p>
+<h2 id="nessun-ground-truth-di-condotta">7. Nessun ground truth di
+condotta</h2>
+<p>Non sono disponibili etichette investigative o giudiziarie per
+stimare precisione, recall, falsi positivi e falsi negativi. Il gate è
+quindi una regola descrittiva, non un classificatore validato.</p>
+<h2 id="kernel-stimato-in-sample">8. Kernel stimato in-sample</h2>
+<p>I pesi di profondità sono calibrati sugli stessi dati analizzati.
+Sono utili per descrivere il profilo, ma non costituiscono validazione
+predittiva fuori campione.</p>
+<h1 id="prossimi-passi-proposti">Prossimi passi proposti</h1>
+<h2 id="priorità-1-dossier-dei-28-episodi-nexi">Priorità 1 — dossier dei
+28 episodi Nexi</h2>
+<p>Per ciascun episodio produrre una scheda con:</p>
+<ul>
+<li>timeline dei messaggi e identificativi sorgente;</li>
+<li>book top-10 prima del profilo, al fill, alla cancellazione e dopo 2
+secondi;</li>
+<li>quantità inserite, modificate, eseguite e ritirate;</li>
+<li>ordini del medesimo client sui due lati;</li>
+<li>andamento di best bid, best ask, mid-price e microprice;</li>
+<li>eventuali esecuzioni e cancellazioni concorrenti di altri
+operatori;</li>
+<li>qualità dati e copertura dell’identità.</li>
+</ul>
+<p>Obiettivo: permettere a un analista di confermare o scartare
+rapidamente l’interpretazione automatica.</p>
+<h2 id="priorità-2-robustezza-statistica-e-del-matching">Priorità 2 —
+robustezza statistica e del matching</h2>
+<ul>
+<li>introdurre caliper temporali e di distanza sulle covariate;</li>
+<li>confrontare controlli nella stessa fascia intraday e nello stesso
+regime di spread/volatilità;</li>
+<li>usare inferenza cluster/blocked o randomizzazione che rispetti la
+dipendenza temporale;</li>
+<li>controllare formalmente la molteplicità;</li>
+<li>eseguire placebo e negative controls;</li>
+<li>riportare la sensibilità a finestre e soglie alternative.</li>
+</ul>
+<h2 id="priorità-3-estensione-e-validazione-esterna">Priorità 3 —
+estensione e validazione esterna</h2>
+<ul>
+<li>ampliare il numero di giornate e strumenti con campioni
+omogenei;</li>
+<li>validare il significato e la propagazione degli identificativi
+client con il tracciato e con CONSOB;</li>
+<li>ottenere, se possibile, un piccolo insieme di casi adjudicati per
+valutare falsi positivi e falsi negativi;</li>
+<li>separare calibrazione del kernel e valutazione out-of-sample;</li>
+<li>definire una soglia operativa solo dopo la validazione dei
+dossier.</li>
+</ul>
+<h1 id="scaletta-consigliata-per-una-call-di-15-minuti">Scaletta
+consigliata per una call di 15 minuti</h1>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Tempo</th>
+<th>Contenuto</th>
+<th>Messaggio da lasciare</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>0:00–1:30</td>
+<td>Obiettivo</td>
+<td>«Screening auditabile, non etichetta automatica.»</td>
+</tr>
+<tr class="even">
+<td>1:30–3:30</td>
+<td>Perché una sequenza</td>
+<td>«Dimensione e cancellazione isolate confondono market making e
+condotta sospetta.»</td>
+</tr>
+<tr class="odd">
+<td>3:30–6:30</td>
+<td>Pipeline in sei passaggi</td>
+<td>Book → cluster fill → profilo recente → ritiro → controllo →
+gate.</td>
+</tr>
+<tr class="even">
+<td>6:30–9:30</td>
+<td>Numeri del funnel</td>
+<td>868.149 messaggi; 44/365/248 cluster matched; 0/28/0 eventi
+completi.</td>
+</tr>
+<tr class="odd">
+<td>9:30–11:30</td>
+<td>Focus Nexi</td>
+<td>Un client-giornata; 691 coppie; +7,38 pp; 28 eventi da
+revisionare.</td>
+</tr>
+<tr class="even">
+<td>11:30–13:30</td>
+<td>Cautela</td>
+<td>Molteplicità, dipendenza, matching intraday, client mancanti,
+campione limitato.</td>
+</tr>
+<tr class="odd">
+<td>13:30–15:00</td>
+<td>Richiesta a CONSOB</td>
+<td>Feedback sul tracciato identità, soglie operative e formato
+dossier.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tre-domande-concrete-da-rivolgere-ai-funzionari">Tre domande
+concrete da rivolgere ai funzionari</h2>
+<ol type="1">
+<li><strong>Identità e tracciato:</strong> l’uso di
+<code>NMSC_ORIGINALCLIENTIDSHORTCODE</code> e la propagazione
+sull’ordine sono coerenti con la semantica attesa del feed? Quali
+assenze sono fisiologiche?</li>
+<li><strong>Dossier investigativo:</strong> quali elementi minimi devono
+comparire in una scheda evento perché sia utile alla revisione di
+vigilanza?</li>
+<li><strong>Validazione:</strong> quali casi storici o criteri di
+adjudication potrebbero essere usati per misurare falsi positivi e falsi
+negativi senza incorporare direttamente l’esito nel metodo?</li>
+</ol>
+<h1 id="domande-probabili-e-risposte-brevi">Domande probabili e risposte
+brevi</h1>
+<p><strong>«Avete trovato 28 casi di spoofing?»</strong><br />
+No. Abbiamo trovato 28 sequenze Nexi che passano un gate descrittivo
+compatibile con il meccanismo. Devono essere revisionate; non sono 28
+accertamenti.</p>
+<p><strong>«Perché non basta guardare le cancellazioni
+elevate?»</strong><br />
+Perché sono tipiche anche del market making. Il metodo richiede
+collegamento tra profilo recente, esecuzione propria, ritiro
+condizionato e percorso del prezzo.</p>
+<p><strong>«Il risultato Nexi è statisticamente
+significativo?»</strong><br />
+Solo allo screen non aggiustato: p = 0,000676 per una unità.
+Considerando 194 unità, Bonferroni e Benjamini–Hochberg portano il
+valore a circa 0,131. Inoltre le coppie sono temporalmente dipendenti.
+Va trattato come esplorativo.</p>
+<p><strong>«Perché 2 secondi e 90 secondi?»</strong><br />
+Sono valori operativi coerenti con l’idea di ritiro rapido e profilo
+recente, ma non ancora soglie definitive. La robustezza a valori
+alternativi è un prossimo passo necessario.</p>
+<p><strong>«Che cosa distingue i controlli?»</strong><br />
+Sono ancore nella stessa partizione in cui il client focale espone un
+profilo simile ma l’esecuzione è di un altro partecipante. Il matching
+usa solo informazioni pre-evento e ogni controllo fisico è usato una
+sola volta.</p>
+<p><strong>«I controlli sono perfettamente comparabili?»</strong><br />
+No. Il matching è deterministico e auditabile, ma non usa ancora
+caliper; per l’unità positiva alcuni controlli sono distanti diverse
+ore. Serve un affinamento intraday.</p>
+<p><strong>«Il movimento del prezzo è causato dagli ordini del
+client?»</strong><br />
+Non possiamo dirlo. Il gate verifica coerenza temporale e direzionale,
+non causalità. Altri ordini, notizie e dinamiche di mercato possono
+spiegare il movimento.</p>
+<p><strong>«Come gestite i client mancanti?»</strong><br />
+Li segnaliamo esplicitamente e li escludiamo dalle classifiche e dalle
+conclusioni participant-level. I cluster matched non attribuibili sono
+riportati separatamente.</p>
+<p><strong>«A cosa serve il kernel top-10?»</strong><br />
+A non trattare tutti i livelli come ugualmente informativi. I pesi sono
+stimati per strumento e lato, ma non costituiscono prova di impatto né
+etichetta.</p>
+<p><strong>«Il book ricostruito è affidabile?»</strong><br />
+Ha superato controlli di schema, contabilità, ordine e invarianti su
+tutti i file, con zero stati locked/crossed nella versione corrente.
+Resta una ricostruzione del book visibile, non una certificazione della
+coda FIFO completa.</p>
+<p><strong>«Cosa manca per l’uso operativo?»</strong><br />
+Dossier event-level, robustezza delle finestre, matching con caliper,
+inferenza temporale e multipla, più giorni e strumenti, verifica con
+casi adjudicati e procedure di monitoraggio della qualità dati.</p>
+<h1 id="lessico-consigliato">Lessico consigliato</h1>
+<h2 id="formulazioni-da-usare">Formulazioni da usare</h2>
+<ul>
+<li>«sequenze compatibili con il meccanismo ipotizzato»;</li>
+<li>«segnale meccanico di screening»;</li>
+<li>«dossier prioritario per revisione umana»;</li>
+<li>«evidenza descrittiva / esplorativa»;</li>
+<li>«ritiro attribuito nell’ordinamento temporale e sorgente»;</li>
+<li>«client anonimizzato»;</li>
+<li>«spiegazioni alternative esplicitamente aperte».</li>
+</ul>
+<h2 id="formulazioni-da-evitare">Formulazioni da evitare</h2>
+<ul>
+<li>«abbiamo rilevato 28 spoofing»;</li>
+<li>«il p-value prova la manipolazione»;</li>
+<li>«Nexi è più manipolata degli altri titoli»;</li>
+<li>«gli ordini hanno causato il movimento del prezzo»;</li>
+<li>«l’assenza di eventi in Ferrari/Risanamento prova l’assenza di
+spoofing»;</li>
+<li>«il modello conosce l’intento del partecipante».</li>
+</ul>
+<h1 id="provenienza-e-riproducibilità">Provenienza e
+riproducibilità</h1>
+<h2 id="run-empirica-di-riferimento">Run empirica di riferimento</h2>
+<p>Directory della run:</p>
+<pre class="text"><code>outputs/spoofing_metrics/
+20260721_110005_empirical_kernel_top10_h10_age90_timestamp_sort_causality_fix/</code></pre>
+<p>La run conserva:</p>
+<ul>
+<li>configurazione risolta e snapshot del codice;</li>
+<li>hash SHA-256 degli input, dei kernel e degli artefatti;</li>
+<li>cluster di esecuzione e membership dei child fill;</li>
+<li>candidati fill–cancel, incluse le alternative e l’assegnazione
+canonica;</li>
+<li>risk set trattato–controllo e indici sorgente per audit
+temporale;</li>
+<li>riepiloghi client–partizione;</li>
+<li>eventi del gate completo;</li>
+<li>report e tabelle generate per il paper.</li>
+</ul>
+<p>Il validatore della run è stato rieseguito il 21 luglio 2026 e ha
+restituito <code>validation_status=passed</code>. Verifica, tra l’altro,
+hash, normalizzazione del kernel, unicità dei cluster e delle
+cancellazioni, posteriorità del ritiro nel timestamp e nell’ordine
+sorgente, risk set 1:1, non riuso dei controlli, ricalcolo indipendente
+del test esatto e uguaglianza con le tabelle del paper.</p>
+<p>Comando di verifica dalla root del repository:</p>
+<pre class="text"><code>cd outputs/spoofing_metrics
+RUN=20260721_110005_empirical_kernel_top10_h10_age90_timestamp_sort_causality_fix
+/home/danielemdn/miniconda3/envs/main/bin/python &quot;$RUN/validate_run.py&quot;</code></pre>
+<h2 id="fonti-numeriche-principali">Fonti numeriche principali</h2>
+<ul>
+<li>in <code>paper/generated/</code>: <code>cluster_summary.csv</code>,
+<code>top_clients.csv</code>, <code>metadata.json</code>;</li>
+<li>nella root della run: <code>validation_report.json</code> e
+<code>run_manifest.json</code>;</li>
+<li>nella sottodirectory Nexi della run:
+<ul>
+<li><code>client_session_withdrawal_excess.csv</code>;</li>
+<li><code>spoofing_compatible_events.csv</code>;</li>
+<li><code>withdrawal_risk_sets.csv</code>;</li>
+</ul></li>
+<li>nell’audit LOB del 18 giugno 2026:
+<code>all_files_warning_audit.json</code>;</li>
+<li>nella calibrazione top-10 del 17 luglio 2026: kernel e report per
+strumento.</li>
+</ul>
+<p>Le correzioni per molteplicità e le statistiche di qualità del
+matching riportate in questo documento sono calcoli di audit aggiuntivi
+eseguiti sulle tabelle persistite della run; non modificano gli
+artefatti originari.</p>
+<h1 id="chiusura-consigliata">Chiusura consigliata</h1>
+<blockquote>
+<p>«Il valore attuale del lavoro è la tracciabilità: ogni numero del
+funnel può essere ricondotto ai messaggi, ogni cancellazione è assegnata
+una sola volta e ogni condizione del gate è ispezionabile. Il risultato
+Nexi è sufficientemente concentrato da giustificare un dossier
+approfondito, ma non sufficientemente robusto da sostenere una
+conclusione sull’intento. Il confronto con CONSOB può aiutarci
+soprattutto su semantica degli identificativi, formato del dossier e
+disegno della validazione.»</p>
+</blockquote>
+</body>
+</html>

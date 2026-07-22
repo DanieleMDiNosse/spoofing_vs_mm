@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -32,6 +33,9 @@ _CONFIGURABLE_DEFAULT_KEYS = {
     "lambda_",
     "epsilon",
     "window_seconds",
+    "withdrawal_window_seconds",
+    "reversion_horizon_seconds",
+    "execution_cluster_max_gap_ms",
     "max_deceptive_order_age_seconds",
     "gamma_grid",
     "tick_size",
@@ -39,6 +43,21 @@ _CONFIGURABLE_DEFAULT_KEYS = {
     "make_dashboard",
     "empirical_depth_kernel",
 }
+
+
+def _analysis_metadata() -> dict[str, str]:
+    return {
+        "analytical_unit": "execution_cluster",
+        "raw_audit_unit": "child_fill_message",
+        "event_selection": "all_passive_execution_clusters",
+        "behavioral_gate": (
+            "rapid_attributed_cancel AND fill_qty_lt_withdrawn_qty AND favorable_pre_fill_mid_move AND "
+            "positive_cancel_anchored_mid_reversion"
+        ),
+        "analytical_event_population": "all_passive_execution_clusters",
+        "mcps_population": "all_attributable_client_execution_clusters",
+        "review_event_selection": "canonically_assigned_matched_withdrawal_clusters_only",
+    }
 
 
 def _parse_int_grid(text: str) -> list[int]:
@@ -63,7 +82,9 @@ def _depth_output_paths(root: Path, top_n: int) -> dict[str, Path]:
         "state_time_series": depth_dir / "client_metric_time_series.parquet",
         "execution_metrics": depth_dir / "execution_metrics.parquet",
         "candidate_deceptive_orders": depth_dir / "candidate_deceptive_orders.parquet",
-
+        "execution_cluster_members": depth_dir / "execution_cluster_members.parquet",
+        "execution_cancel_candidates": depth_dir / "execution_cancel_candidates.parquet",
+        "spoofing_compatible_events": depth_dir / "spoofing_compatible_events.parquet",
         "rejected_executions": depth_dir / "rejected_executions.parquet",
         "client_mcps_scores": depth_dir / "client_mcps_scores.parquet",
         "dashboard": depth_dir / "spoofing_metric_dashboard.html",
@@ -80,10 +101,41 @@ def _depth_outputs_complete(paths: dict[str, Path]) -> bool:
         "state_time_series",
         "execution_metrics",
         "candidate_deceptive_orders",
+        "execution_cluster_members",
+        "execution_cancel_candidates",
+        "spoofing_compatible_events",
         "rejected_executions",
         "client_mcps_scores",
     )
     return all(paths[name].exists() and paths[name].stat().st_size > 0 for name in required)
+
+
+def _sha256(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _can_reuse_depth_outputs(
+    paths: dict[str, Path],
+    *,
+    metadata_path: Path,
+    expected_metadata: dict[str, Any],
+    top_n: int,
+) -> bool:
+    if not _depth_outputs_complete(paths) or not metadata_path.exists():
+        return False
+    try:
+        metadata = json.loads(metadata_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return top_n in metadata.get("depth_grid", []) and all(
+        metadata.get(key) == value for key, value in expected_metadata.items()
+    )
 
 
 def _depth_counts_from_files(paths: dict[str, Path]) -> dict[str, int]:
@@ -94,7 +146,9 @@ def _depth_counts_from_files(paths: dict[str, Path]) -> dict[str, int]:
             "state_time_series",
             "execution_metrics",
             "candidate_deceptive_orders",
-
+            "execution_cluster_members",
+            "execution_cancel_candidates",
+            "spoofing_compatible_events",
             "client_mcps_scores",
         )
     }
@@ -127,6 +181,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--lambda", dest="lambda_", type=float, default=1.0, help="Visibility-decay parameter")
     parser.add_argument("--epsilon", type=float, default=1e-12, help="Small denominator stabilizer")
     parser.add_argument("--window-seconds", type=float, default=1.0, help="Clock-time post-execution window")
+    parser.add_argument("--withdrawal-window-seconds", type=float, default=2.0, help="Post-cluster withdrawal outcome window")
+    parser.add_argument("--reversion-horizon-seconds", type=float, default=2.0, help="Post-cancellation price-reversion horizon")
+    parser.add_argument("--execution-cluster-max-gap-ms", type=int, default=100, help="Maximum inclusive gap between child fills in one execution cluster")
     parser.add_argument(
         "--max-deceptive-order-age-seconds",
         type=float,
@@ -136,6 +193,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--gamma-grid", default="0.25,0.5,0.75,1.0", help="Comma-separated MSCI thresholds")
     parser.add_argument("--tick-size", type=float, default=None, help="Optional explicit tick size")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional raw-row cap for smoke runs")
+    parser.add_argument(
+        "--reuse-depth-outputs",
+        action="store_true",
+        help="Reuse complete per-depth outputs only when their metadata matches all current inputs and parameters",
+    )
     parser.add_argument(
         "--empirical-depth-kernel",
         type=Path,
@@ -152,6 +214,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.empirical_depth_kernel is not None and not isinstance(args.empirical_depth_kernel, Path):
         args.empirical_depth_kernel = Path(args.empirical_depth_kernel)
+    if args.execution_cluster_max_gap_ms < 0:
+        parser.error("--execution-cluster-max-gap-ms must be non-negative")
+    if args.withdrawal_window_seconds <= 0:
+        parser.error("--withdrawal-window-seconds must be positive")
+    if args.reversion_horizon_seconds <= 0:
+        parser.error("--reversion-horizon-seconds must be positive")
     return args
 
 
@@ -161,6 +229,7 @@ def _write_grid_summary(path: Path, *, metadata: dict[str, Any], combined_scores
         "",
         "This grid follows the active manuscript model and computes MCPS across several book depths.",
         "The scores are surveillance cues, not labels and not proof of intent.",
+        "The spoofing-compatible sequence is a descriptive same-episode conjunction, not a statistical test or manipulation label.",
         "",
         "## Multidepth interpretation",
         "",
@@ -177,6 +246,9 @@ def _write_grid_summary(path: Path, *, metadata: dict[str, Any], combined_scores
         f"- lambda: {metadata['lambda_']}",
         f"- epsilon: {metadata['epsilon']}",
         f"- window_seconds: {metadata['window_seconds']}",
+        f"- withdrawal_window_seconds: {metadata['withdrawal_window_seconds']}",
+        f"- reversion_horizon_seconds: {metadata['reversion_horizon_seconds']}",
+        f"- execution_cluster_max_gap_ms: {metadata['execution_cluster_max_gap_ms']}",
         f"- max_deceptive_order_age_seconds: {metadata['max_deceptive_order_age_seconds']}",
         f"- gamma_grid: {metadata['gamma_grid']}",
         f"- tick_size: {metadata['tick_size']}",
@@ -218,12 +290,41 @@ def main(argv: list[str] | None = None) -> None:
     empirical_kernel_weights = (
         load_empirical_kernel_weights(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None
     )
+    expected_metadata: dict[str, Any] = {
+        "input": str(args.input.resolve()),
+        "input_sha256": _sha256(args.input),
+        "quote_panel": str(args.quote_panel.resolve()) if args.quote_panel is not None else None,
+        "quote_panel_sha256": _sha256(args.quote_panel),
+        "kappa": args.kappa,
+        "lambda_": args.lambda_,
+        "epsilon": args.epsilon,
+        "window_seconds": args.window_seconds,
+        "withdrawal_window_seconds": args.withdrawal_window_seconds,
+        "reversion_horizon_seconds": args.reversion_horizon_seconds,
+        "execution_cluster_max_gap_ms": args.execution_cluster_max_gap_ms,
+        "max_deceptive_order_age_seconds": args.max_deceptive_order_age_seconds,
+        "gamma_grid": gamma_grid,
+        "tick_size": tick_size,
+        "max_rows": args.max_rows,
+        "empirical_depth_kernel": (
+            str(args.empirical_depth_kernel.resolve())
+            if args.empirical_depth_kernel is not None
+            else None
+        ),
+        "empirical_depth_kernel_sha256": _sha256(args.empirical_depth_kernel),
+        "kernel_mode": "empirical" if args.empirical_depth_kernel is not None else "parametric",
+    }
     combined_score_frames: list[pl.DataFrame] = []
     per_depth_counts: dict[str, dict[str, int]] = {}
 
     for top_n in depth_grid:
         paths = _depth_output_paths(args.output_dir, top_n)
-        if _depth_outputs_complete(paths):
+        if args.reuse_depth_outputs and _can_reuse_depth_outputs(
+            paths,
+            metadata_path=args.output_dir / "metadata.json",
+            expected_metadata=expected_metadata,
+            top_n=top_n,
+        ):
             scores = pl.read_parquet(paths["client_mcps_scores"])
             if args.make_dashboard and not paths["dashboard"].exists():
                 write_spoofing_metric_dashboard(
@@ -245,6 +346,9 @@ def main(argv: list[str] | None = None) -> None:
             lambda_=args.lambda_,
             epsilon=args.epsilon,
             window_seconds=args.window_seconds,
+            withdrawal_window_seconds=args.withdrawal_window_seconds,
+            reversion_horizon_seconds=args.reversion_horizon_seconds,
+            execution_cluster_max_gap_ms=args.execution_cluster_max_gap_ms,
             include_level_columns=top_n <= 5,
             max_deceptive_order_age_seconds=args.max_deceptive_order_age_seconds,
             empirical_kernel_weights=empirical_kernel_weights,
@@ -253,7 +357,9 @@ def main(argv: list[str] | None = None) -> None:
         _write_parquet(result.state_time_series, paths["state_time_series"])
         _write_parquet(result.execution_metrics, paths["execution_metrics"])
         _write_parquet(result.candidate_deceptive_orders, paths["candidate_deceptive_orders"])
-
+        _write_parquet(result.execution_cluster_members, paths["execution_cluster_members"])
+        _write_parquet(result.execution_cancel_candidates, paths["execution_cancel_candidates"])
+        _write_parquet(result.spoofing_compatible_events, paths["spoofing_compatible_events"])
         _write_parquet(result.rejected_executions, paths["rejected_executions"])
         _write_parquet(scores, paths["client_mcps_scores"])
         if args.make_dashboard:
@@ -269,7 +375,9 @@ def main(argv: list[str] | None = None) -> None:
             "state_time_series": result.state_time_series.height,
             "execution_metrics": result.execution_metrics.height,
             "candidate_deceptive_orders": result.candidate_deceptive_orders.height,
-
+            "execution_cluster_members": result.execution_cluster_members.height,
+            "execution_cancel_candidates": result.execution_cancel_candidates.height,
+            "spoofing_compatible_events": result.spoofing_compatible_events.height,
             "client_mcps_scores": scores.height,
             "state_level_columns_included": top_n <= 5,
         }
@@ -279,21 +387,12 @@ def main(argv: list[str] | None = None) -> None:
     _write_parquet(combined_scores, combined_path)
     metadata: dict[str, Any] = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "input": str(args.input),
-        "quote_panel": str(args.quote_panel) if args.quote_panel is not None else None,
+        **expected_metadata,
         "output_dir": str(args.output_dir),
         "config": str(args.config) if args.config is not None and args.config.exists() else None,
         "depth_grid": depth_grid,
-        "kappa": args.kappa,
-        "lambda_": args.lambda_,
-        "epsilon": args.epsilon,
-        "window_seconds": args.window_seconds,
-        "max_deceptive_order_age_seconds": args.max_deceptive_order_age_seconds,
-        "gamma_grid": gamma_grid,
-        "tick_size": tick_size,
-        "max_rows": args.max_rows,
-        "empirical_depth_kernel": str(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None,
-        "kernel_mode": "empirical" if args.empirical_depth_kernel is not None else "parametric",
+        **_analysis_metadata(),
+        "reuse_depth_outputs": args.reuse_depth_outputs,
         "client_identity_audit": client_audit,
         "per_depth_counts": per_depth_counts,
         "combined_client_mcps_scores": str(combined_path),

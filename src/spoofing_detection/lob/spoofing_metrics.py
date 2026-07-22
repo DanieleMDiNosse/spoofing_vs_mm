@@ -5,12 +5,14 @@ import math
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import polars as pl
 
+from spoofing_detection.lob.behavioral_gate import attach_spoofing_compatible_sequence_gate
 from spoofing_detection.lob.config import LOBConfig
+from spoofing_detection.lob.execution_clusters import cluster_passive_execution_fills
 from spoofing_detection.lob.models import ActiveOrder
 from spoofing_detection.lob.normalize import normalize_event
 from spoofing_detection.lob.panel import (
@@ -20,9 +22,40 @@ from spoofing_detection.lob.panel import (
     _partition_id,
     sort_events,
 )
-
 BEST_QUOTE_COLUMNS = ("post_best_bid", "post_best_ask")
 VISIBLE_LIMIT_ORDER_TYPES = {"limit", "iceberg"}
+
+EXECUTION_CANCEL_CANDIDATE_SCHEMA: dict[str, pl.DataType] = {
+    "partition_id": pl.String,
+    "cancel_sort_index": pl.Int64,
+    "candidate_order_id": pl.String,
+    "execution_cluster_id": pl.String,
+    "client_id": pl.String,
+    "execution_side": pl.String,
+    "deceptive_side": pl.String,
+    "cluster_end_ts": pl.Datetime("us"),
+    "cluster_first_sort_index": pl.Int64,
+    "cluster_last_sort_index": pl.Int64,
+    "cancel_event_ts": pl.Datetime("us"),
+    "cancel_visible_qty": pl.Float64,
+    "ORDERID": pl.String,
+    "event_ts": pl.Datetime("us"),
+    "visible_qty_pre_cancel": pl.Float64,
+    "assigned_flag": pl.Boolean,
+    "assignment_rule": pl.String,
+    "competing_cluster_count": pl.Int64,
+    "cancel_reversion_target_ts": pl.Datetime("us"),
+    "cancel_pre_state_sort_index": pl.Int64,
+    "cancel_post_state_sort_index": pl.Int64,
+    "cancel_mid_pre": pl.Float64,
+    "cancel_mid_post_horizon": pl.Float64,
+    "cancel_microprice_pre": pl.Float64,
+    "cancel_microprice_post_horizon": pl.Float64,
+    "post_cancel_mid_reversion": pl.Float64,
+    "post_cancel_microprice_reversion": pl.Float64,
+    "cancel_reversion_weight": pl.Float64,
+    "has_cancel_reversion_state": pl.Boolean,
+}
 
 
 @dataclass(frozen=True)
@@ -32,6 +65,8 @@ class ExploratoryMetricsConfig:
     lambda_: float = 1.0
     epsilon: float = 1e-12
     window_seconds: float = 1.0
+    withdrawal_window_seconds: float = 2.0
+    reversion_horizon_seconds: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -41,6 +76,9 @@ class ExploratoryMetricsResult:
     candidate_deceptive_orders: pl.DataFrame
     direct_cancellations: pl.DataFrame
     rejected_executions: pl.DataFrame
+    execution_cluster_members: pl.DataFrame
+    execution_cancel_candidates: pl.DataFrame
+    spoofing_compatible_events: pl.DataFrame
 
 
 def infer_tick_size_from_best_quotes(panel: pl.DataFrame) -> float:
@@ -66,14 +104,18 @@ def _parse_ts(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.replace(tzinfo=None)
-    text = str(value).strip()
-    if not text or text.lower() in {"nan", "none", "null"}:
-        return None
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
-    except ValueError:
-        return None
+        parsed = value
+    else:
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "none", "null"}:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.replace(tzinfo=None)
 
 
 def choose_event_timestamp(event: dict[str, Any]) -> datetime | None:
@@ -170,6 +212,7 @@ def compute_client_top_n_exposures(
     event_ts: datetime | None,
     include_level_columns: bool = True,
     client_ids: set[str] | None = None,
+    include_zero_client_ids: set[str] | None = None,
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> list[dict[str, Any]]:
     if top_n <= 0:
@@ -227,13 +270,19 @@ def compute_client_top_n_exposures(
         active_client_ids.add(client_id)
         client_level_qty[(client_id, order.side, rank)] += qty
 
+    profile_client_ids = set(active_client_ids)
+    zero_client_ids = set(include_zero_client_ids or ()) - profile_client_ids
+    if client_ids is not None:
+        zero_client_ids.intersection_update(client_ids)
+
     rows: list[dict[str, Any]] = []
-    for client_id in sorted(active_client_ids):
+    for client_id in sorted(profile_client_ids | zero_client_ids):
         row: dict[str, Any] = {
             "partition_id": partition_id,
             "sort_index": sort_index,
             "event_ts": event_ts,
             "client_id": client_id,
+            "has_active_top_n_profile": client_id in profile_client_ids,
             "top_n": top_n,
             "tick_size": tick_size,
             "kappa": kappa,
@@ -285,7 +334,11 @@ def compute_client_top_n_exposures(
             row[f"L_{side}_topN"] = side_liquidity
         denom = liquidity["ask"] + liquidity["bid"]
         row["DWI_denominator"] = denom
-        row["DWI"] = (liquidity["ask"] - liquidity["bid"]) / denom if denom > 0 else None
+        row["DWI"] = (
+            (liquidity["ask"] - liquidity["bid"]) / denom
+            if denom > 0
+            else (0.0 if client_id in zero_client_ids else None)
+        )
         rows.append(row)
     return rows
 
@@ -584,12 +637,13 @@ def _stream_metric_inputs(
     tick_size: float,
     kappa: float,
     lambda_: float,
+    execution_cluster_max_gap_ms: int = 100,
     max_rows: int | None = None,
     include_level_columns: bool = True,
     max_deceptive_order_age_seconds: float = 600.0,
     state_client_ids: set[str] | None = None,
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     config = LOBConfig(top_n=max(top_n, 1), snapshot_mode="none")
     sorted_events = sort_events(raw_events)
     if max_rows is not None:
@@ -605,10 +659,13 @@ def _stream_metric_inputs(
     non_resting_order_ids: set[str] = set()
     current_partition_id: str | None = None
     state_rows: list[dict[str, Any]] = []
+    previous_profile_client_ids: set[str] = set()
     execution_rows: list[dict[str, Any]] = []
     candidate_deceptive_rows: list[dict[str, Any]] = []
+    candidate_rows_by_execution_sort_index: dict[int, list[dict[str, Any]]] = {}
     direct_cancel_rows: list[dict[str, Any]] = []
     rejected_rows: list[dict[str, Any]] = []
+    cluster_source_rows: list[dict[str, Any]] = []
 
     for event_index, event in enumerate(events):
         partition_id = _partition_id(event)
@@ -620,6 +677,7 @@ def _stream_metric_inputs(
             order_first_seen_ts = {}
             pending_aggressive_residuals = {}
             non_resting_order_ids = set()
+            previous_profile_client_ids = set()
             current_partition_id = partition_id
 
         event_ts = choose_event_timestamp(event)
@@ -645,6 +703,7 @@ def _stream_metric_inputs(
             execution.update(_candidate_deceptive_order_summary(candidates))
             execution_rows.append(execution)
             candidate_deceptive_rows.extend(candidates)
+            candidate_rows_by_execution_sort_index[int(execution["sort_index"])] = candidates
         elif rejection is not None:
             rejected_rows.append(rejection)
 
@@ -656,6 +715,18 @@ def _stream_metric_inputs(
         )
         if direct_cancel is not None:
             direct_cancel_rows.append(direct_cancel)
+
+        cluster_source_rows.append(
+            {
+                **event,
+                "partition_id": partition_id,
+                "event_ts": event_ts,
+                "is_passive_fill": execution is not None,
+                "event_price": execution.get("event_price") if execution is not None else event.get("ORDERPX"),
+                "fill_qty": execution.get("fill_qty") if execution is not None else None,
+                "metric_row": execution,
+            }
+        )
 
         _apply_event(
             active_orders,
@@ -671,28 +742,49 @@ def _stream_metric_inputs(
             keep_group=next_group,
         )
         _sync_order_first_seen_timestamps(active_orders, order_first_seen_ts, event_ts)
-        state_rows.extend(
-            compute_client_top_n_exposures(
-                active_orders,
-                top_n=top_n,
-                tick_size=tick_size,
-                kappa=kappa,
-                lambda_=lambda_,
-                partition_id=partition_id,
-                sort_index=event["sort_index"],
-                event_ts=event_ts,
-                include_level_columns=include_level_columns,
-                client_ids=state_client_ids,
-                empirical_kernel_weights=empirical_kernel_weights,
-            )
+        exposure_rows = compute_client_top_n_exposures(
+            active_orders,
+            top_n=top_n,
+            tick_size=tick_size,
+            kappa=kappa,
+            lambda_=lambda_,
+            partition_id=partition_id,
+            sort_index=event["sort_index"],
+            event_ts=event_ts,
+            include_level_columns=include_level_columns,
+            client_ids=state_client_ids,
+            include_zero_client_ids=previous_profile_client_ids,
+            empirical_kernel_weights=empirical_kernel_weights,
         )
+        state_rows.extend(exposure_rows)
+        previous_profile_client_ids = {
+            str(row["client_id"]) for row in exposure_rows if row["has_active_top_n_profile"]
+        }
+
+    cluster_rows, member_rows = cluster_passive_execution_fills(
+        cluster_source_rows,
+        max_gap_ms=execution_cluster_max_gap_ms,
+    )
+    clustered_candidate_rows: list[dict[str, Any]] = []
+    for cluster in cluster_rows:
+        first_sort_index = int(cluster["cluster_first_sort_index"])
+        for candidate in candidate_rows_by_execution_sort_index.get(first_sort_index, []):
+            clustered_candidate_rows.append(
+                {
+                    **candidate,
+                    "execution_cluster_id": cluster["execution_cluster_id"],
+                    "cluster_first_sort_index": cluster["cluster_first_sort_index"],
+                    "cluster_last_sort_index": cluster["cluster_last_sort_index"],
+                }
+            )
 
     state_df = pl.DataFrame(state_rows, infer_schema_length=None) if state_rows else _empty_frame()
-    execution_df = pl.DataFrame(execution_rows, infer_schema_length=None) if execution_rows else _empty_frame()
-    candidate_df = pl.DataFrame(candidate_deceptive_rows, infer_schema_length=None) if candidate_deceptive_rows else _empty_frame()
+    execution_df = pl.DataFrame(cluster_rows, infer_schema_length=None) if cluster_rows else _empty_frame()
+    candidate_df = pl.DataFrame(clustered_candidate_rows, infer_schema_length=None) if clustered_candidate_rows else _empty_frame()
     cancel_df = pl.DataFrame(direct_cancel_rows, infer_schema_length=None) if direct_cancel_rows else _empty_frame()
     rejected_df = pl.DataFrame(rejected_rows, infer_schema_length=None) if rejected_rows else _empty_frame()
-    return state_df, execution_df, candidate_df, cancel_df, rejected_df
+    member_df = pl.DataFrame(member_rows, infer_schema_length=None) if member_rows else _empty_frame()
+    return state_df, execution_df, candidate_df, cancel_df, rejected_df, member_df
 
 
 def compute_client_metric_time_series(
@@ -707,7 +799,7 @@ def compute_client_metric_time_series(
     state_client_ids: set[str] | None = None,
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> pl.DataFrame:
-    state_df, _, _, _, _ = _stream_metric_inputs(
+    state_df, _, _, _, _, _ = _stream_metric_inputs(
         raw_events,
         top_n=top_n,
         tick_size=tick_size,
@@ -745,17 +837,29 @@ def _group_state_rows(states: pl.DataFrame) -> dict[tuple[Any, str], list[dict[s
     return groups
 
 
-def _state_group_cache(values: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[int], list[datetime]]:
+def _state_group_cache(
+    values: list[dict[str, Any]],
+) -> tuple[
+    list[dict[str, Any]],
+    list[int],
+    list[dict[str, Any]],
+    list[datetime],
+    list[datetime],
+]:
     if not values:
-        return [], [], []
+        return [], [], [], [], []
     cache = values[0].get("_lookup_cache")
     if cache is None:
         indexed = [item for item in values if item.get("sort_index") is not None]
-        # _group_state_rows already sorts by sort_index, then timestamp.  Cache the arrays once;
-        # rebuilding them per execution is quadratic on large client sessions.
         indexes = [int(item["sort_index"]) for item in indexed]
-        times = [item["_ts"] for item in indexed]
-        cache = (indexed, indexes, times)
+        time_sorted = sorted(indexed, key=lambda item: (item["_ts"], int(item["sort_index"])))
+        times = [item["_ts"] for item in time_sorted]
+        suffix_max_times = [item["_ts"] for item in indexed]
+        for idx in range(len(suffix_max_times) - 2, -1, -1):
+            suffix_max_times[idx] = max(suffix_max_times[idx], suffix_max_times[idx + 1])
+        # Preserve both causal source order and event-time order.  They are not
+        # interchangeable when source timestamps move backwards.
+        cache = (indexed, indexes, time_sorted, times, suffix_max_times)
         values[0]["_lookup_cache"] = cache
     return cache
 
@@ -763,32 +867,51 @@ def _state_group_cache(values: list[dict[str, Any]]) -> tuple[list[dict[str, Any
 def _lookup_pre_state(values: list[dict[str, Any]], event_ts: datetime, sort_index: int | None) -> dict[str, Any] | None:
     if not values:
         return None
-    indexed, indexes, times = _state_group_cache(values)
+    indexed, indexes, time_sorted, times, _ = _state_group_cache(values)
     if sort_index is not None and indexes:
         idx = bisect.bisect_left(indexes, int(sort_index)) - 1
         return indexed[idx] if idx >= 0 else None
     idx = bisect.bisect_left(times, event_ts) - 1
-    return indexed[idx] if idx >= 0 else None
+    return time_sorted[idx] if idx >= 0 else None
 
 
 def _lookup_post_state(values: list[dict[str, Any]], end_ts: datetime, sort_index: int | None) -> dict[str, Any] | None:
     if not values:
         return None
-    indexed, indexes, times = _state_group_cache(values)
-    if not indexed:
+    indexed, indexes, time_sorted, times, _ = _state_group_cache(values)
+    if not time_sorted:
         return None
     hi = bisect.bisect_right(times, end_ts)
     if sort_index is not None and indexes:
-        lo = bisect.bisect_right(indexes, int(sort_index))
-        if lo >= hi:
-            return None
-    return indexed[hi - 1] if hi > 0 else None
+        # State rows are recorded after applying their event.  The state at the
+        # cluster's final sort index is therefore already post-cluster and may
+        # be carried forward to the window target.
+        lower_index = int(sort_index)
+        for item in reversed(time_sorted[:hi]):
+            if int(item["sort_index"]) >= lower_index:
+                return item
+        return None
+    return time_sorted[hi - 1] if hi > 0 else None
+
+
+def _has_post_target_coverage(
+    values: list[dict[str, Any]],
+    target_ts: datetime,
+    sort_index: int | None,
+) -> bool:
+    if not values:
+        return False
+    indexed, indexes, time_sorted, times, suffix_max_times = _state_group_cache(values)
+    if sort_index is None:
+        return bool(time_sorted) and times[-1] >= target_ts
+    lo = bisect.bisect_left(indexes, int(sort_index))
+    return lo < len(indexed) and suffix_max_times[lo] >= target_ts
 
 
 def _lookup_state_at_or_after_index(values: list[dict[str, Any]], sort_index: int | None) -> dict[str, Any] | None:
     if sort_index is None:
         return None
-    indexed, indexes, _ = _state_group_cache(values)
+    indexed, indexes, _, _, _ = _state_group_cache(values)
     idx = bisect.bisect_left(indexes, int(sort_index))
     return indexed[idx] if idx < len(indexed) else None
 
@@ -867,14 +990,16 @@ def attach_sci_window_metrics(
     rows: list[dict[str, Any]] = []
     window = timedelta(seconds=window_seconds)
     for row in executions.iter_rows(named=True):
-        event_ts = _parse_ts(row.get("event_ts"))
-        sort_index = row.get("sort_index")
+        event_ts = _parse_ts(row.get("cluster_start_ts") or row.get("event_ts"))
+        cluster_end_ts = _parse_ts(row.get("cluster_end_ts") or row.get("event_ts"))
+        sort_index = row.get("cluster_first_sort_index") or row.get("sort_index")
+        last_sort_index = row.get("cluster_last_sort_index") or row.get("sort_index")
         pre_state = None
         post_state = None
         posture_state = None
         post_target = None
-        if event_ts is not None:
-            post_target = event_ts + window
+        if event_ts is not None and cluster_end_ts is not None:
+            post_target = cluster_end_ts + window
             values = grouped_states.get((row.get("partition_id"), row.get("client_id")), [])
             posture_state = _lookup_state_at_or_after_index(
                 values,
@@ -883,14 +1008,18 @@ def attach_sci_window_metrics(
                 else None,
             )
             pre_state = _lookup_pre_state(values, event_ts, int(sort_index) if sort_index is not None else None)
-            post_state = _lookup_post_state(values, post_target, int(sort_index) if sort_index is not None else None)
+            post_state = _lookup_post_state(
+                values,
+                post_target,
+                int(last_sort_index) if last_sort_index is not None else None,
+            )
         pre_dwi = pre_state.get("DWI") if pre_state is not None else None
-        post_dwi = post_state.get("DWI") if post_state is not None else (0.0 if pre_state is not None else None)
+        post_dwi = post_state.get("DWI") if post_state is not None else None
         sci = abs(float(pre_dwi) - float(post_dwi)) if pre_dwi is not None and post_dwi is not None else None
         l_bid_pre = pre_state.get("L_bid_topN") if pre_state is not None else None
-        l_bid_post = post_state.get("L_bid_topN") if post_state is not None else (0.0 if pre_state is not None else None)
+        l_bid_post = post_state.get("L_bid_topN") if post_state is not None else None
         l_ask_pre = pre_state.get("L_ask_topN") if pre_state is not None else None
-        l_ask_post = post_state.get("L_ask_topN") if post_state is not None else (0.0 if pre_state is not None else None)
+        l_ask_post = post_state.get("L_ask_topN") if post_state is not None else None
         collapse_bid = _collapse(l_bid_pre, l_bid_post, epsilon=epsilon)
         collapse_ask = _collapse(l_ask_pre, l_ask_post, epsilon=epsilon)
         if row.get("deceptive_side") == "bid":
@@ -912,6 +1041,7 @@ def attach_sci_window_metrics(
         rows.append(
             {
                 **row,
+                "has_post_window_state": post_state is not None,
                 "price_response_direction": price_direction,
                 "posture_state_sort_index": posture_state.get("sort_index") if posture_state is not None else None,
                 "pre_state_sort_index": pre_state.get("sort_index") if pre_state is not None else None,
@@ -927,8 +1057,12 @@ def attach_sci_window_metrics(
                 "favorable_microprice_move_pre_fill": _signed_change(
                     price_direction, posture_microprice, pre_microprice
                 ),
-                "post_cancel_mid_reversion": _signed_change(price_direction, post_mid, pre_mid),
-                "post_cancel_microprice_reversion": _signed_change(price_direction, post_microprice, pre_microprice),
+                "post_fill_mid_reversal_from_pre_fill": _signed_change(price_direction, post_mid, pre_mid),
+                "post_fill_microprice_reversal_from_pre_fill": _signed_change(
+                    price_direction,
+                    post_microprice,
+                    pre_microprice,
+                ),
                 "execution_price_advantage_vs_posture_mid": _execution_price_advantage(
                     price_direction,
                     posture_mid,
@@ -956,12 +1090,319 @@ def attach_sci_window_metrics(
     return pl.DataFrame(rows, infer_schema_length=None)
 
 
+def assign_cancellations_to_clusters(candidate_links: pl.DataFrame) -> pl.DataFrame:
+    """Assign each physical cancellation candidate to exactly one prior cluster."""
+    if candidate_links.is_empty():
+        return candidate_links
+    required = {
+        "partition_id",
+        "cancel_sort_index",
+        "candidate_order_id",
+        "execution_cluster_id",
+        "cluster_end_ts",
+        "cluster_first_sort_index",
+    }
+    missing = sorted(required.difference(candidate_links.columns))
+    if missing:
+        raise ValueError(f"candidate links missing required columns: {', '.join(missing)}")
+
+    rows = candidate_links.to_dicts()
+    groups: dict[tuple[Any, int, str], list[int]] = defaultdict(list)
+    for index, row in enumerate(rows):
+        key = (
+            row.get("partition_id"),
+            int(row["cancel_sort_index"]),
+            str(row["candidate_order_id"]),
+        )
+        groups[key].append(index)
+
+    for indexes in groups.values():
+        winner = min(
+            indexes,
+            key=lambda index: (
+                -(_parse_ts(rows[index].get("cluster_end_ts")) or datetime.min).timestamp(),
+                int(rows[index]["cluster_first_sort_index"]),
+                str(rows[index]["execution_cluster_id"]),
+            ),
+        )
+        for index in indexes:
+            rows[index]["assigned_flag"] = index == winner
+            rows[index]["assignment_rule"] = "latest_prior_cluster_end"
+            rows[index]["competing_cluster_count"] = len(indexes)
+    return pl.DataFrame(rows, infer_schema_length=None)
+
+
+def _coerce_execution_cancel_candidate_schema(frame: pl.DataFrame) -> pl.DataFrame:
+    if frame.is_empty():
+        return pl.DataFrame(schema=EXECUTION_CANCEL_CANDIDATE_SCHEMA)
+    missing = [
+        pl.lit(None).cast(dtype).alias(column)
+        for column, dtype in EXECUTION_CANCEL_CANDIDATE_SCHEMA.items()
+        if column not in frame.columns
+    ]
+    if missing:
+        frame = frame.with_columns(missing)
+    return frame.select(
+        pl.col(column).cast(dtype, strict=False)
+        for column, dtype in EXECUTION_CANCEL_CANDIDATE_SCHEMA.items()
+    )
+
+
+def _build_execution_cancel_candidates(
+    executions: pl.DataFrame,
+    cancellations: pl.DataFrame,
+    *,
+    window_seconds: float,
+) -> pl.DataFrame:
+    if executions.is_empty() or cancellations.is_empty():
+        return _coerce_execution_cancel_candidate_schema(pl.DataFrame())
+    cancel_groups: dict[tuple[Any, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for cancel in cancellations.iter_rows(named=True):
+        cancel_groups[
+            (
+                cancel["partition_id"],
+                cancel["client_id"],
+                cancel["side"],
+                str(cancel.get("ORDERID")),
+            )
+        ].append(cancel)
+
+    links: list[dict[str, Any]] = []
+    window = timedelta(seconds=window_seconds)
+    for execution in executions.iter_rows(named=True):
+        cluster_end_ts = _parse_ts(execution.get("cluster_end_ts") or execution.get("event_ts"))
+        if cluster_end_ts is None:
+            continue
+        cluster_last_sort_index_value = execution.get("cluster_last_sort_index")
+        if cluster_last_sort_index_value is None:
+            cluster_last_sort_index_value = execution.get("cluster_first_sort_index")
+        if cluster_last_sort_index_value is None:
+            cluster_last_sort_index_value = execution.get("sort_index")
+        cluster_last_sort_index = int(cluster_last_sort_index_value)
+        candidate_order_ids = {
+            order_id
+            for order_id in str(execution.get("candidate_deceptive_order_ids_pre") or "").split(";")
+            if order_id
+        }
+        if not candidate_order_ids:
+            continue
+        end = cluster_end_ts + window
+        for order_id in sorted(candidate_order_ids):
+            candidates = cancel_groups.get(
+                (
+                    execution.get("partition_id"),
+                    execution.get("client_id"),
+                    execution.get("deceptive_side"),
+                    order_id,
+                ),
+                [],
+            )
+            for cancel in candidates:
+                cancel_ts = _parse_ts(cancel.get("event_ts"))
+                cancel_sort_index = int(cancel["sort_index"])
+                if (
+                    cancel_ts is None
+                    or cancel_sort_index <= cluster_last_sort_index
+                    or not (cluster_end_ts <= cancel_ts <= end)
+                ):
+                    continue
+                cluster_first_sort_index = execution.get("cluster_first_sort_index")
+                if cluster_first_sort_index is None:
+                    cluster_first_sort_index = execution.get("sort_index")
+                links.append(
+                    {
+                        "partition_id": execution.get("partition_id"),
+                        "cancel_sort_index": cancel_sort_index,
+                        "candidate_order_id": order_id,
+                        "execution_cluster_id": execution.get("execution_cluster_id"),
+                        "client_id": execution.get("client_id"),
+                        "execution_side": execution.get("execution_side"),
+                        "deceptive_side": execution.get("deceptive_side"),
+                        "cluster_end_ts": cluster_end_ts,
+                        "cluster_first_sort_index": int(cluster_first_sort_index),
+                        "cluster_last_sort_index": cluster_last_sort_index,
+                        "cancel_event_ts": cancel_ts,
+                        "cancel_visible_qty": float(cancel.get("visible_qty_pre_cancel") or 0.0),
+                        "ORDERID": order_id,
+                        "event_ts": cancel_ts,
+                        "visible_qty_pre_cancel": float(cancel.get("visible_qty_pre_cancel") or 0.0),
+                    }
+                )
+    if not links:
+        return _coerce_execution_cancel_candidate_schema(pl.DataFrame())
+    assigned = assign_cancellations_to_clusters(pl.DataFrame(links, infer_schema_length=None))
+    return _coerce_execution_cancel_candidate_schema(assigned)
+
+
+def _weighted_finite_mean(values: list[tuple[float | None, float]]) -> float | None:
+    finite = [
+        (float(value), float(weight))
+        for value, weight in values
+        if value is not None
+        and math.isfinite(float(value))
+        and math.isfinite(float(weight))
+        and float(weight) > 0
+    ]
+    if not finite:
+        return None
+    total_weight = sum(weight for _, weight in finite)
+    return sum(value * weight for value, weight in finite) / total_weight
+
+
+def attach_cancel_anchored_reversion(
+    executions: pl.DataFrame,
+    states: pl.DataFrame,
+    cancel_candidates: pl.DataFrame,
+    *,
+    reversion_horizon_seconds: float,
+    withdrawal_decay_seconds: float = 10.0,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Measure price reversal from each assigned cancellation's actual timestamp.
+
+    State rows are post-event observations.  The baseline is therefore the last
+    state strictly before ``cancel_sort_index`` and the horizon state is the last
+    state at or before ``cancel_event_ts + horizon`` with an index at or after the
+    cancellation.  Physical cancellations remain candidate-level audit rows;
+    execution-cluster metrics are quantity-and-delay weighted means.
+    """
+    if reversion_horizon_seconds <= 0:
+        raise ValueError("reversion_horizon_seconds must be positive")
+    if withdrawal_decay_seconds <= 0:
+        raise ValueError("withdrawal_decay_seconds must be positive")
+    if executions.is_empty():
+        return executions, cancel_candidates
+
+    grouped_states = _group_state_rows(states)
+    enriched_candidates: list[dict[str, Any]] = []
+    for candidate in cancel_candidates.iter_rows(named=True):
+        enriched = {
+            **candidate,
+            "cancel_reversion_target_ts": None,
+            "cancel_pre_state_sort_index": None,
+            "cancel_post_state_sort_index": None,
+            "cancel_mid_pre": None,
+            "cancel_mid_post_horizon": None,
+            "cancel_microprice_pre": None,
+            "cancel_microprice_post_horizon": None,
+            "post_cancel_mid_reversion": None,
+            "post_cancel_microprice_reversion": None,
+            "cancel_reversion_weight": None,
+            "has_cancel_reversion_state": False,
+        }
+        if not bool(candidate.get("assigned_flag")):
+            enriched_candidates.append(enriched)
+            continue
+
+        cancel_ts = _parse_ts(candidate.get("cancel_event_ts") or candidate.get("event_ts"))
+        cluster_end_ts = _parse_ts(candidate.get("cluster_end_ts"))
+        cancel_sort_index = candidate.get("cancel_sort_index")
+        if cancel_ts is None or cluster_end_ts is None or cancel_sort_index is None:
+            enriched_candidates.append(enriched)
+            continue
+
+        target_ts = cancel_ts + timedelta(seconds=reversion_horizon_seconds)
+        values = grouped_states.get((candidate.get("partition_id"), candidate.get("client_id")), [])
+        pre_state = _lookup_pre_state(values, cancel_ts, int(cancel_sort_index))
+        has_target_coverage = _has_post_target_coverage(
+            values,
+            target_ts,
+            int(cancel_sort_index),
+        )
+        post_state = (
+            _lookup_post_state(values, target_ts, int(cancel_sort_index))
+            if has_target_coverage
+            else None
+        )
+        direction = _execution_price_direction(candidate.get("execution_side"))
+        delay_seconds = max((cancel_ts - cluster_end_ts).total_seconds(), 0.0)
+        cancel_qty = float(
+            candidate.get("cancel_visible_qty")
+            or candidate.get("visible_qty_pre_cancel")
+            or 0.0
+        )
+        weight = cancel_qty * math.exp(-delay_seconds / withdrawal_decay_seconds)
+        mid_pre = pre_state.get("market_mid") if pre_state is not None else None
+        mid_post = post_state.get("market_mid") if post_state is not None else None
+        microprice_pre = pre_state.get("market_microprice") if pre_state is not None else None
+        microprice_post = post_state.get("market_microprice") if post_state is not None else None
+        enriched.update(
+            {
+                "cancel_reversion_target_ts": target_ts,
+                "cancel_pre_state_sort_index": pre_state.get("sort_index") if pre_state is not None else None,
+                "cancel_post_state_sort_index": post_state.get("sort_index") if post_state is not None else None,
+                "cancel_mid_pre": mid_pre,
+                "cancel_mid_post_horizon": mid_post,
+                "cancel_microprice_pre": microprice_pre,
+                "cancel_microprice_post_horizon": microprice_post,
+                # Positive means reversal against the pre-fill favorable direction.
+                "post_cancel_mid_reversion": _signed_change(direction, mid_post, mid_pre),
+                "post_cancel_microprice_reversion": _signed_change(
+                    direction,
+                    microprice_post,
+                    microprice_pre,
+                ),
+                "cancel_reversion_weight": weight if weight > 0 else None,
+                "has_cancel_reversion_state": pre_state is not None and post_state is not None,
+            }
+        )
+        enriched_candidates.append(enriched)
+
+    enriched_df = _coerce_execution_cancel_candidate_schema(
+        pl.DataFrame(enriched_candidates, infer_schema_length=None)
+        if enriched_candidates
+        else cancel_candidates
+    )
+    assigned_by_cluster: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for candidate in enriched_candidates:
+        if bool(candidate.get("assigned_flag")):
+            assigned_by_cluster[str(candidate.get("execution_cluster_id"))].append(candidate)
+
+    execution_rows: list[dict[str, Any]] = []
+    for execution in executions.iter_rows(named=True):
+        assigned = assigned_by_cluster.get(str(execution.get("execution_cluster_id")), [])
+        cancel_times = [
+            cancel_ts
+            for candidate in assigned
+            if (cancel_ts := _parse_ts(candidate.get("cancel_event_ts") or candidate.get("event_ts")))
+            is not None
+        ]
+        mid_values = [
+            (candidate.get("post_cancel_mid_reversion"), float(candidate.get("cancel_reversion_weight") or 0.0))
+            for candidate in assigned
+        ]
+        microprice_values = [
+            (
+                candidate.get("post_cancel_microprice_reversion"),
+                float(candidate.get("cancel_reversion_weight") or 0.0),
+            )
+            for candidate in assigned
+        ]
+        execution_rows.append(
+            {
+                **execution,
+                "post_cancel_mid_reversion": _weighted_finite_mean(mid_values),
+                "post_cancel_microprice_reversion": _weighted_finite_mean(microprice_values),
+                "cancel_reversion_observation_count": sum(
+                    1 for value, weight in mid_values if value is not None and weight > 0
+                ),
+                "has_cancel_reversion_state": any(
+                    bool(candidate.get("has_cancel_reversion_state")) for candidate in assigned
+                ),
+                "first_matched_cancel_ts": min(cancel_times) if cancel_times else None,
+                "last_matched_cancel_ts": max(cancel_times) if cancel_times else None,
+                "reversion_horizon_seconds": reversion_horizon_seconds,
+            }
+        )
+    return pl.DataFrame(execution_rows, infer_schema_length=None), enriched_df
+
+
 def _attach_direct_cancellation_window(
     executions: pl.DataFrame,
     cancellations: pl.DataFrame,
     *,
     window_seconds: float,
     withdrawal_decay_seconds: float = 10.0,
+    assigned_candidates: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     if executions.is_empty():
         return executions
@@ -969,10 +1410,14 @@ def _attach_direct_cancellation_window(
     if not cancellations.is_empty():
         for row in cancellations.iter_rows(named=True):
             cancel_groups[(row["partition_id"], row["client_id"], row["side"])].append(row)
+    assigned_by_cluster: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    if assigned_candidates is not None and not assigned_candidates.is_empty():
+        for candidate in assigned_candidates.filter(pl.col("assigned_flag")).iter_rows(named=True):
+            assigned_by_cluster[str(candidate["execution_cluster_id"])].append(candidate)
     window = timedelta(seconds=window_seconds)
     rows: list[dict[str, Any]] = []
     for row in executions.iter_rows(named=True):
-        event_ts = _parse_ts(row.get("event_ts"))
+        event_ts = _parse_ts(row.get("cluster_end_ts") or row.get("event_ts"))
         matches: list[dict[str, Any]] = []
         if event_ts is not None:
             end = event_ts + window
@@ -983,12 +1428,7 @@ def _attach_direct_cancellation_window(
                 if (cancel_ts := _parse_ts(cancel.get("event_ts"))) is not None
                 and event_ts < cancel_ts <= end
             ]
-        candidate_order_ids = {
-            order_id
-            for order_id in str(row.get("candidate_deceptive_order_ids_pre") or "").split(";")
-            if order_id
-        }
-        matched = [cancel for cancel in matches if str(cancel["ORDERID"]) in candidate_order_ids]
+        matched = assigned_by_cluster.get(str(row.get("execution_cluster_id")), [])
         order_ids = ";".join(str(cancel["ORDERID"]) for cancel in matches)
         total_qty = sum(float(cancel["visible_qty_pre_cancel"] or 0.0) for cancel in matches)
         matched_order_ids = ";".join(str(cancel["ORDERID"]) for cancel in matched)
@@ -1064,6 +1504,9 @@ def compute_mcps_scores(execution_metrics: pl.DataFrame, *, gamma_grid: list[flo
     group_cols = [col for col in ("partition_id", "client_id", "top_n", "kappa", "lambda_") if col in execution_metrics.columns]
     grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
     for row in execution_metrics.to_dicts():
+        client_id = str(row.get("client_id") or "").strip().lower()
+        if client_id in {"", "0", "none", "null", "nan"}:
+            continue
         grouped[tuple(row.get(col) for col in group_cols)].append(row)
 
     out_rows: list[dict[str, Any]] = []
@@ -1137,13 +1580,23 @@ def compute_exploratory_metrics(
     window_seconds: float,
     lambda_: float = 1.0,
     epsilon: float = 1e-12,
+    withdrawal_window_seconds: float = 2.0,
+    reversion_horizon_seconds: float = 2.0,
     max_rows: int | None = None,
     include_level_columns: bool = True,
     max_deceptive_order_age_seconds: float = 600.0,
+    execution_cluster_max_gap_ms: int = 100,
     state_client_ids: set[str] | None = None,
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> ExploratoryMetricsResult:
-    state_df, execution_df, candidate_df, cancel_df, rejected_df = _stream_metric_inputs(
+    (
+        state_df,
+        execution_df,
+        candidate_df,
+        cancel_df,
+        rejected_df,
+        member_df,
+    ) = _stream_metric_inputs(
         raw_events,
         top_n=top_n,
         tick_size=tick_size,
@@ -1152,6 +1605,7 @@ def compute_exploratory_metrics(
         max_rows=max_rows,
         include_level_columns=include_level_columns,
         max_deceptive_order_age_seconds=max_deceptive_order_age_seconds,
+        execution_cluster_max_gap_ms=execution_cluster_max_gap_ms,
         state_client_ids=state_client_ids,
         empirical_kernel_weights=empirical_kernel_weights,
     )
@@ -1161,15 +1615,31 @@ def compute_exploratory_metrics(
         window_seconds=window_seconds,
         epsilon=epsilon,
     )
+    cancel_candidate_df = _build_execution_cancel_candidates(
+        execution_df,
+        cancel_df,
+        window_seconds=withdrawal_window_seconds,
+    )
     execution_df = _attach_direct_cancellation_window(
         execution_df,
         cancel_df,
-        window_seconds=window_seconds,
+        window_seconds=withdrawal_window_seconds,
+        assigned_candidates=cancel_candidate_df,
     )
+    execution_df, cancel_candidate_df = attach_cancel_anchored_reversion(
+        execution_df,
+        state_df,
+        cancel_candidate_df,
+        reversion_horizon_seconds=reversion_horizon_seconds,
+    )
+    execution_df, spoofing_compatible_events = attach_spoofing_compatible_sequence_gate(execution_df)
     return ExploratoryMetricsResult(
         state_time_series=state_df,
         execution_metrics=execution_df,
         candidate_deceptive_orders=candidate_df,
         direct_cancellations=cancel_df,
         rejected_executions=rejected_df,
+        execution_cluster_members=member_df,
+        execution_cancel_candidates=cancel_candidate_df,
+        spoofing_compatible_events=spoofing_compatible_events,
     )

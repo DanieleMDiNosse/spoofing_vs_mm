@@ -7,6 +7,7 @@ import polars as pl
 import pytest
 
 from spoofing_detection.lob.depth_kernel_calibration import (
+    _attach_future_mid,
     build_calibration_snapshot_tables,
     build_empirical_depth_kernel,
     calibrate_empirical_depth_kernel,
@@ -92,6 +93,42 @@ def test_empirical_kernel_combines_protection_and_covariance_by_side():
     assert ask["kernel_weight"].to_list() == pytest.approx([2 / 3, 1 / 3])
 
 
+def test_empirical_kernel_rejects_multiple_rows_for_one_rank():
+    profile = pl.DataFrame(
+        {
+            "instrument_id": ["ABC", "ABC"],
+            "side": ["ask", "ask"],
+            "rank": [1, 1],
+            "depth_distance_ticks": [1.0, 2.0],
+            "exposure_count": [90, 10],
+            "hit_count": [45, 0],
+            "hit_probability": [0.5, 0.0],
+            "visibility_covariance": [0.2, 0.8],
+        }
+    )
+
+    with pytest.raises(ValueError, match="duplicate empirical kernel profile rows"):
+        build_empirical_depth_kernel(profile)
+
+
+def test_empirical_kernel_rejects_side_with_zero_total_raw_weight():
+    profile = pl.DataFrame(
+        {
+            "instrument_id": ["ABC", "ABC"],
+            "side": ["ask", "ask"],
+            "rank": [1, 2],
+            "depth_distance_ticks": [1.0, 2.0],
+            "exposure_count": [10, 10],
+            "hit_count": [10, 10],
+            "hit_probability": [1.0, 1.0],
+            "visibility_covariance": [0.2, 0.8],
+        }
+    )
+
+    with pytest.raises(ValueError, match="zero total raw weight"):
+        build_empirical_depth_kernel(profile)
+
+
 def test_fit_log_decay_slope_estimates_positive_decay():
     distances = [1.0, 2.0, 3.0, 4.0]
     values = [2.718281828459045 ** (2.0 - 0.7 * d) for d in distances]
@@ -134,6 +171,41 @@ def test_estimate_hit_probability_profile_uses_at_or_through_prices():
     assert out["hit_probability"].to_list() == pytest.approx([1.0, 0.5])
 
 
+def test_estimate_hit_probability_profile_pools_distances_within_rank():
+    snapshots = pl.DataFrame(
+        {
+            "instrument_id": ["ABC"] * 4,
+            "partition_id": ["P"] * 4,
+            "snapshot_id": [1, 2, 3, 4],
+            "sort_index": [1, 2, 3, 4],
+            "event_ts": [0.0, 10.0, 20.0, 30.0],
+            "side": ["ask"] * 4,
+            "rank": [1] * 4,
+            "depth_distance_ticks": [1.0, 1.0, 1.0, 2.0],
+            "price": [101.0, 101.0, 101.0, 102.0],
+            "visible_qty": [10.0] * 4,
+            "mid": [100.5] * 4,
+        }
+    )
+    fills = pl.DataFrame(
+        {
+            "instrument_id": ["ABC"] * 4,
+            "partition_id": ["P"] * 4,
+            "event_ts": [1.0, 11.0, 21.0, 31.0],
+            "side": ["ask"] * 4,
+            "price": [101.0, 101.0, 100.0, 101.0],
+        }
+    )
+
+    out = estimate_hit_probability_profile(snapshots, fills, horizon_seconds=2.0)
+
+    assert out.height == 1
+    assert out.item(0, "exposure_count") == 4
+    assert out.item(0, "hit_count") == 2
+    assert out.item(0, "hit_probability") == pytest.approx(0.5)
+    assert out.item(0, "depth_distance_ticks") == pytest.approx(1.25)
+
+
 def test_estimate_visibility_covariance_profile_uses_future_mid_change():
     snapshots = pl.DataFrame(
         {
@@ -157,6 +229,43 @@ def test_estimate_visibility_covariance_profile_uses_future_mid_change():
     assert set(out.columns) >= {"side", "rank", "visibility_covariance", "visibility_observation_count"}
     assert out.filter(pl.col("side") == "ask").item(0, "visibility_covariance") > 0
     assert out.filter(pl.col("side") == "bid").item(0, "visibility_covariance") > 0
+
+
+def test_estimate_visibility_covariance_profile_pools_distances_within_rank():
+    snapshots = pl.DataFrame(
+        {
+            "instrument_id": ["ABC", "ABC", "ABC", "ABC"],
+            "snapshot_id": [1, 1, 2, 2],
+            "side": ["bid", "ask", "bid", "ask"],
+            "rank": [1, 1, 1, 1],
+            "depth_distance_ticks": [1.0, 1.0, 3.0, 2.0],
+            "visible_qty": [30.0, 10.0, 10.0, 30.0],
+            "mid": [100.5, 100.5, 100.5, 100.5],
+            "future_mid": [101.5, 101.5, 99.5, 99.5],
+        }
+    )
+
+    out = estimate_visibility_covariance_profile(snapshots).sort("side")
+
+    assert out.height == 2
+    assert out["visibility_observation_count"].to_list() == [2, 2]
+    assert out["visibility_covariance"].to_list() == pytest.approx([0.25, 0.25])
+
+
+def test_attach_future_mid_uses_last_finite_mid_inside_horizon():
+    snapshots = pl.DataFrame(
+        {
+            "partition_id": ["P"] * 5,
+            "snapshot_id": [1, 2, 3, 4, 5],
+            "sort_index": [1, 2, 3, 4, 5],
+            "event_ts": [0.0, 3.0, 5.0, 11.0, 20.0],
+            "mid": [100.0, None, 101.0, 102.0, 103.0],
+        }
+    )
+
+    out = _attach_future_mid(snapshots, horizon_seconds=10.0)
+
+    assert out["future_mid"].to_list() == [101.0, 102.0, 102.0, 103.0, None]
 
 
 def test_calibrate_empirical_depth_kernel_replays_full_sample():
@@ -207,6 +316,36 @@ def test_load_empirical_kernel_weights_filters_instrument_and_normalizes(tmp_pat
     weights = load_empirical_kernel_weights(path, instrument_id="ABC")
 
     assert weights == {"bid": {1: pytest.approx(0.25), 2: pytest.approx(0.75)}}
+
+
+def test_load_empirical_kernel_weights_rejects_duplicate_rank_rows(tmp_path: Path):
+    path = tmp_path / "kernel.parquet"
+    pl.DataFrame(
+        {
+            "instrument_id": ["ABC", "ABC"],
+            "side": ["bid", "bid"],
+            "rank": [1, 1],
+            "kernel_weight": [0.2, 0.8],
+        }
+    ).write_parquet(path)
+
+    with pytest.raises(ValueError, match="duplicate empirical kernel rows"):
+        load_empirical_kernel_weights(path, instrument_id="ABC")
+
+
+def test_load_empirical_kernel_weights_rejects_zero_total_side(tmp_path: Path):
+    path = tmp_path / "kernel.parquet"
+    pl.DataFrame(
+        {
+            "instrument_id": ["ABC", "ABC"],
+            "side": ["bid", "bid"],
+            "rank": [1, 2],
+            "kernel_weight": [0.0, 0.0],
+        }
+    ).write_parquet(path)
+
+    with pytest.raises(ValueError, match="positive finite total"):
+        load_empirical_kernel_weights(path, instrument_id="ABC")
 
 
 def test_summarise_instrument_kernel_collapses_side_slopes_to_one_instrument_value():

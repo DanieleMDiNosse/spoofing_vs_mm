@@ -1,0 +1,31 @@
+{
+  "analytical_unit": "execution_cluster",
+  "created_at_utc": "2026-07-21T16:11:09.218015+00:00",
+  "generator": "scripts/generate_spoofing_paper_tables.py",
+  "runs": {
+    "Ferrari": {
+      "input_hashes": {
+        "execution_cancel_candidates": "4ffedf65ca78d56c74e8b541ba56a7a4b44ee0d3ad52eec3cd2452b14f3181ac",
+        "execution_metrics": "0a608069585492423b36824cf212101dc3a6377d58d2d42dee2aa469f5e213c2",
+        "run_metadata": "a82d820365683792501d73dc72922c3ee40c954ee13781f4735ea00d17430734"
+      },
+      "run_dir": "outputs/spoofing_metrics/20260721_110005_empirical_kernel_top10_h10_age90_timestamp_sort_causality_fix/FERRARI_top10_h10_age90_empirical"
+    },
+    "Nexi": {
+      "input_hashes": {
+        "execution_cancel_candidates": "99cd1e9d906e257d97f55466e62b71e5170cb5cf22993d1c3355ad47d10156bf",
+        "execution_metrics": "643b9c7211218c0bdc34a8919375e6948db6de54ed4d26098fae550c0988ea27",
+        "run_metadata": "c36f6b1ef46bd66f98b2d292818bd66064028fef5316a08c04312f916c427cb8"
+      },
+      "run_dir": "outputs/spoofing_metrics/20260721_110005_empirical_kernel_top10_h10_age90_timestamp_sort_causality_fix/NEXI_top10_h10_age90_empirical"
+    },
+    "Risanamento": {
+      "input_hashes": {
+        "execution_cancel_candidates": "3792b39d319c1f0be348ffe73c51e20e7e8e9ec4da2b679770a05df86ac61cb0",
+        "execution_metrics": "0117b299b343a8e0e8a1494fc399fe3ae2d3208295992ad1d7120de6468ec3ca",
+        "run_metadata": "fea1ef126dd1540fcee1c961cba76b8d788c7c6eaad49d1c8f0d346e85c78e17"
+      },
+      "run_dir": "outputs/spoofing_metrics/20260721_110005_empirical_kernel_top10_h10_age90_timestamp_sort_causality_fix/RISANAMENTO_top10_h10_age90_empirical"
+    }
+  }
+}

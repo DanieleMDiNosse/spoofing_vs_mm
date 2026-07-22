@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "compute_spoofing_metrics.py"
@@ -66,6 +67,9 @@ def test_parse_args_loads_spoofing_metric_parameters_from_config_with_cli_overri
                     "kappa": 2.0,
                     "lambda": 0.5,
                     "window_seconds": 30.0,
+                    "withdrawal_window_seconds": 2.0,
+                    "reversion_horizon_seconds": 3.0,
+                    "execution_cluster_max_gap_ms": 250,
                     "max_deceptive_order_age_seconds": 120.0,
                     "gamma_grid": [0.001, 0.01],
                     "state_client_mode": "passive-fill-clients",
@@ -96,6 +100,10 @@ def test_parse_args_loads_spoofing_metric_parameters_from_config_with_cli_overri
     assert args.kappa == 2.0
     assert args.lambda_ == 0.5
     assert args.window_seconds == 30.0
+    assert args.withdrawal_window_seconds == 2.0
+    assert args.reversion_horizon_seconds == 3.0
+    assert not hasattr(args, "withdrawal_excess_alpha")
+    assert args.execution_cluster_max_gap_ms == 250
     assert args.max_deceptive_order_age_seconds == 120.0
     assert args.gamma_grid == "0.001,0.01"
     assert args.state_client_mode == "passive-fill-clients"
@@ -131,3 +139,21 @@ def test_parse_args_loads_spoofing_metric_parameters_from_config_with_cli_overri
         ]
     )
     assert override_args.compact_state is False
+
+
+def test_parse_args_validates_execution_cluster_gap(tmp_path: Path):
+    module = load_module()
+    common = [
+        "--input",
+        str(tmp_path / "input.parquet"),
+        "--output-dir",
+        str(tmp_path / "out"),
+        "--tick-size",
+        "0.01",
+    ]
+
+    args = module.parse_args([*common, "--execution-cluster-max-gap-ms", "50"])
+    assert args.execution_cluster_max_gap_ms == 50
+
+    with pytest.raises(SystemExit):
+        module.parse_args([*common, "--execution-cluster-max-gap-ms", "-1"])

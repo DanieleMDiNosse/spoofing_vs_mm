@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -32,6 +33,9 @@ _CONFIGURABLE_DEFAULT_KEYS = {
     "lambda_",
     "epsilon",
     "window_seconds",
+    "withdrawal_window_seconds",
+    "reversion_horizon_seconds",
+    "execution_cluster_max_gap_ms",
     "max_deceptive_order_age_seconds",
     "gamma_grid",
     "tick_size",
@@ -40,6 +44,14 @@ _CONFIGURABLE_DEFAULT_KEYS = {
     "compact_state",
     "empirical_depth_kernel",
 }
+
+
+def _population_metadata() -> dict[str, str]:
+    return {
+        "analytical_event_population": "all_passive_execution_clusters",
+        "mcps_population": "all_attributable_client_execution_clusters",
+        "review_event_selection": "canonically_assigned_matched_withdrawal_clusters_only",
+    }
 
 
 def _parse_float_grid(text: str) -> list[float]:
@@ -80,6 +92,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--epsilon", type=float, default=1e-12, help="Small denominator stabilizer")
     parser.add_argument("--window-seconds", type=float, default=1.0, help="Clock-time post-execution window")
     parser.add_argument(
+        "--withdrawal-window-seconds",
+        type=float,
+        default=2.0,
+        help="Maximum delay from execution-cluster end to attributed cancellation",
+    )
+    parser.add_argument(
+        "--reversion-horizon-seconds",
+        type=float,
+        default=2.0,
+        help="Price-reversion horizon measured from each actual cancellation",
+    )
+    parser.add_argument(
+        "--execution-cluster-max-gap-ms",
+        type=int,
+        default=100,
+        help="Maximum gap between passive child fills merged into one execution cluster",
+    )
+    parser.add_argument(
         "--max-deceptive-order-age-seconds",
         type=float,
         default=600.0,
@@ -113,6 +143,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.empirical_depth_kernel is not None and not isinstance(args.empirical_depth_kernel, Path):
         args.empirical_depth_kernel = Path(args.empirical_depth_kernel)
+    if args.execution_cluster_max_gap_ms < 0:
+        parser.error("--execution-cluster-max-gap-ms must be non-negative")
+    if args.withdrawal_window_seconds <= 0:
+        parser.error("--withdrawal-window-seconds must be positive")
+    if args.reversion_horizon_seconds <= 0:
+        parser.error("--reversion-horizon-seconds must be positive")
     return args
 
 
@@ -152,10 +188,32 @@ def _write_parquet(df: pl.DataFrame, path: Path) -> None:
     df.write_parquet(path)
 
 
+def _write_csv(df: pl.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if df.width == 0:
+        path.write_text("")
+    else:
+        df.write_csv(path)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _finite_count(df: pl.DataFrame, column: str) -> int:
     if df.is_empty() or column not in df.columns:
         return 0
     return int(df.select(pl.col(column).is_not_null().sum()).item())
+
+
+def _true_count(df: pl.DataFrame, column: str) -> int:
+    if df.is_empty() or column not in df.columns:
+        return 0
+    return int(df.select(pl.col(column).fill_null(False).sum()).item())
 
 
 def _markdown_table(rows: list[dict[str, Any]], cols: list[str]) -> list[str]:
@@ -189,6 +247,7 @@ def _top_execution_lines(execution_metrics: pl.DataFrame, limit: int = 20) -> li
             "MSCI",
             "favorable_mid_move_pre_fill",
             "post_cancel_mid_reversion",
+            "spoofing_compatible_sequence",
             "execution_price_advantage_vs_posture_mid",
             "candidate_deceptive_visible_qty_pre",
             "has_matched_deceptive_cancel_window",
@@ -297,12 +356,16 @@ def _write_summary_report(
         "## How to read this report",
         "",
         "- DWI tells whether a client is ask-heavy or bid-heavy in the weighted top-n book profile.",
-        "- SCI is the absolute DWI change from immediately before a small passive execution to the post-execution window.",
-        "- Collapse measures how much weighted liquidity disappears after the execution on each side of the book.",
+        "- SCI is the absolute DWI change from immediately before an execution cluster to the post-cluster window.",
+        "- Collapse measures how much weighted liquidity disappears after the cluster on each side of the book.",
         "- MSCI is high only when DWI changes sharply and the opposite side collapses more than the execution side.",
         "- Price-response diagnostics are signed so positive values indicate a movement or execution price advantage favorable to the passive fill side; they are economic consistency checks, not causal proof.",
-        "- MCPS is a client-level repetition score: the fraction of small executions whose MSCI is above gamma.",
-        "- A candidate deceptive profile is the same client's pre-existing visible depth on the side opposite to the small execution, posted within the configured pre-execution age window.",
+        "- MCPS is a client-level repetition score: the fraction of execution clusters whose MSCI is above gamma.",
+        "- A candidate deceptive profile is the same client's pre-existing visible depth on the side opposite to the execution cluster, posted within the configured pre-execution age window; the name denotes a screening candidate, not proven intent.",
+        "- Each raw passive child fill belongs to exactly one cluster; each eligible cancellation is assigned to at most one cluster for metric totals.",
+        "- Rapid withdrawal uses its own execution-to-cancel window; it is not the SCI collapse horizon.",
+        "- Post-cancel reversion is measured from the state immediately before each assigned physical cancellation to that cancellation's own reversion horizon, then quantity-and-delay weighted within the cluster.",
+        "- The spoofing-compatible sequence is a transparent descriptive gate, not a statistical test, score, or intent label: rapid attributed cancellation, fill smaller than withdrawn quantity, favorable pre-fill mid move, and positive cancel-anchored mid reversion must all be present.",
         "",
         "## Parameters",
         "",
@@ -313,12 +376,16 @@ def _write_summary_report(
         f"- lambda: {metadata['lambda_']}",
         f"- epsilon: {metadata['epsilon']}",
         f"- window_seconds: {metadata['window_seconds']}",
+        f"- withdrawal_window_seconds: {metadata.get('withdrawal_window_seconds', 2.0)}",
+        f"- reversion_horizon_seconds: {metadata.get('reversion_horizon_seconds', 2.0)}",
+        f"- execution_cluster_max_gap_ms: {metadata.get('execution_cluster_max_gap_ms', 100)}",
         f"- max_deceptive_order_age_seconds: {metadata['max_deceptive_order_age_seconds']}",
         f"- gamma_grid: {metadata['gamma_grid']}",
         f"- tick_size: {metadata['tick_size']}",
         "- identity: NMSC_ORIGINALCLIENTIDSHORTCODE only",
         "- market orders included: false",
-        "- event selection: matched deceptive-order cancellations only",
+        "- MCPS population: all attributable-client execution clusters",
+        "- review-event selection: canonically assigned matched-withdrawal clusters only",
         "",
         "## Client identity audit",
         "",
@@ -332,8 +399,9 @@ def _write_summary_report(
             f"- clients_with_topN_profile: {state_time_series.get_column('client_id').n_unique() if not state_time_series.is_empty() and 'client_id' in state_time_series.columns else 0}",
             f"- finite_SCI_executions: {_finite_count(execution_metrics, 'SCI')}",
             f"- finite_MSCI_executions: {_finite_count(execution_metrics, 'MSCI')}",
-            f"- executions_with_candidate_deceptive_profile_pre: {candidate_count}",
-            f"- executions_with_matched_deceptive_cancel_window: {matched_count}",
+            f"- clusters_with_observed_post_window_state: {_true_count(execution_metrics, 'has_post_window_state')}",
+            f"- clusters_with_candidate_profile_pre: {candidate_count}",
+            f"- clusters_with_assigned_matched_cancel_window: {matched_count}",
             f"- candidate_deceptive_order_rows: {candidate_deceptive_orders.height}",
             "",
             "## Top clients by MCPS",
@@ -341,7 +409,7 @@ def _write_summary_report(
         ]
     )
     lines.extend(_top_mcps_lines(mcps_scores))
-    lines.extend(["", "## Top executions by MSCI", ""])
+    lines.extend(["", "## Top execution clusters by MSCI (finite MSCI only)", ""])
     lines.extend(_top_execution_lines(execution_metrics))
     lines.extend(["", "## Top matched deceptive-order cancellations", ""])
     lines.extend(_top_deceptive_cancel_lines(execution_metrics))
@@ -374,6 +442,9 @@ def main(argv: list[str] | None = None) -> None:
         lambda_=args.lambda_,
         epsilon=args.epsilon,
         window_seconds=args.window_seconds,
+        withdrawal_window_seconds=args.withdrawal_window_seconds,
+        reversion_horizon_seconds=args.reversion_horizon_seconds,
+        execution_cluster_max_gap_ms=args.execution_cluster_max_gap_ms,
         max_deceptive_order_age_seconds=args.max_deceptive_order_age_seconds,
         include_level_columns=not args.compact_state,
         state_client_ids=state_client_ids,
@@ -386,6 +457,9 @@ def main(argv: list[str] | None = None) -> None:
         "state_time_series": args.output_dir / "client_metric_time_series.parquet",
         "execution_metrics": args.output_dir / "execution_metrics.parquet",
         "candidate_deceptive_orders": args.output_dir / "candidate_deceptive_orders.parquet",
+        "execution_cluster_members": args.output_dir / "execution_cluster_members.parquet",
+        "execution_cancel_candidates": args.output_dir / "execution_cancel_candidates.parquet",
+        "spoofing_compatible_events": args.output_dir / "spoofing_compatible_events.parquet",
         "rejected_executions": args.output_dir / "rejected_executions.parquet",
         "client_mcps_scores": args.output_dir / "client_mcps_scores.parquet",
         "metadata": args.output_dir / "metadata.json",
@@ -394,7 +468,15 @@ def main(argv: list[str] | None = None) -> None:
     _write_parquet(result.state_time_series, paths["state_time_series"])
     _write_parquet(result.execution_metrics, paths["execution_metrics"])
     _write_parquet(result.candidate_deceptive_orders, paths["candidate_deceptive_orders"])
-
+    _write_parquet(result.execution_cluster_members, paths["execution_cluster_members"])
+    _write_parquet(result.execution_cancel_candidates, paths["execution_cancel_candidates"])
+    _write_csv(result.execution_cluster_members, args.output_dir / "execution_cluster_members.csv")
+    _write_csv(result.execution_cancel_candidates, args.output_dir / "execution_cancel_candidates.csv")
+    _write_parquet(result.spoofing_compatible_events, paths["spoofing_compatible_events"])
+    _write_csv(
+        result.spoofing_compatible_events,
+        args.output_dir / "spoofing_compatible_events.csv",
+    )
     _write_parquet(result.rejected_executions, paths["rejected_executions"])
     _write_parquet(mcps_scores, paths["client_mcps_scores"])
 
@@ -409,13 +491,25 @@ def main(argv: list[str] | None = None) -> None:
         "lambda_": args.lambda_,
         "epsilon": args.epsilon,
         "window_seconds": args.window_seconds,
+        "withdrawal_window_seconds": args.withdrawal_window_seconds,
+        "reversion_horizon_seconds": args.reversion_horizon_seconds,
+        "execution_cluster_max_gap_ms": args.execution_cluster_max_gap_ms,
+        "analytical_unit": "execution_cluster",
+        "raw_audit_unit": "child_fill_message",
         "max_deceptive_order_age_seconds": args.max_deceptive_order_age_seconds,
         "gamma_grid": gamma_grid,
         "tick_size": tick_size,
         "identity": "NMSC_ORIGINALCLIENTIDSHORTCODE",
-        "client_only": True,
+        "client_only": False,
+        "event_metrics_include_unattributable_rows": True,
+        "client_scores_exclude_unattributable_rows": True,
         "market_orders_included": False,
-        "event_selection": "matched_deceptive_order_cancellations_only",
+        "event_selection": "all_passive_execution_clusters",
+        "behavioral_gate": (
+            "rapid_attributed_cancel AND fill_qty_lt_withdrawn_qty AND favorable_pre_fill_mid_move AND "
+            "positive_cancel_anchored_mid_reversion"
+        ),
+        **_population_metadata(),
         "max_rows": args.max_rows,
         "state_client_mode": args.state_client_mode,
         "state_client_count": len(state_client_ids) if state_client_ids is not None else None,
@@ -428,11 +522,26 @@ def main(argv: list[str] | None = None) -> None:
             "state_time_series": result.state_time_series.height,
             "execution_metrics": result.execution_metrics.height,
             "candidate_deceptive_orders": result.candidate_deceptive_orders.height,
-
+            "execution_cluster_members": result.execution_cluster_members.height,
+            "execution_cancel_candidates": result.execution_cancel_candidates.height,
+            "spoofing_compatible_events": result.spoofing_compatible_events.height,
             "rejected_executions": result.rejected_executions.height,
             "client_mcps_scores": mcps_scores.height,
         },
         "paths": {key: str(path) for key, path in paths.items()},
+        "input_hashes": {
+            "raw_events_sha256": _sha256(args.input),
+            "quote_panel_sha256": _sha256(args.quote_panel) if args.quote_panel is not None else None,
+            "config_sha256": _sha256(args.config) if args.config is not None and args.config.exists() else None,
+            "empirical_depth_kernel_sha256": _sha256(args.empirical_depth_kernel)
+            if args.empirical_depth_kernel is not None
+            else None,
+        },
+        "artifact_hashes": {
+            key: _sha256(path)
+            for key, path in paths.items()
+            if key not in {"metadata", "summary_report"} and path.exists()
+        },
         "command": sys.argv,
     }
     paths["metadata"].write_text(json.dumps(metadata, indent=2, sort_keys=True, default=str))

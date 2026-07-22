@@ -9,6 +9,8 @@ def test_compute_client_session_features_aggregates_repeated_events():
     executions = pl.DataFrame(
         {
             "client_id": ["A", "A", "B"],
+            "execution_cluster_id": ["EC1", "EC2", "EC3"],
+            "child_fill_count": [5, 1, 1],
             "event_ts": ["2024-06-10T10:00:00", "2024-06-10T10:01:00", "2024-06-10T10:02:00"],
             "top_n": [3, 3, 3],
             "MSCI": [0.8, 0.2, 0.0],
@@ -28,6 +30,7 @@ def test_compute_client_session_features_aggregates_repeated_events():
     features = compute_client_session_features(executions, msci_threshold=0.5)
     row_a = features.filter(pl.col("client_id") == "A").row(0, named=True)
     assert row_a["event_count"] == 2
+    assert row_a["raw_fill_message_count"] == 6
     assert row_a["msci_exceedance_count"] == 1
     assert row_a["mcps_at_threshold"] == 0.5
     assert row_a["max_MSCI"] == 0.8
@@ -45,3 +48,25 @@ def test_compute_client_session_features_handles_empty_input():
     features = compute_client_session_features(pl.DataFrame(), msci_threshold=0.5)
     assert features.is_empty()
     assert "client_id" in features.columns
+
+
+def test_compute_client_session_features_rejects_duplicate_cluster_rows():
+    executions = pl.DataFrame(
+        {
+            "client_id": ["A", "A"],
+            "execution_cluster_id": ["EC1", "EC1"],
+            "MSCI": [0.8, 0.8],
+            "SCI": [0.9, 0.9],
+            "collapse_opposite_side": [0.7, 0.7],
+            "collapse_same_side": [0.1, 0.1],
+            "matched_deceptive_cancel_fraction_window": [0.9, 0.9],
+            "fill_qty": [100.0, 100.0],
+        }
+    )
+
+    try:
+        compute_client_session_features(executions, msci_threshold=0.5)
+    except ValueError as exc:
+        assert "one row per execution_cluster_id" in str(exc)
+    else:
+        raise AssertionError("duplicate execution clusters must be rejected")

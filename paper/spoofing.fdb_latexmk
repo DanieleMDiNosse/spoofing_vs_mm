@@ -1,15 +1,15 @@
 # Fdb version 4
-["bibtex spoofing"] 1783671717.27873 "spoofing.aux" "spoofing.bbl" "spoofing" 1783850111.33639 0
+["bibtex spoofing"] 1784643258.5888 "spoofing.aux" "spoofing.bbl" "spoofing" 1784643537.18455 0
   "./references.bib" 1777296515.34536 5549 2f21d7b9b928e411dedaa08075e7dae3 ""
   "/usr/share/texlive/texmf-dist/bibtex/bst/base/abbrv.bst" 1292289607 20329 b5fed53e10044d0f8112183785c759b1 ""
-  "spoofing.aux" 1783850111.16152 18811 9eab8577127b713f8719aaa69d936918 "pdflatex"
+  "spoofing.aux" 1784643536.99662 22489 b63b152d94b96d9573c6d1fe5a0eac42 "pdflatex"
   (generated)
   "spoofing.bbl"
   "spoofing.blg"
   (rewritten before read)
-["pdflatex"] 1783850110.08926 "/home/danielemdn/Documents/repositories/spoofing_detection/paper/spoofing.tex" "spoofing.pdf" "spoofing" 1783850111.33658 0
+["pdflatex"] 1784643535.9335 "/home/danielemdn/Documents/repositories/spoofing_detection/paper/spoofing.tex" "spoofing.pdf" "spoofing" 1784643537.18473 0
   "/etc/texmf/web2c/texmf.cnf" 1769361868.29643 475 c0e671620eb5563b2130f56340a5fde8 ""
-  "/home/danielemdn/Documents/repositories/spoofing_detection/paper/spoofing.tex" 1783850109.8339 76014 996ff15cebe597c5b1eb19947cf85b54 ""
+  "/home/danielemdn/Documents/repositories/spoofing_detection/paper/spoofing.tex" 1784643257.1257 76390 d0681ac75c1b4b22404e8686691f04cb ""
   "/usr/share/texlive/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/jknappen/ec/ecrm1095.tfm" 1136768653 3584 929cdff2b7a8c11bd4d49fd68cb0ae70 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/public/amsfonts/symbols/msam10.tfm" 1246382020 916 f87d7c45f9c908e672703b83b72241a3 ""
@@ -20,7 +20,6 @@
   "/usr/share/texlive/texmf-dist/fonts/tfm/public/amsfonts/symbols/msbm7.tfm" 1246382020 940 228d6584342e91276bf566bcf9716b83 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/public/cm/cmr10.tfm" 1136768653 1296 45809c5a464d5f32c8f98ba97c1bb47f ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/public/latex-fonts/lasy6.tfm" 1136768653 520 4889cce2180234b97cad636b6039c722 ""
-  "/usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb" 1248133631 34694 ad62b13721ee8eda1dcc8993c8bd7041 ""
   "/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii" 1461363279 71627 94eb9990bed73c364d7f53f960cc8c5b ""
   "/usr/share/texlive/texmf-dist/tex/generic/atbegshi/atbegshi.sty" 1575674566 24708 5584a51a7101caf7e6bbf1fc27d8f7b1 ""
   "/usr/share/texlive/texmf-dist/tex/generic/bigintcalc/bigintcalc.sty" 1576625341 40635 c40361e206be584d448876bba8a64a3b ""
@@ -52,11 +51,13 @@
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/basiclayer/pgfcoreshade.code.tex" 1601326656 35249 abd4adf948f960299a4b3d27c5dddf46 ""
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/basiclayer/pgfcoretransformations.code.tex" 1673816307 22012 81b34a0aa8fa1a6158cc6220b00e4f10 ""
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/basiclayer/pgfcoretransparency.code.tex" 1601326656 8893 e851de2175338fdf7c17f3e091d94618 ""
+  "/usr/share/texlive/texmf-dist/tex/generic/pgf/frontendlayer/tikz/libraries/tikzlibraryplotmarks.code.tex" 1601326656 325 36322b0789619b270aec5993d5a9ed08 ""
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/frontendlayer/tikz/libraries/tikzlibrarypositioning.code.tex" 1601326656 3937 3f208572dd82c71103831da976d74f1a ""
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/frontendlayer/tikz/libraries/tikzlibrarytopaths.code.tex" 1608933718 11518 738408f795261b70ce8dd47459171309 ""
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/frontendlayer/tikz/tikz.code.tex" 1673816307 186782 af500404a9edec4d362912fe762ded92 ""
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/libraries/pgflibraryarrows.meta.code.tex" 1601326656 58801 1e750fb0692eb99aaac45698bbec96b1 ""
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/libraries/pgflibraryplothandlers.code.tex" 1601326656 32995 ac577023e12c0e4bd8aa420b2e852d1a ""
+  "/usr/share/texlive/texmf-dist/tex/generic/pgf/libraries/pgflibraryplotmarks.code.tex" 1673816307 14526 4bc184b12436aa7f6490b2d2036870ef ""
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/math/pgfint.code.tex" 1557692582 3063 8c415c68a0f3394e45cfeca0b65f6ee6 ""
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/math/pgfmath.code.tex" 1673816307 949 cea70942e7b7eddabfb3186befada2e6 ""
   "/usr/share/texlive/texmf-dist/tex/generic/pgf/math/pgfmathcalc.code.tex" 1673816307 13270 2e54f2ce7622437bf37e013d399743e3 ""
@@ -197,7 +198,6 @@
   "/usr/share/texmf/fonts/tfm/public/lm/rm-lmbx10.tfm" 1254269338 11880 35fcf136a2198418dfc53c83e9e2a07f ""
   "/usr/share/texmf/fonts/tfm/public/lm/rm-lmbx5.tfm" 1254269338 11828 9b1880528bdbe7e6035fd1b46bff1bbb ""
   "/usr/share/texmf/fonts/tfm/public/lm/rm-lmbx6.tfm" 1254269338 11852 eda7061aa4cc8552ba736dae866e4460 ""
-  "/usr/share/texmf/fonts/tfm/public/lm/rm-lmbx7.tfm" 1254269338 11864 44cdb751af976143ebc0bed7eb1df9f4 ""
   "/usr/share/texmf/fonts/tfm/public/lm/rm-lmbx8.tfm" 1254269338 11868 731e03b24d399279cf9609d002110394 ""
   "/usr/share/texmf/fonts/tfm/public/lm/rm-lmbx9.tfm" 1254269338 11872 6fc83bd89656207db7e11b4f7ac7546e ""
   "/usr/share/texmf/fonts/tfm/public/lm/rm-lmr10.tfm" 1254269338 11868 4f81e9b6033c032bdaf9884f4d7ef412 ""
@@ -242,10 +242,13 @@
   "/usr/share/texmf/web2c/texmf.cnf" 1707919699 40399 f2c302f7d2af602abb742093540a5834 ""
   "/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map" 1781186137.07178 5349216 bf3a80e68d946c7acd95ff030fd9bb63 ""
   "/var/lib/texmf/web2c/pdftex/pdflatex.fmt" 1772126331 6831208 d2f0d249532bdb35075dfaab5e991280 ""
-  "spoofing.aux" 1783850111.16152 18811 9eab8577127b713f8719aaa69d936918 "pdflatex"
-  "spoofing.bbl" 1783671717.32134 3621 d34b6458d4078084d7331a987ac80722 "bibtex spoofing"
-  "spoofing.out" 1783850111.16152 3551 c46c87607aaf5a59973ac641bb10e38d "pdflatex"
-  "spoofing.tex" 1783850109.8339 76014 996ff15cebe597c5b1eb19947cf85b54 ""
+  "generated/empirical_kernel_component_figures.tex" 1784643535.75731 20164 a59a48d1d72b75db0afd1684176133b2 ""
+  "generated/spoofing_empirical_macros.tex" 1784634420.04625 1614 57cb35cc128a2bdab063f267ee8ff1d5 ""
+  "generated/spoofing_empirical_tables.tex" 1784634420.04632 2663 8e04d6af734fbf4359b74ff30329917d ""
+  "spoofing.aux" 1784643536.99662 22489 b63b152d94b96d9573c6d1fe5a0eac42 "pdflatex"
+  "spoofing.bbl" 1784643258.63322 3795 97fab77fb54232882fa9221ca7a7d708 "bibtex spoofing"
+  "spoofing.out" 1784643536.99762 3702 8c9d48ec955fb01fb1aa649328346fa3 "pdflatex"
+  "spoofing.tex" 1784643257.1257 76390 d0681ac75c1b4b22404e8686691f04cb ""
   (generated)
   "spoofing.aux"
   "spoofing.log"

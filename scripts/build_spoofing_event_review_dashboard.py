@@ -18,6 +18,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from spoofing_detection.lob.config import LOBConfig
+from spoofing_detection.lob.enums import TRADING_CAPACITY_BY_CODE
 from spoofing_detection.lob.models import ActiveOrder
 from spoofing_detection.lob.normalize import normalize_event
 from spoofing_detection.lob.panel import (
@@ -81,6 +82,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--parameter-grid-root", type=Path, default=None, help="Optional root containing kappa/lambda sensitivity runs")
     parser.add_argument("--annotations", type=Path, default=None, help="Optional analyst annotation CSV")
     parser.add_argument("--client-session-alerts", type=Path, default=None, help="Optional client-session alert parquet")
+    parser.add_argument("--execution-cluster-members", type=Path, default=None, help="Optional raw child-fill provenance parquet")
+    parser.add_argument("--execution-cancel-candidates", type=Path, default=None, help="Optional assigned and competing cancellation links parquet")
     parser.set_defaults(**config_defaults)
     return parser.parse_args(argv)
 
@@ -116,15 +119,17 @@ def _market_levels(active_orders: dict[str, ActiveOrder], *, side: str, top_n: i
     return sorted(by_price, reverse=(side == "bid"))[:top_n]
 
 
-def _same_side_book_level(active_orders: dict[str, ActiveOrder], *, side: Any, price: Any) -> int | None:
+def _same_side_book_position(
+    active_orders: dict[str, ActiveOrder], *, side: Any, price: Any
+) -> tuple[int | None, bool]:
     if side not in {"bid", "ask"}:
-        return None
+        return None, False
     try:
         event_price = float(price)
     except (TypeError, ValueError):
-        return None
+        return None, False
     if not math.isfinite(event_price):
-        return None
+        return None, False
 
     visible_prices: set[float] = set()
     for order in active_orders.values():
@@ -141,7 +146,11 @@ def _same_side_book_level(active_orders: dict[str, ActiveOrder], *, side: Any, p
         better_price_count = sum(1 for order_price in visible_prices if order_price > event_price)
     else:
         better_price_count = sum(1 for order_price in visible_prices if order_price < event_price)
-    return better_price_count + 1
+    return better_price_count + 1, event_price in visible_prices
+
+
+def _same_side_book_level(active_orders: dict[str, ActiveOrder], *, side: Any, price: Any) -> int | None:
+    return _same_side_book_position(active_orders, side=side, price=price)[0]
 
 
 def _client_queue_dict(level_orders: list[ActiveOrder]) -> str:
@@ -229,13 +238,30 @@ def _queue_rows_for_snapshot(
     return rows
 
 
+def _trading_capacity(event: dict[str, Any]) -> tuple[int | None, str | None]:
+    code = event.get("order_trading_capacity_code")
+    observed_label = event.get("order_trading_capacity_label")
+    label = TRADING_CAPACITY_BY_CODE.get(code, "") if code is not None else ""
+    if not label and observed_label is not None:
+        label = str(observed_label).strip()
+        if code is not None and ":" in label:
+            prefix, remainder = label.split(":", maxsplit=1)
+            if prefix.strip() == str(code):
+                label = remainder.strip()
+    label = label.replace("_", " ").strip()
+    label = label[:1].upper() + label[1:]
+    return code, label or None
+
+
 def _event_log_row(
     review_event: dict[str, Any],
     event: dict[str, Any],
     ts: datetime | None,
     *,
     book_level: int | None,
+    book_level_is_resting: bool,
 ) -> dict[str, Any]:
+    trading_capacity_code, trading_capacity_label = _trading_capacity(event)
     return {
         "review_event_id": review_event["review_event_id"],
         "execution_sort_index": review_event["sort_index"],
@@ -247,36 +273,71 @@ def _event_log_row(
         "side": event.get("side_label"),
         "price": event.get("ORDERPX"),
         "book_level": book_level,
+        "book_level_is_resting": book_level_is_resting,
         "displayed_qty": event.get("DISPLAYEDQTY"),
         "leaves_qty": event.get("LEAVESQTY"),
         "last_shares": event.get("LASTSHARES"),
         "client_id": event.get("client_original_id"),
         "firm_id": event.get("firm_id"),
+        "trading_capacity_code": trading_capacity_code,
+        "trading_capacity_label": trading_capacity_label,
         "is_review_client": event.get("client_original_id") == review_event.get("client_id"),
-        "is_execution_order": str(event.get("ORDERID")) == str(review_event.get("ORDERID")),
+        "is_execution_order": (
+            int(event.get("sort_index", -1)) in review_event.get("child_fill_sort_indexes", {int(review_event["sort_index"])})
+        ),
         "is_candidate_deceptive_order": str(event.get("ORDERID")) in review_event["candidate_order_ids"],
         "is_matched_deceptive_cancel_order": str(event.get("ORDERID")) in review_event["matched_order_ids"],
     }
 
 
-def _prepare_review_events(execution_metrics: pl.DataFrame, max_events: int | None) -> list[dict[str, Any]]:
+def _prepare_review_events(
+    execution_metrics: pl.DataFrame,
+    max_events: int | None,
+    *,
+    cluster_members: pl.DataFrame | None = None,
+) -> list[dict[str, Any]]:
     matched = execution_metrics.filter(pl.col("has_matched_deceptive_cancel_window"))
-    if "MSCI" in matched.columns:
-        matched = matched.sort(["MSCI", "sort_index"], descending=[True, False])
+    sort_key = "cluster_first_sort_index" if "execution_cluster_id" in matched.columns and "cluster_first_sort_index" in matched.columns else "sort_index"
+    if "MSCI" in matched.columns and sort_key in matched.columns:
+        matched = matched.sort(["MSCI", sort_key], descending=[True, False])
+    elif sort_key in matched.columns:
+        matched = matched.sort(sort_key)
     if max_events is not None:
         matched = matched.head(max_events)
     out = []
-    for idx, row in enumerate(matched.iter_rows(named=True), start=1):
+    for row in matched.iter_rows(named=True):
         candidate_ids = _split_ids(row.get("candidate_deceptive_order_ids_pre"))
         matched_ids = _split_ids(row.get("matched_deceptive_cancel_order_ids_window"))
-        event_ts = _parse_ts(row.get("event_ts"))
+        sort_index = row.get("cluster_first_sort_index", row.get("sort_index"))
+        if sort_index is None:
+            raise ValueError("matched execution cluster is missing cluster_first_sort_index")
+        cluster_id = row.get("execution_cluster_id")
+        review_id = str(cluster_id) if cluster_id is not None else f"S{int(sort_index)}"
+        child_indexes = {
+            int(value)
+            for value in str(row.get("child_fill_sort_indices") or "").split(";")
+            if value.isdigit()
+        }
+        if cluster_id is not None and cluster_members is not None and not cluster_members.is_empty():
+            child_indexes = set(
+                cluster_members.filter(
+                    pl.col("execution_cluster_id").cast(pl.String) == str(cluster_id)
+                )["child_sort_index"].cast(pl.Int64).to_list()
+            )
+        if cluster_id is not None and not child_indexes:
+            raise ValueError(f"execution cluster {cluster_id} has no child-member provenance")
+        if cluster_id is None:
+            child_indexes = {int(sort_index)}
         out.append(
             {
                 **row,
-                "review_event_id": f"S{int(row['sort_index'])}",
-                "event_ts_parsed": event_ts,
+                "sort_index": int(sort_index),
+                "review_event_id": review_id,
+                "event_ts": row.get("cluster_start_ts", row.get("event_ts")),
+                "event_ts_parsed": _parse_ts(row.get("cluster_start_ts", row.get("event_ts"))),
                 "candidate_order_ids": candidate_ids,
                 "matched_order_ids": matched_ids,
+                "child_fill_sort_indexes": child_indexes,
             }
         )
     return out
@@ -331,6 +392,11 @@ def reconstruct_review_windows(
     current_partition_id: str | None = None
     queue_rows: list[dict[str, Any]] = []
     event_rows: list[dict[str, Any]] = []
+    execution_sort_indices = {
+        child_index
+        for window in windows
+        for child_index in window["review"].get("child_fill_sort_indexes", {int(window["review"]["sort_index"])})
+    }
     review_summary_rows: list[dict[str, Any]] = []
 
     for event_index, event in enumerate(events):
@@ -345,6 +411,9 @@ def reconstruct_review_windows(
             current_partition_id = partition_id
 
         event_ts = choose_event_timestamp(event)
+        pre_event_active_orders = (
+            dict(active_orders) if int(event["sort_index"]) in execution_sort_indices else None
+        )
         _apply_event(
             active_orders,
             event,
@@ -359,19 +428,33 @@ def reconstruct_review_windows(
             for window in windows:
                 review = window["review"]
                 if window["start"] <= event_ts <= window["end"]:
-                    book_level = _same_side_book_level(
+                    book_level, book_level_is_resting = _same_side_book_position(
                         active_orders,
                         side=event.get("side_label"),
                         price=event.get("ORDERPX"),
                     )
-                    event_rows.append(_event_log_row(review, event, event_ts, book_level=book_level))
-                    if int(event["sort_index"]) == int(review["sort_index"]):
+                    event_rows.append(
+                        _event_log_row(
+                            review,
+                            event,
+                            event_ts,
+                            book_level=book_level,
+                            book_level_is_resting=book_level_is_resting,
+                        )
+                    )
+                    child_indexes = review.get("child_fill_sort_indexes", {int(review["sort_index"])})
+                    if int(event["sort_index"]) in child_indexes:
                         phase = "execution"
-                    elif int(event["sort_index"]) < int(review["sort_index"]):
+                    elif int(event["sort_index"]) < min(child_indexes):
                         phase = "pre"
                     else:
                         phase = "post"
                     if queue_snapshot_mode == "all" or int(event["sort_index"]) in window["queue_sort_indexes"]:
+                        snapshot_active_orders = (
+                            pre_event_active_orders
+                            if phase == "execution" and pre_event_active_orders is not None
+                            else active_orders
+                        )
                         queue_rows.extend(
                             _queue_rows_for_snapshot(
                                 review_event_id=review["review_event_id"],
@@ -381,7 +464,7 @@ def reconstruct_review_windows(
                                 snapshot_event=event,
                                 snapshot_ts=event_ts,
                                 snapshot_phase=phase,
-                                active_orders=active_orders,
+                                active_orders=snapshot_active_orders,
                                 candidate_order_ids=review["candidate_order_ids"],
                                 matched_order_ids=review["matched_order_ids"],
                                 top_n=top_n,
@@ -390,12 +473,20 @@ def reconstruct_review_windows(
 
         if int(event["sort_index"]) in by_sort_index:
             review = by_sort_index[int(event["sort_index"])]
+            trading_capacity_code, trading_capacity_label = _trading_capacity(event)
             review_summary_rows.append(
                 {
                     "review_event_id": review["review_event_id"],
-                    "sort_index": review["sort_index"],
+                    "execution_cluster_id": review.get("execution_cluster_id"),
+                    "cluster_first_sort_index": review.get("cluster_first_sort_index", review["sort_index"]),
+                    "cluster_last_sort_index": review.get("cluster_last_sort_index", review["sort_index"]),
+                    "cluster_start_ts": review.get("cluster_start_ts", review.get("event_ts")),
+                    "cluster_end_ts": review.get("cluster_end_ts", review.get("event_ts")),
+                    "child_fill_count": review.get("child_fill_count", 1),
                     "event_ts": review.get("event_ts"),
                     "client_id": review.get("client_id"),
+                    "trading_capacity_code": trading_capacity_code,
+                    "trading_capacity_label": trading_capacity_label,
                     "execution_side": review.get("execution_side"),
                     "deceptive_side": review.get("deceptive_side"),
                     "fill_qty": review.get("fill_qty"),
@@ -438,7 +529,13 @@ def _load_parameter_review_events(root: Path, max_events: int | None) -> list[di
         execution_path = metadata_path.parent / "execution_metrics.parquet"
         if not execution_path.exists():
             continue
-        events = _prepare_review_events(pl.read_parquet(execution_path), max_events)
+        members_path = metadata_path.parent / "execution_cluster_members.parquet"
+        members = pl.read_parquet(members_path) if members_path.exists() else None
+        events = _prepare_review_events(
+            pl.read_parquet(execution_path),
+            max_events,
+            cluster_members=members,
+        )
         for event in events:
             event.pop("event_ts_parsed", None)
             event.pop("candidate_order_ids", None)
@@ -487,6 +584,38 @@ def _parameter_table_html(
     post_window_seconds: float,
     metric_metadata: dict[str, Any],
 ) -> str:
+    kernel_mode = str(metric_metadata.get("kernel_mode") or "parametric")
+    if kernel_mode == "empirical":
+        kernel_rows = [
+            (
+                "Depth-kernel mode",
+                "empirical",
+                "Instrument- and side-specific rank weights estimated from observable level-reach and visibility data.",
+            ),
+            (
+                "Empirical-kernel artifact",
+                str(metric_metadata.get("empirical_depth_kernel") or "NA"),
+                "Calibration artifact supplying the operational rank weights for this metric run.",
+            ),
+        ]
+    else:
+        kernel_rows = [
+            (
+                "Depth-kernel mode",
+                kernel_mode,
+                "Parametric depth weights determined by the active kappa and lambda coefficients.",
+            ),
+            (
+                "kappa",
+                _format_number(metric_metadata.get("kappa")),
+                "Depth-kernel parameter controlling the protection-from-execution component.",
+            ),
+            (
+                "lambda",
+                _format_number(metric_metadata.get("lambda_")),
+                "Depth-kernel parameter controlling decay of informational visibility with distance.",
+            ),
+        ]
     rows = [
         (
             "LOB review top-N depth",
@@ -513,12 +642,7 @@ def _parameter_table_html(
             _format_seconds(metric_metadata.get("window_seconds")),
             "Window after the small execution in which a candidate order cancellation is matched.",
         ),
-        ("kappa", _format_number(metric_metadata.get("kappa")), "Depth-kernel parameter controlling the protection-from-execution component."),
-        (
-            "lambda",
-            _format_number(metric_metadata.get("lambda_")),
-            "Depth-kernel parameter controlling decay of informational visibility with distance.",
-        ),
+        *kernel_rows,
         ("epsilon", _format_number(metric_metadata.get("epsilon")), "Small stabilizer used in denominators."),
         (
             "MCPS gamma grid",
@@ -589,6 +713,9 @@ def write_dashboard(
     llm_reviews: dict[str, str] | None = None,
     annotations: pl.DataFrame | None = None,
     client_session_alerts: pl.DataFrame | None = None,
+    child_members: pl.DataFrame | None = None,
+    cancel_candidates: pl.DataFrame | None = None,
+    dashboard_refreshed_at_utc: str | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     parameter_table = _parameter_table_html(
@@ -639,6 +766,7 @@ th {{ background: #f1f4f9; position: sticky; top: 0; }}
   <h2>How to read this dashboard</h2>
   <p>The model starts from a small passive execution by a client and checks whether the same client had a recent opposite-side candidate deceptive order and then cancelled that same order after the execution.</p>
   <ul>
+    <li><b>Trading capacity</b> is shown as code plus label: <b>1</b> = Dealing on own account; <b>2</b> = Matched principal; <b>3</b> = Any other capacity.</li>
     <li><b>DWI</b> is the multilevel distance-weighted imbalance of the client's top-N footprint: positive values are ask-heavy, negative values are bid-heavy.</li>
     <li><b>SCI</b> measures how abruptly DWI changes between the pre-execution and post-cancel snapshots.</li>
     <li><b>MSCI</b> combines SCI with side-specific collapse: it is high only when the opposite-side candidate liquidity collapses more than the same-side liquidity.</li>
@@ -646,31 +774,55 @@ th {{ background: #f1f4f9; position: sticky; top: 0; }}
     <li><b>Candidate deceptive orders</b> are same-client, opposite-side, top-N orders visible before the execution and posted within the episode age window.</li>
     <li><b>Matched spoofing-like events</b> are the strict subset where one of those candidate order IDs is cancelled after the execution.</li>
   </ul>
-  <p>The chart overlays total visible depth, candidate-spoofer depth, and the executed small-order volume. These outputs are exploratory surveillance evidence, not proof of intent.</p>
+  <p>The chart overlays total visible depth, candidate-spoofer depth, and the executed small-order volume; the execution stage uses immediately pre-fill total depth. These outputs are exploratory surveillance evidence, not proof of intent.</p>
 {parameter_table}
 </div>
 <div class=\"card\"><h2>Client-session alerts</h2><div id=\"clientSessionAlerts\"></div></div>
 <div class=\"card\"><div id=\"overview\"></div></div>
-<div class=\"controls\"><label for=\"parameterSelect\"><b>Choose kappa/lambda</b></label><select id=\"parameterSelect\"></select><label for=\"eventSelect\"><b>Choose candidate event</b></label><select id=\"eventSelect\"></select></div>
+<div class=\"controls\"><label for=\"parameterSelect\"><b>Choose metric-run variant</b></label><select id=\"parameterSelect\"></select><label for=\"eventSelect\"><b>Choose candidate event</b></label><select id=\"eventSelect\"></select></div>
 <div class=\"card\" id=\"summary\"></div>
 <div class=\"card\"><div id=\"lob\"></div></div>
 <div class=\"card\"><h2>Analyst annotation</h2><div id=\"annotation\"></div></div>
 <div class=\"card\"><h2>LLM surveillance review</h2><div id=\"llmReview\"></div></div>
+<div class=\"card\"><h2>Raw child fills</h2><div id=\"childFills\"></div></div>
+<div class=\"card\"><h2>Canonical assigned vs competing cancellations</h2><div id=\"cancelCandidates\"></div></div>
 <div class=\"card\"><h2>Actual events in zoom window</h2><div id=\"eventTable\"></div></div>
 <script>
 const baseReviewEvents = {_json_records(review_events)};
 const parameterRuns = {json.dumps(parameter_review_events or [], default=str)};
-let reviewEvents = parameterRuns.length ? parameterRuns[0].events : baseReviewEvents;
+const baseReviewById = new Map(baseReviewEvents.map(event => [event.review_event_id, event]));
+function withBaseReviewContext(events) {{
+  return events.map(event => ({{...(baseReviewById.get(event.review_event_id) || {{}}), ...event}}));
+}}
+let reviewEvents = parameterRuns.length ? withBaseReviewContext(parameterRuns[0].events) : baseReviewEvents;
 const eventLog = {_json_records(event_log)};
 const queueRows = {_json_records(queue)};
 const llmReviews = {json.dumps(llm_reviews or {}, default=str)};
 const annotations = {_json_records(annotations if annotations is not None else pl.DataFrame())};
 const clientSessionAlerts = {_json_records(client_session_alerts if client_session_alerts is not None else pl.DataFrame())};
+const childMembers = {_json_records(child_members if child_members is not None else pl.DataFrame())};
+const cancelCandidates = {_json_records(cancel_candidates if cancel_candidates is not None else pl.DataFrame())};
+const dashboardRefreshedAtUtc = {json.dumps(dashboard_refreshed_at_utc)};
+const reviewTopN = {int(review_top_n)};
 function byEvent(id, rows) {{ return rows.filter(r => r.review_event_id === id); }}
 function finiteNumber(value) {{ const number = Number(value); return Number.isFinite(number) ? number : null; }}
+function formatZoomLevel(value, isResting) {{
+  const number = finiteNumber(value);
+  if (number === null || number < 1) return '';
+  const rank = Math.trunc(number);
+  const zoomLabel = rank <= reviewTopN ? `L${{rank}}` : `outside top ${{reviewTopN}} (rank ${{rank}})`;
+  return isResting === false ? `not resting; would rank ${{zoomLabel}}` : zoomLabel;
+}}
 function metricText(value, digits=6) {{ const number = finiteNumber(value); return number === null ? 'NA' : number.toFixed(digits); }}
+function capacityText(row) {{
+  const hasCode = row.trading_capacity_code !== null && row.trading_capacity_code !== undefined && row.trading_capacity_code !== '';
+  const capacityLabel = row.trading_capacity_label ? String(row.trading_capacity_label) : '';
+  if (!hasCode && !capacityLabel) return 'NA';
+  if (!hasCode) return capacityLabel;
+  return capacityLabel ? `${{row.trading_capacity_code}} — ${{capacityLabel}}` : String(row.trading_capacity_code);
+}}
 function scoreValue(ev) {{ const w = finiteNumber(ev.WMSCI_event); return w !== null ? w : finiteNumber(ev.MSCI); }}
-function label(ev) {{ return `${{ev.review_event_id}} | ${{ev.event_ts}} | client=${{ev.client_id}} | WMSCI=${{metricText(ev.WMSCI_event, 4)}} | MSCI=${{metricText(ev.MSCI, 4)}} | FPM(mid)=${{metricText(ev.favorable_mid_move_pre_fill, 4)}} | REV(mid)=${{metricText(ev.post_cancel_mid_reversion, 4)}} | orders=${{ev.matched_deceptive_cancel_order_ids_window}}`; }}
+function label(ev) {{ return `${{ev.review_event_id}} | ${{ev.event_ts}} | client=${{ev.client_id}} | trading capacity=${{capacityText(ev)}} | WMSCI=${{metricText(ev.WMSCI_event, 4)}} | MSCI=${{metricText(ev.MSCI, 4)}} | FPM(mid)=${{metricText(ev.favorable_mid_move_pre_fill, 4)}} | REV(mid)=${{metricText(ev.post_cancel_mid_reversion, 4)}} | orders=${{ev.matched_deceptive_cancel_order_ids_window}}`; }}
 function renderOverview() {{
   const x = reviewEvents.map(r => r.event_ts);
   const y = reviewEvents.map(scoreValue);
@@ -690,7 +842,7 @@ function renderClientSessionAlerts() {{
 }}
 function renderSummary(ev) {{
   document.getElementById('summary').innerHTML = `<h2>${{ev.review_event_id}} <span class="badge">matched deceptive-order cancellation</span></h2>
-  <b>time:</b> ${{ev.event_ts}} &nbsp; <b>client:</b> ${{ev.client_id}} &nbsp; <b>execution side:</b> ${{ev.execution_side}} &nbsp; <b>deceptive side:</b> ${{ev.deceptive_side}}<br>
+  <b>time:</b> ${{ev.event_ts}} &nbsp; <b>client:</b> ${{ev.client_id}} &nbsp; <b>trading capacity:</b> ${{capacityText(ev)}} &nbsp; <b>execution side:</b> ${{ev.execution_side}} &nbsp; <b>deceptive side:</b> ${{ev.deceptive_side}}<br>
   <b>fill qty:</b> ${{ev.fill_qty}} &nbsp; <b>WMSCI:</b> ${{Number(ev.WMSCI_event || 0).toFixed(6)}} &nbsp; <b>MSCI:</b> ${{Number(ev.MSCI || 0).toFixed(6)}} &nbsp; <b>SCI:</b> ${{Number(ev.SCI || 0).toFixed(6)}}<br>
   <b>favorable pre-fill mid move:</b> ${{metricText(ev.favorable_mid_move_pre_fill)}} &nbsp; <b>post-cancel mid reversion:</b> ${{metricText(ev.post_cancel_mid_reversion)}} &nbsp; <b>execution advantage vs posture mid:</b> ${{metricText(ev.execution_price_advantage_vs_posture_mid)}}<br>
   <b>candidate visible qty pre:</b> ${{ev.candidate_deceptive_visible_qty_pre}} &nbsp; <b>matched cancel qty:</b> ${{ev.matched_deceptive_cancel_visible_qty_window}} &nbsp; <b>matched fraction:</b> ${{ev.matched_deceptive_cancel_fraction_window}}<br>
@@ -864,7 +1016,7 @@ function renderLLMReview(ev) {{
 }}
 function renderEventTable(ev) {{
   const rows = byEvent(ev.review_event_id, eventLog).sort((a,b) => a.sort_index-b.sort_index);
-  const html = ['<div class="event-legend"><span class="event-row-client">review client</span><span class="event-row-execution">small execution</span><span class="event-row-candidate">candidate order</span><span class="event-row-matched-cancel">matched cancel</span></div><table><thead><tr><th>sort</th><th>time</th><th>class</th><th>side</th><th>price</th><th>level</th><th>ORDERID</th><th>client</th><th>leaves</th><th>displayed</th><th>last shares</th><th>flags</th></tr></thead><tbody>'];
+  const html = ['<div class="event-legend"><span class="event-row-client">review client</span><span class="event-row-execution">small execution</span><span class="event-row-candidate">candidate order</span><span class="event-row-matched-cancel">matched cancel</span></div><table><thead><tr><th>sort</th><th>time</th><th>class</th><th>side</th><th>price</th><th title="Actual same-side position after the event; non-resting event prices are marked as hypothetical insertion ranks.">zoom level</th><th>ORDERID</th><th>client</th><th>trading capacity</th><th>leaves</th><th>displayed</th><th>last shares</th><th>flags</th></tr></thead><tbody>'];
   for (const r of rows) {{
     const flags = [r.is_execution_order?'execution':'', r.is_candidate_deceptive_order?'candidate':'', r.is_matched_deceptive_cancel_order?'matched-cancel':'', r.is_review_client?'client':''].filter(Boolean).join(', ');
     const rowClasses = [
@@ -873,7 +1025,7 @@ function renderEventTable(ev) {{
       r.is_candidate_deceptive_order ? 'event-row-candidate' : '',
       r.is_matched_deceptive_cancel_order ? 'event-row-matched-cancel' : ''
     ].filter(Boolean).join(' ');
-    html.push(`<tr class="${{rowClasses}}"><td>${{r.sort_index}}</td><td>${{r.event_ts}}</td><td>${{r.event_class}}</td><td>${{r.side ?? ''}}</td><td>${{r.price ?? ''}}</td><td>${{r.book_level ?? ''}}</td><td>${{r.ORDERID ?? ''}}</td><td>${{r.client_id ?? ''}}</td><td>${{r.leaves_qty ?? ''}}</td><td>${{r.displayed_qty ?? ''}}</td><td>${{r.last_shares ?? ''}}</td><td>${{flags}}</td></tr>`);
+    html.push(`<tr class="${{rowClasses}}"><td>${{r.sort_index}}</td><td>${{r.event_ts}}</td><td>${{r.event_class}}</td><td>${{r.side ?? ''}}</td><td>${{r.price ?? ''}}</td><td>${{formatZoomLevel(r.book_level, r.book_level_is_resting)}}</td><td>${{r.ORDERID ?? ''}}</td><td>${{r.client_id ?? ''}}</td><td>${{capacityText(r)}}</td><td>${{r.leaves_qty ?? ''}}</td><td>${{r.displayed_qty ?? ''}}</td><td>${{r.last_shares ?? ''}}</td><td>${{flags}}</td></tr>`);
   }}
   html.push('</tbody></table>');
   document.getElementById('eventTable').innerHTML = html.join('');
@@ -892,7 +1044,7 @@ if (parameterRuns.length) {{
   parameterSelect.disabled = true;
 }}
 parameterSelect.addEventListener('change', e => {{
-  if (parameterRuns.length) reviewEvents = parameterRuns[Number(e.target.value)].events;
+  if (parameterRuns.length) reviewEvents = withBaseReviewContext(parameterRuns[Number(e.target.value)].events);
   populateEvents();
   renderOverview();
   if (reviewEvents.length) update(reviewEvents[0].review_event_id);
@@ -916,7 +1068,12 @@ def main(argv: list[str] | None = None) -> None:
     execution_metrics = pl.read_parquet(args.execution_metrics)
     # Candidate file is loaded to verify provenance and fail early if absent/corrupt.
     pl.read_parquet(args.candidate_deceptive_orders)
-    review_events = _prepare_review_events(execution_metrics, args.max_events)
+    child_members = _load_optional_parquet(args.execution_cluster_members)
+    review_events = _prepare_review_events(
+        execution_metrics,
+        args.max_events,
+        cluster_members=child_members,
+    )
     parameter_review_events = _load_parameter_review_events(args.parameter_grid_root, args.max_events) if args.parameter_grid_root else []
     if parameter_review_events:
         by_id = {event["review_event_id"]: event for event in review_events}
@@ -950,6 +1107,12 @@ def main(argv: list[str] | None = None) -> None:
     event_log_path = artifact_paths["event_log"]
     queue_path = artifact_paths["queue"]
     metric_metadata = _load_metric_metadata(args.execution_metrics)
+    cancel_candidates = _load_optional_parquet(args.execution_cancel_candidates)
+    if child_members is not None:
+        child_members.write_parquet(args.output_dir / "execution_cluster_members.parquet")
+    if cancel_candidates is not None:
+        cancel_candidates.write_parquet(args.output_dir / "execution_cancel_candidates.parquet")
+    dashboard_refreshed_at_utc = datetime.now(timezone.utc).isoformat()
     write_dashboard(
         dashboard_path,
         review_events=review_df,
@@ -963,6 +1126,9 @@ def main(argv: list[str] | None = None) -> None:
         llm_reviews=_load_llm_reviews(args.output_dir),
         annotations=_load_annotations(args.annotations),
         client_session_alerts=_load_optional_parquet(args.client_session_alerts),
+        child_members=child_members,
+        cancel_candidates=cancel_candidates,
+        dashboard_refreshed_at_utc=dashboard_refreshed_at_utc,
     )
     metadata = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -974,6 +1140,9 @@ def main(argv: list[str] | None = None) -> None:
         "pre_window_seconds": args.pre_window_seconds,
         "post_window_seconds": args.post_window_seconds,
         "queue_snapshot_mode": args.queue_snapshot_mode,
+        "execution_cluster_members": str(args.execution_cluster_members) if args.execution_cluster_members else None,
+        "execution_cancel_candidates": str(args.execution_cancel_candidates) if args.execution_cancel_candidates else None,
+        "dashboard_refreshed_at_utc": dashboard_refreshed_at_utc,
         "metric_run_parameters": {
             "top_n": metric_metadata.get("top_n"),
             "window_seconds": metric_metadata.get("window_seconds"),

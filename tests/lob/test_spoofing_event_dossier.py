@@ -87,6 +87,48 @@ def test_build_stage_depth_summary_aggregates_candidate_and_total_volume():
     assert row["candidate_level_share"] == 0.25
 
 
+def test_build_focal_timeline_excludes_unrelated_prior_fills():
+    module = _load_module()
+    event = {"sort_index": 20}
+    event_log = pl.DataFrame(
+        [
+            {
+                "sort_index": 10,
+                "event_class": "fill",
+                "is_candidate_deceptive_order": False,
+                "is_matched_deceptive_cancel_order": False,
+            },
+            {
+                "sort_index": 12,
+                "event_class": "new_order",
+                "is_candidate_deceptive_order": True,
+                "is_matched_deceptive_cancel_order": True,
+            },
+            {
+                "sort_index": 20,
+                "event_class": "fill",
+                "is_candidate_deceptive_order": False,
+                "is_matched_deceptive_cancel_order": False,
+            },
+            {
+                "sort_index": 25,
+                "event_class": "cancel",
+                "is_candidate_deceptive_order": True,
+                "is_matched_deceptive_cancel_order": True,
+            },
+        ]
+    )
+
+    timeline = module.build_focal_timeline(event, event_log)
+
+    assert timeline["sort_index"].to_list() == [12, 20, 25]
+    assert timeline["timeline_role"].to_list() == [
+        "candidate_order_before_execution",
+        "selected_passive_execution",
+        "matched_cancel_after_execution",
+    ]
+
+
 def test_render_dossier_markdown_contains_core_sections():
     module = _load_module()
     event = {
@@ -127,10 +169,19 @@ def test_render_dossier_markdown_contains_core_sections():
         ]
     )
 
-    text = module.render_dossier_markdown(event=event, event_log=log, stage_depth=depth, robustness=pl.DataFrame())
+    focal_timeline = log.with_columns(pl.lit("selected_passive_execution").alias("timeline_role"))
+    text = module.render_dossier_markdown(
+        event=event,
+        event_log=log,
+        stage_depth=depth,
+        robustness=pl.DataFrame(),
+        focal_timeline=focal_timeline,
+    )
 
     assert "# Event dossier: S10" in text
     assert "## Model scores" in text
+    assert "## Focal matched-withdrawal timeline" in text
+    assert "selected_passive_execution" in text
     assert "## Stage depth summary" in text
     assert "## Actual event log" in text
     assert "DWI_pre_window" in text
@@ -201,3 +252,41 @@ def test_main_writes_dossier_files(tmp_path):
 
     assert (out / "dossier.md").exists()
     assert (out / "dossier.json").exists()
+
+
+def test_cluster_bundle_requires_one_cluster_and_keeps_child_and_candidate_provenance():
+    module = _load_module()
+    cluster_id = "EC000000010-000000011"
+    events = pl.DataFrame([
+        {"execution_cluster_id": cluster_id, "review_event_id": cluster_id, "cluster_first_sort_index": 10, "cluster_last_sort_index": 11, "child_fill_count": 2, "fill_qty": 30.0, "client_id": "0"},
+        {"execution_cluster_id": "EC000000020-000000020", "review_event_id": "EC000000020-000000020"},
+    ])
+    log = pl.DataFrame({"review_event_id": [cluster_id], "sort_index": [10]})
+    queue = pl.DataFrame({"review_event_id": [cluster_id], "level": [1]})
+    members = pl.DataFrame([
+        {"execution_cluster_id": cluster_id, "child_sort_index": 10, "child_fill_qty": 10.0},
+        {"execution_cluster_id": cluster_id, "child_sort_index": 11, "child_fill_qty": 20.0},
+    ])
+    candidates = pl.DataFrame([{"execution_cluster_id": cluster_id, "assigned_flag": True, "assignment_rule": "canonical_nearest", "competing_cluster_count": 1, "candidate_order_id": "Q1", "original_qty": 100.0, "leaves_qty": 25.0}])
+
+    bundle = module.select_event_bundle(cluster_id, events, log, queue, cluster_members=members, cancel_candidates=candidates)
+    text = module.render_dossier_markdown(event=bundle.event, event_log=bundle.event_log, stage_depth=pl.DataFrame(), robustness=pl.DataFrame(), child_members=bundle.child_members, cancel_candidates=bundle.cancel_candidates)
+
+    assert bundle.child_members.height == 2
+    assert "## Execution cluster" in text
+    assert "## Raw child fills" in text
+    assert "## Cancellation assignment" in text
+    assert "canonical_nearest" in text
+    assert "Client attribution caveat" in text
+    assert "partially_executed_fraction" in text
+
+
+def test_cluster_bundle_rejects_ambiguous_cluster_id():
+    module = _load_module()
+    events = pl.DataFrame([{"execution_cluster_id": "EC1", "review_event_id": "EC1"}, {"execution_cluster_id": "EC1", "review_event_id": "EC1"}])
+    try:
+        module.select_event_bundle("EC1", events, pl.DataFrame(), pl.DataFrame())
+    except ValueError as exc:
+        assert "exactly one" in str(exc)
+    else:
+        raise AssertionError("expected ambiguous cluster selection to fail")

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import polars as pl
 import pytest
 
 from spoofing_detection.lob.models import ActiveOrder
 from spoofing_detection.lob.spoofing_metrics import (
+    _stream_metric_inputs,
+    assign_cancellations_to_clusters,
     attach_sci_window_metrics,
     choose_event_timestamp,
     compute_client_metric_time_series,
@@ -361,9 +363,93 @@ def test_attach_sci_window_metrics_computes_side_collapse_and_msci():
     assert out.item(0, "market_mid_post_window") == pytest.approx(100.02)
     assert out.item(0, "favorable_mid_move_pre_fill") == pytest.approx(0.10)
     assert out.item(0, "favorable_microprice_move_pre_fill") == pytest.approx(0.12)
-    assert out.item(0, "post_cancel_mid_reversion") == pytest.approx(0.08)
+    assert out.item(0, "post_fill_mid_reversal_from_pre_fill") == pytest.approx(0.08)
     assert out.item(0, "execution_price_advantage_vs_posture_mid") == pytest.approx(0.12)
     assert "imbalance_pre_window" not in out.columns
+
+
+def test_attach_sci_window_metrics_does_not_impute_missing_post_state_as_zero():
+    states = pl.DataFrame(
+        {
+            "partition_id": ["P", "P"],
+            "client_id": ["C1", "C1"],
+            "event_ts": [
+                datetime(2024, 1, 2, 9, 30, 8),
+                datetime(2024, 1, 2, 9, 30, 9),
+            ],
+            "DWI": [-0.2, -0.8],
+            "L_bid_topN": [0.4, 0.9],
+            "L_ask_topN": [0.2, 0.4],
+            "sort_index": [8, 9],
+            "market_mid": [100.00, 100.10],
+            "market_microprice": [100.01, 100.13],
+        }
+    )
+    executions = pl.DataFrame(
+        {
+            "partition_id": ["P"],
+            "client_id": ["C1"],
+            "event_ts": [datetime(2024, 1, 2, 9, 30, 10)],
+            "sort_index": [10],
+            "execution_side": ["ask"],
+            "deceptive_side": ["bid"],
+            "event_price": [100.12],
+            "candidate_deceptive_first_seen_sort_index_min": [8],
+        }
+    )
+
+    out = attach_sci_window_metrics(executions, states, window_seconds=1.0)
+
+    assert out.item(0, "has_post_window_state") is False
+    for column in (
+        "DWI_post_window",
+        "SCI",
+        "L_bid_post_window",
+        "L_ask_post_window",
+        "collapse_bid",
+        "collapse_ask",
+        "MSCI",
+    ):
+        assert out.item(0, column) is None
+
+
+def test_attach_sci_window_metrics_accepts_post_event_state_at_cluster_last_sort_index():
+    states = pl.DataFrame(
+        {
+            "partition_id": ["P1", "P1"],
+            "client_id": ["C1", "C1"],
+            "sort_index": [9, 10],
+            "event_ts": [
+                datetime(2024, 1, 1, 12, 0, 8),
+                datetime(2024, 1, 1, 12, 0, 10),
+            ],
+            "DWI": [0.8, 0.0],
+            "L_bid_topN": [10.0, 10.0],
+            "L_ask_topN": [90.0, 0.0],
+        }
+    )
+    executions = pl.DataFrame(
+        {
+            "partition_id": ["P1"],
+            "client_id": ["C1"],
+            "sort_index": [10],
+            "cluster_last_sort_index": [10],
+            "event_ts": [datetime(2024, 1, 1, 12, 0, 10)],
+            "execution_side": ["bid"],
+            "deceptive_side": ["ask"],
+            "fill_qty": [5.0],
+            "candidate_deceptive_weighted_liquidity_pre": [20.0],
+            "candidate_deceptive_visible_qty_pre": [20.0],
+            "candidate_deceptive_first_seen_sort_index_min": [8],
+        }
+    )
+
+    out = attach_sci_window_metrics(executions, states, window_seconds=1.0)
+
+    assert out.item(0, "has_post_window_state") is True
+    assert out.item(0, "post_state_sort_index") == 10
+    assert out.item(0, "DWI_post_window") == pytest.approx(0.0)
+    assert out.item(0, "MSCI") is not None
 
 
 def test_compute_mcps_scores_groups_by_client_and_gamma():
@@ -398,6 +484,62 @@ def test_compute_mcps_scores_groups_by_client_and_gamma():
     assert c1["candidate_profile_share"] == pytest.approx(2 / 3)
     assert c1["mean_favorable_mid_move_pre_fill"] == pytest.approx(0.0)
     assert c1["mean_post_cancel_mid_reversion"] == pytest.approx(0.05)
+
+
+def test_compute_mcps_scores_excludes_unattributable_client_bucket():
+    executions = pl.DataFrame(
+        {
+            "client_id": ["0", "C1"],
+            "MSCI": [0.9, 0.2],
+            "SCI": [1.0, 0.3],
+            "collapse_opposite_side": [0.9, 0.4],
+            "collapse_same_side": [0.0, 0.1],
+        }
+    )
+
+    scores = compute_mcps_scores(executions, gamma_grid=[0.5])
+
+    assert scores.get_column("client_id").to_list() == ["C1"]
+
+
+def test_sci_post_state_lookup_handles_timestamps_nonmonotonic_in_sort_order():
+    base = datetime(2024, 1, 2, 9, 30)
+    executions = pl.DataFrame(
+        [
+            {
+                "partition_id": "P",
+                "client_id": "C1",
+                "event_ts": base,
+                "cluster_start_ts": base,
+                "cluster_end_ts": base,
+                "sort_index": 1,
+                "cluster_first_sort_index": 1,
+                "cluster_last_sort_index": 1,
+                "execution_side": "ask",
+                "deceptive_side": "bid",
+            }
+        ]
+    )
+    states = pl.DataFrame(
+        {
+            "partition_id": ["P", "P", "P"],
+            "client_id": ["C1", "C1", "C1"],
+            "sort_index": [1, 2, 3],
+            "event_ts": [
+                base + timedelta(seconds=2),
+                base + timedelta(seconds=1),
+                base + timedelta(seconds=3),
+            ],
+            "DWI": [2.0, 1.0, 3.0],
+            "L_bid_topN": [2.0, 1.0, 3.0],
+            "L_ask_topN": [1.0, 1.0, 1.0],
+        }
+    )
+
+    result = attach_sci_window_metrics(executions, states, window_seconds=2.5)
+
+    assert result.item(0, "post_state_sort_index") == 1
+    assert result.item(0, "DWI_post_window") == pytest.approx(2.0)
 
 
 def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
@@ -459,6 +601,10 @@ def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
     assert row["WMSCI_event"] > 0
     assert row["smallness_fraction_market_level"] == pytest.approx(1.0)
     assert row["DWI_pre_window"] is not None
+    assert row["has_post_window_state"] is True
+    assert row["DWI_post_window"] == pytest.approx(0.0)
+    assert row["L_bid_post_window"] == pytest.approx(0.0)
+    assert row["L_ask_post_window"] == pytest.approx(0.0)
     assert row["MSCI"] is not None
     assert result.direct_cancellations.height == 1
     assert result.candidate_deceptive_orders.height == 1
@@ -476,6 +622,89 @@ def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
     assert candidate["deceptive_order_age_seconds_pre"] == pytest.approx(3.0)
     assert "fake_side" not in row
     assert "candidate_fake_order_ids_pre" not in row
+
+
+def test_fragmented_passive_fills_become_one_cluster_with_raw_members_and_single_cancellation():
+    fill_quantities = [9_000, 9_000, 1_947, 857, 4_196]
+    fill_leaves = [16_000, 7_000, 5_053, 4_196, 0]
+    offsets = [0, 25, 50, 75, 100]
+    rows = [
+        raw_event(1, 1, "B0", 1, 100.0, 300_000, 300_000, "C2", bookout="2024-01-02 09:29:59.997"),
+        raw_event(2, 1, "BD", 1, 99.9, 219_770, 219_770, "C1", bookout="2024-01-02 09:29:59.998"),
+        raw_event(3, 1, "FILL", 2, 100.2, 25_000, 25_000, "C1", bookout="2024-01-02 09:29:59.999"),
+    ]
+    for index, (qty, leaves, offset) in enumerate(zip(fill_quantities, fill_leaves, offsets), start=4):
+        rows.append(
+            raw_event(
+                index * 3,
+                3,
+                "FILL",
+                2,
+                100.2,
+                leaves,
+                leaves,
+                "C1",
+                last_shares=qty,
+                bookout=f"2024-01-02 09:30:00.{offset:03d}",
+            )
+        )
+        if index < 8:
+            rows.extend(
+                [
+                    raw_event(index * 3 + 1, 3, f"AG{index}", 1, 100.2, 0, 0, "C9", aggressive="Y", bookout=f"2024-01-02 09:30:00.{offset + 5:03d}"),
+                    raw_event(index * 3 + 2, 1, f"NEW{index}", 1, 99.8, 10, 10, "C9", bookout=f"2024-01-02 09:30:00.{offset + 10:03d}"),
+                ]
+            )
+    rows.append(raw_event(30, 4, "BD", 1, 99.9, 0, 0, "C1", bookout="2024-01-02 09:30:00.200"))
+
+    result = compute_exploratory_metrics(
+        pl.DataFrame(rows),
+        top_n=2,
+        tick_size=0.1,
+        kappa=1.0,
+        lambda_=0.5,
+        window_seconds=1.0,
+        execution_cluster_max_gap_ms=100,
+    )
+
+    assert result.execution_metrics.height == 1
+    cluster = result.execution_metrics.to_dicts()[0]
+    assert cluster["child_fill_count"] == 5
+    assert cluster["fill_qty"] == pytest.approx(25_000)
+    assert cluster["cluster_start_ts"] == datetime(2024, 1, 2, 9, 30, 0)
+    assert cluster["cluster_end_ts"] == datetime(2024, 1, 2, 9, 30, 0, 100_000)
+    assert cluster["matched_deceptive_cancel_count_window"] == 1
+    assert cluster["withdrawal_to_fill_ratio"] == pytest.approx(8.7908)
+    assert result.execution_cluster_members.height == 5
+    assert result.execution_cluster_members["child_fill_qty"].sum() == pytest.approx(25_000)
+    assert result.execution_cluster_members["execution_cluster_id"].n_unique() == 1
+    assert result.execution_cancel_candidates.filter(pl.col("assigned_flag")).height == 1
+
+
+def test_assign_cancellations_uses_latest_cluster_end_then_first_sort_tiebreak():
+    candidate_links = pl.DataFrame(
+        {
+            "partition_id": ["P", "P", "P"],
+            "cancel_sort_index": [30, 30, 30],
+            "candidate_order_id": ["BD", "BD", "BD"],
+            "execution_cluster_id": ["EC000000010-000000012", "EC000000020-000000022", "EC000000021-000000022"],
+            "cluster_end_ts": [
+                datetime(2024, 1, 2, 9, 30, 1),
+                datetime(2024, 1, 2, 9, 30, 2),
+                datetime(2024, 1, 2, 9, 30, 2),
+            ],
+            "cluster_first_sort_index": [10, 20, 21],
+        }
+    )
+
+    assigned = assign_cancellations_to_clusters(candidate_links)
+
+    assert assigned.height == 3
+    winner = assigned.filter(pl.col("assigned_flag")).to_dicts()
+    assert [row["execution_cluster_id"] for row in winner] == ["EC000000020-000000022"]
+    assert set(assigned["assignment_rule"].to_list()) == {"latest_prior_cluster_end"}
+    assert set(assigned["competing_cluster_count"].to_list()) == {3}
+
 
 
 def test_candidate_deceptive_profile_must_be_recent_within_timing_window():
