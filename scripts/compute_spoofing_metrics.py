@@ -20,6 +20,8 @@ from spoofing_detection.lob.client_identity_audit import audit_missing_client_tr
 from spoofing_detection.lob.depth_kernel_calibration import load_empirical_kernel_weights
 from spoofing_detection.lob.normalize import to_str_or_none
 from spoofing_detection.lob.spoofing_metrics import (
+    MSCI_DEFINITION,
+    MSCI_RANGE,
     compute_exploratory_metrics,
     compute_mcps_scores,
     infer_tick_size_from_best_quotes,
@@ -115,7 +117,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=600.0,
         help="Maximum age of candidate deceptive orders before the execution, in seconds",
     )
-    parser.add_argument("--gamma-grid", default="0.25,0.5,0.75,1.0", help="Comma-separated MSCI thresholds")
+    parser.add_argument("--gamma-grid", default="0.1,0.2,0.3,0.4,0.5,0.6", help="Comma-separated MSCI thresholds")
     parser.add_argument("--tick-size", type=float, default=None, help="Optional explicit tick size")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional raw-row cap for smoke runs")
     parser.add_argument(
@@ -358,7 +360,7 @@ def _write_summary_report(
         "- DWI tells whether a client is ask-heavy or bid-heavy in the weighted top-n book profile.",
         "- SCI is the absolute DWI change from immediately before an execution cluster to the post-cluster window.",
         "- Collapse measures how much weighted liquidity disappears after the cluster on each side of the book.",
-        "- MSCI is high only when DWI changes sharply and the opposite side collapses more than the execution side.",
+        "- MSCI is the equally weighted mean of normalized SCI, opposite-side collapse, and positive collapse asymmetry; it ranges from 0 to 1.",
         "- Price-response diagnostics are signed so positive values indicate a movement or execution price advantage favorable to the passive fill side; they are economic consistency checks, not causal proof.",
         "- MCPS is a client-level repetition score: the fraction of execution clusters whose MSCI is above gamma.",
         "- A candidate deceptive profile is the same client's pre-existing visible depth on the side opposite to the execution cluster, posted within the configured pre-execution age window; the name denotes a screening candidate, not proven intent.",
@@ -497,6 +499,8 @@ def main(argv: list[str] | None = None) -> None:
         "analytical_unit": "execution_cluster",
         "raw_audit_unit": "child_fill_message",
         "max_deceptive_order_age_seconds": args.max_deceptive_order_age_seconds,
+        "msci_definition": MSCI_DEFINITION,
+        "msci_range": list(MSCI_RANGE),
         "gamma_grid": gamma_grid,
         "tick_size": tick_size,
         "identity": "NMSC_ORIGINALCLIENTIDSHORTCODE",

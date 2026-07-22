@@ -24,6 +24,11 @@ from spoofing_detection.lob.panel import (
 )
 BEST_QUOTE_COLUMNS = ("post_best_bid", "post_best_ask")
 VISIBLE_LIMIT_ORDER_TYPES = {"limit", "iceberg"}
+MSCI_DEFINITION = (
+    "mean(clip(SCI / 2, 0, 1), clip(C_opposite, 0, 1), "
+    "max(clip(C_opposite, 0, 1) - clip(C_same, 0, 1), 0))"
+)
+MSCI_RANGE = (0.0, 1.0)
 
 EXECUTION_CANCEL_CANDIDATE_SCHEMA: dict[str, pl.DataType] = {
     "partition_id": pl.String,
@@ -952,13 +957,17 @@ def _collapse(pre: float | None, post: float | None, *, epsilon: float) -> float
     return max(pre_value - post_value, 0.0) / (pre_value + epsilon)
 
 
-def _finite_product_msci(sci: float | None, c_opposite: float | None, c_same: float | None) -> float | None:
+def _finite_additive_msci(sci: float | None, c_opposite: float | None, c_same: float | None) -> float | None:
     if sci is None or c_opposite is None or c_same is None:
         return None
     values = [float(sci), float(c_opposite), float(c_same)]
     if not all(math.isfinite(value) for value in values):
         return None
-    return values[0] * values[1] * max(values[1] - values[2], 0.0)
+    normalized_sci = min(max(values[0] / 2.0, 0.0), 1.0)
+    opposite_collapse = min(max(values[1], 0.0), 1.0)
+    same_side_collapse = min(max(values[2], 0.0), 1.0)
+    collapse_asymmetry = max(opposite_collapse - same_side_collapse, 0.0)
+    return (normalized_sci + opposite_collapse + collapse_asymmetry) / 3.0
 
 
 def _finite_wmsci(
@@ -1084,7 +1093,7 @@ def attach_sci_window_metrics(
                 "collapse_ask": collapse_ask,
                 "collapse_opposite_side": collapse_opposite,
                 "collapse_same_side": collapse_same,
-                "MSCI": _finite_product_msci(sci, collapse_opposite, collapse_same),
+                "MSCI": _finite_additive_msci(sci, collapse_opposite, collapse_same),
             }
         )
     return pl.DataFrame(rows, infer_schema_length=None)

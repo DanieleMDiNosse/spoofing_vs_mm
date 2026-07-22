@@ -932,11 +932,32 @@ where $[x]_{+}=\max\{x,0\}$. A large $C^{i,\bar{s}_c}_{c,n}$ indicates that rece
 opposite to the clustered execution, as required by the mechanical sequence. A two-sided quote refresh after a mid-price
 change can instead generate material collapse on both sides.
 
-We retain the normalized shape change and the two side-specific collapse fractions as separate diagnostics. We do not
-multiply them into a composite score. This separation shows whether the change arises from the opposite side, the same
-side, or both, and prevents a two-sided quote refresh from becoming a large scalar through multiplication alone. These
-quantities are retained as event-level diagnostics and in client-level feature summaries; they do not enter the
-four-condition event gate or the generated result tables.
+For a bounded event-level summary of these shape diagnostics, define the clipping operator by
+\begin{equation}
+    \operatorname{clip}_{[0,1]}(x)=\min\{\max\{x,0\},1\}.
+\end{equation}
+Then define
+\begin{equation}
+\begin{aligned}
+    \widetilde{\operatorname{SCI}}^{i}_{c,n}
+    &=\operatorname{clip}_{[0,1]}\!\left(\frac{1}{2}\operatorname{SCI}^{i}_{c,n}\right),\\
+    \widetilde C^{i,s}_{c,n}
+    &=\operatorname{clip}_{[0,1]}\!\left(C^{i,s}_{c,n}\right),\\
+    \operatorname{MSCI}^{i}_{c,n}
+    &=\frac{1}{3}\left[
+        \widetilde{\operatorname{SCI}}^{i}_{c,n}
+        +\widetilde C^{i,\bar{s}_c}_{c,n}
+        +\left[\widetilde C^{i,\bar{s}_c}_{c,n}-\widetilde C^{i,s_c}_{c,n}\right]_{+}
+    \right].
+\end{aligned}
+    \label{eq:additive_msci}
+\end{equation}
+Because DWI lies in $[-1,1]$, the normalized shape term and both collapse terms lie in $[0,1]$, so MSCI also lies in
+$[0,1]$. The arithmetic mean gives equal weight to shape change, opposite-side withdrawal, and side asymmetry without
+allowing a zero in one component to erase the remaining diagnostics. The components remain separately inspectable so that
+a two-sided quote refresh is distinguishable from an asymmetric collapse. MSCI is retained as a secondary event-level
+diagnostic and in client-level feature summaries; it does not enter the four-condition event gate or the generated result
+tables.
 
 \subsubsection{Canonical Matched Withdrawal}
 \label{subsec:canonical_matched_withdrawal}

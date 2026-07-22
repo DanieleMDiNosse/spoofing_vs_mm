@@ -73,14 +73,18 @@ After generating reviews, regenerate the dashboard:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 conda run -n main python scripts/build_spoofing_event_review_dashboard.py \
+  --config configs/spoofing_detection_parameters.json \
   --input data/ExportGridData_2026-05-20_090247703_RISANAMENTO_01062024_30112024_FG.parquet \
-  --execution-metrics outputs/spoofing_metrics/risanamento_top3_multilevel_msci_timing_window/execution_metrics.parquet \
-  --candidate-deceptive-orders outputs/spoofing_metrics/risanamento_top3_multilevel_msci_timing_window/candidate_deceptive_orders.parquet \
-  --parameter-grid-root outputs/spoofing_metrics/kappa_lambda_sensitivity_top3 \
-  --output-dir outputs/spoofing_event_review/risanamento_top3_timing_window \
+  --execution-metrics outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/execution_metrics.parquet \
+  --candidate-deceptive-orders outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/candidate_deceptive_orders.parquet \
+  --execution-cluster-members outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/execution_cluster_members.parquet \
+  --execution-cancel-candidates outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/execution_cancel_candidates.parquet \
+  --client-session-alerts outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/production_readiness/client_session_alerts.parquet \
+  --output-dir outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/event_review \
   --top-n 10 \
   --pre-window-seconds 30 \
-  --post-window-seconds 5
+  --post-window-seconds 35 \
+  --queue-snapshot-mode key-events
 ```
 
 The dashboard will show the saved LLM review for events with `response.md`; otherwise it shows a message explaining how to generate one.

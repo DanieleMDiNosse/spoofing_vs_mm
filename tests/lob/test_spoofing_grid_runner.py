@@ -115,6 +115,18 @@ def test_grid_metadata_declares_gate_and_analytical_populations():
     }
 
 
+def test_grid_metadata_declares_additive_msci_for_provenance_and_cache_invalidation():
+    module = load_grid_module()
+
+    assert module._msci_metadata() == {
+        "msci_definition": (
+            "mean(clip(SCI / 2, 0, 1), clip(C_opposite, 0, 1), "
+            "max(clip(C_opposite, 0, 1) - clip(C_same, 0, 1), 0))"
+        ),
+        "msci_range": [0.0, 1.0],
+    }
+
+
 def test_grid_runner_depth_reuse_is_explicit_opt_in(tmp_path: Path):
     module = load_grid_module()
     required = [
@@ -152,6 +164,29 @@ def test_grid_runner_reuse_rejects_stale_input_hash(tmp_path: Path, monkeypatch)
 
     metadata_path.write_text(json.dumps({**expected, "depth_grid": [3]}))
     assert module._can_reuse_depth_outputs(
+        {},
+        metadata_path=metadata_path,
+        expected_metadata=expected,
+        top_n=3,
+    )
+
+
+def test_grid_runner_reuse_rejects_stale_msci_definition(tmp_path: Path, monkeypatch):
+    module = load_grid_module()
+    metadata_path = tmp_path / "metadata.json"
+    expected = module._msci_metadata()
+    metadata_path.write_text(
+        json.dumps(
+            {
+                **expected,
+                "msci_definition": "obsolete_definition",
+                "depth_grid": [3],
+            }
+        )
+    )
+    monkeypatch.setattr(module, "_depth_outputs_complete", lambda paths: True)
+
+    assert not module._can_reuse_depth_outputs(
         {},
         metadata_path=metadata_path,
         expected_metadata=expected,

@@ -8,6 +8,7 @@ import pytest
 
 from spoofing_detection.lob.models import ActiveOrder
 from spoofing_detection.lob.spoofing_metrics import (
+    _finite_additive_msci,
     _stream_metric_inputs,
     assign_cancellations_to_clusters,
     attach_sci_window_metrics,
@@ -20,6 +21,31 @@ from spoofing_detection.lob.spoofing_metrics import (
     infer_tick_size_from_best_quotes,
     shifted_depth_distance_ticks,
 )
+
+
+@pytest.mark.parametrize(
+    ("sci", "collapse_opposite", "collapse_same", "expected"),
+    [
+        (0.8, 0.9, 0.9, (0.4 + 0.9) / 3.0),
+        (2.0, 1.0, 0.0, 1.0),
+        (3.0, 1.5, -0.5, 1.0),
+        (-1.0, -0.2, 1.2, 0.0),
+        (None, 0.9, 0.1, None),
+        (math.nan, 0.9, 0.1, None),
+    ],
+)
+def test_additive_msci_is_bounded_and_does_not_zero_equal_side_collapse(
+    sci,
+    collapse_opposite,
+    collapse_same,
+    expected,
+):
+    result = _finite_additive_msci(sci, collapse_opposite, collapse_same)
+
+    if expected is None:
+        assert result is None
+    else:
+        assert result == pytest.approx(expected)
 
 
 def order(order_id, side, price, qty, client):
@@ -311,7 +337,7 @@ def test_compute_client_metric_time_series_emits_client_only_top_n_dwi_states():
     assert "imbalance" not in c1_latest
 
 
-def test_attach_sci_window_metrics_computes_side_collapse_and_msci():
+def test_attach_sci_window_metrics_computes_side_collapse_and_additive_msci():
     states = pl.DataFrame(
         {
             "partition_id": ["P", "P", "P"],
@@ -347,7 +373,7 @@ def test_attach_sci_window_metrics_computes_side_collapse_and_msci():
     sci = 0.7
     c_bid = (0.9 - 0.2) / 0.9
     c_ask = (0.4 - 0.3) / 0.4
-    expected_msci = sci * c_bid * max(c_bid - c_ask, 0.0)
+    expected_msci = ((sci / 2.0) + c_bid + max(c_bid - c_ask, 0.0)) / 3.0
     assert out.item(0, "DWI_pre_window") == pytest.approx(-0.8)
     assert out.item(0, "DWI_post_window") == pytest.approx(-0.1)
     assert out.item(0, "SCI") == pytest.approx(sci)

@@ -63,6 +63,8 @@ def test_write_spoofing_metric_dashboard_creates_paper_aligned_html(tmp_path: Pa
     html = output.read_text()
     assert "Multilevel spoofing metric dashboard" in html
     assert "MSCI" in html
+    assert "arithmetic mean of normalized SCI, opposite-side collapse, and positive side-collapse asymmetry" in html
+    assert "becomes large only when" not in html
     assert "MCPS" in html
     assert "DWI" in html
     assert "opposite-side collapse" in html

@@ -9,7 +9,7 @@
     "reversion_horizon_seconds": 2.0,
     "execution_cluster_max_gap_ms": 100,
     "max_deceptive_order_age_seconds": 90.0,
-    "gamma_grid": [0.001, 0.005, 0.01, 0.025, 0.05, 0.1],
+    "gamma_grid": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
     "tick_size": null,
     "state_client_mode": "passive-fill-clients",
     "compact_state": true,
@@ -25,7 +25,7 @@
     "reversion_horizon_seconds": 2.0,
     "execution_cluster_max_gap_ms": 100,
     "max_deceptive_order_age_seconds": 90.0,
-    "gamma_grid": [0.001, 0.005, 0.01, 0.025, 0.05, 0.1],
+    "gamma_grid": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
     "tick_size": null,
     "make_dashboard": false,
     "empirical_depth_kernel": null
@@ -37,7 +37,7 @@
     "queue_snapshot_mode": "key-events"
   },
   "production_readiness": {
-    "msci_threshold": 0.001,
+    "msci_threshold": 0.1,
     "min_events": 3,
     "min_mcps": 0.0
   },

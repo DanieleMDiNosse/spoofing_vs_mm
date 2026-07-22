@@ -196,7 +196,7 @@ Current model objects:
 - normalized depth kernel with `kappa` and `lambda_`;
 - state-level `L_bid_topN`, `L_ask_topN`, and `DWI`;
 - event-level side collapses after passive small executions;
-- event-level `MSCI`, high only when DWI changes and the opposite-side profile collapses more than the same side;
+- event-level `MSCI`, the bounded arithmetic mean of normalized SCI, opposite-side collapse, and positive side-collapse asymmetry;
 - client-level `MCPS`, the fraction of executions whose MSCI exceeds a chosen `gamma` threshold.
 - candidate deceptive orders are restricted to a configurable pre-execution age window, currently 600 seconds by default,
   so long-lived resting liquidity is not attributed to a later spoofing episode.

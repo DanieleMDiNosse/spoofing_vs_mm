@@ -20,6 +20,8 @@ from spoofing_detection.lob.client_identity_audit import audit_missing_client_tr
 from spoofing_detection.lob.depth_kernel_calibration import load_empirical_kernel_weights
 from spoofing_detection.lob.spoofing_metric_plots import write_spoofing_metric_dashboard
 from spoofing_detection.lob.spoofing_metrics import (
+    MSCI_DEFINITION,
+    MSCI_RANGE,
     compute_exploratory_metrics,
     compute_mcps_scores,
     infer_tick_size_from_best_quotes,
@@ -57,6 +59,13 @@ def _analysis_metadata() -> dict[str, str]:
         "analytical_event_population": "all_passive_execution_clusters",
         "mcps_population": "all_attributable_client_execution_clusters",
         "review_event_selection": "canonically_assigned_matched_withdrawal_clusters_only",
+    }
+
+
+def _msci_metadata() -> dict[str, Any]:
+    return {
+        "msci_definition": MSCI_DEFINITION,
+        "msci_range": list(MSCI_RANGE),
     }
 
 
@@ -190,7 +199,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=600.0,
         help="Maximum age of candidate deceptive orders before the execution, in seconds",
     )
-    parser.add_argument("--gamma-grid", default="0.25,0.5,0.75,1.0", help="Comma-separated MSCI thresholds")
+    parser.add_argument("--gamma-grid", default="0.1,0.2,0.3,0.4,0.5,0.6", help="Comma-separated MSCI thresholds")
     parser.add_argument("--tick-size", type=float, default=None, help="Optional explicit tick size")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional raw-row cap for smoke runs")
     parser.add_argument(
@@ -313,6 +322,7 @@ def main(argv: list[str] | None = None) -> None:
         ),
         "empirical_depth_kernel_sha256": _sha256(args.empirical_depth_kernel),
         "kernel_mode": "empirical" if args.empirical_depth_kernel is not None else "parametric",
+        **_msci_metadata(),
     }
     combined_score_frames: list[pl.DataFrame] = []
     per_depth_counts: dict[str, dict[str, int]] = {}

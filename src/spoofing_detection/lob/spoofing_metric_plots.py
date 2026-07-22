@@ -270,8 +270,9 @@ def write_spoofing_metric_dashboard(
 
     note = (
         "<p><b>How to read this dashboard:</b> DWI is the client's ask-minus-bid weighted top-n depth profile. "
-        "MSCI becomes large only when DWI changes quickly and the liquidity that disappears is mostly on the side "
-        "opposite to the small execution. MCPS is the client-level repetition score: it asks how often MSCI is above "
+        "MSCI is the arithmetic mean of normalized SCI, opposite-side collapse, and positive side-collapse asymmetry. "
+        "It is a secondary aggregate shape diagnostic, not matched-withdrawal evidence. MCPS is the client-level "
+        "repetition score: it asks how often MSCI is above "
         "a chosen threshold. Price-response diagnostics are signed so positive values indicate movement or execution "
         "price advantage in the direction favorable to the small execution; they are economic consistency checks, not "
         "causal proof. The event-level scatter plots show only spoofing-like executions: red points directly "

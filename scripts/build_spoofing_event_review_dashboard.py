@@ -638,9 +638,9 @@ def _parameter_table_html(
             "Event-log and queue-reconstruction interval shown around each selected execution.",
         ),
         (
-            "Post-execution cancellation window",
-            _format_seconds(metric_metadata.get("window_seconds")),
-            "Window after the small execution in which a candidate order cancellation is matched.",
+            "Post-execution matched-withdrawal window",
+            _format_seconds(metric_metadata.get("withdrawal_window_seconds")),
+            "Window after the execution cluster in which an attributed candidate-order cancellation is matched.",
         ),
         *kernel_rows,
         ("epsilon", _format_number(metric_metadata.get("epsilon")), "Small stabilizer used in denominators."),
@@ -769,7 +769,7 @@ th {{ background: #f1f4f9; position: sticky; top: 0; }}
     <li><b>Trading capacity</b> is shown as code plus label: <b>1</b> = Dealing on own account; <b>2</b> = Matched principal; <b>3</b> = Any other capacity.</li>
     <li><b>DWI</b> is the multilevel distance-weighted imbalance of the client's top-N footprint: positive values are ask-heavy, negative values are bid-heavy.</li>
     <li><b>SCI</b> measures how abruptly DWI changes between the pre-execution and post-cancel snapshots.</li>
-    <li><b>MSCI</b> combines SCI with side-specific collapse: it is high only when the opposite-side candidate liquidity collapses more than the same-side liquidity.</li>
+    <li><b>MSCI</b> is the 0–1 arithmetic mean of normalized SCI, opposite-side collapse, and positive collapse asymmetry. It is a secondary shape diagnostic, not evidence of order-level matched withdrawal.</li>
     <li><b>Price-response diagnostics</b> are signed so positive values mean the mid-price or execution price moved in the direction favorable to the small execution; they are economic consistency checks, not causal proof.</li>
     <li><b>Candidate deceptive orders</b> are same-client, opposite-side, top-N orders visible before the execution and posted within the episode age window.</li>
     <li><b>Matched spoofing-like events</b> are the strict subset where one of those candidate order IDs is cancelled after the execution.</li>

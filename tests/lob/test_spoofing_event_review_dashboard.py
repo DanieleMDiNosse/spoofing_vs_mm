@@ -457,6 +457,7 @@ def test_empirical_kernel_parameter_table_does_not_present_parametric_coefficien
         metric_metadata={
             "top_n": 5,
             "window_seconds": 10.0,
+            "withdrawal_window_seconds": 2.0,
             "max_deceptive_order_age_seconds": 90.0,
             "kernel_mode": "empirical",
             "empirical_depth_kernel": "outputs/kernel/empirical_depth_kernel.parquet",
@@ -469,6 +470,9 @@ def test_empirical_kernel_parameter_table_does_not_present_parametric_coefficien
     assert "empirical" in html
     assert "Empirical-kernel artifact" in html
     assert "outputs/kernel/empirical_depth_kernel.parquet" in html
+    assert "Post-execution matched-withdrawal window" in html
+    assert "<td>2 seconds</td>" in html
+    assert "<td>10 seconds</td>" not in html
     assert "<td>kappa</td>" not in html
     assert "<td>lambda</td>" not in html
 
