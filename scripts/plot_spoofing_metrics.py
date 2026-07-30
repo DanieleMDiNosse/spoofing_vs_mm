@@ -18,12 +18,20 @@ from spoofing_detection.lob.spoofing_metric_plots import write_spoofing_metric_d
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot multilevel top-n spoofing surveillance diagnostics.")
     parser.add_argument("--execution-metrics", type=Path, required=True, help="execution_metrics.parquet")
-    parser.add_argument("--state-time-series", type=Path, default=None, help="client_metric_time_series.parquet")
-    parser.add_argument("--mcps-scores", type=Path, default=None, help="client_mcps_scores.parquet")
+    parser.add_argument("--state-time-series", type=Path, default=None, help="actor_metric_time_series.parquet")
+    parser.add_argument("--mcps-scores", type=Path, default=None, help="actor_mcps_scores.parquet")
     parser.add_argument("--output-html", type=Path, required=True, help="Output dashboard HTML")
     parser.add_argument("--title", default="Multilevel top-n spoofing surveillance metrics", help="Dashboard title")
-    parser.add_argument("--client-id", default=None, help="Optional client id to show in DWI time series")
-    return parser.parse_args(argv)
+    parser.add_argument("--actor-key", default=None, help="Optional canonical actor_key to show in the DWI time series")
+    parser.add_argument(
+        "--client-id",
+        default=None,
+        help="Legacy client selector; on actor-aware data it matches client_original actor_id only",
+    )
+    args = parser.parse_args(argv)
+    if args.actor_key is not None and args.client_id is not None:
+        parser.error("specify --actor-key or --client-id, not both")
+    return args
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -37,6 +45,7 @@ def main(argv: list[str] | None = None) -> None:
         mcps_scores=mcps_scores,
         output_html=args.output_html,
         title=args.title,
+        actor_key=args.actor_key,
         client_id=args.client_id,
     )
     print(f"html: {args.output_html}")

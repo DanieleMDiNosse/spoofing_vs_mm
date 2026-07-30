@@ -29,12 +29,38 @@ def _markdown_table(df: pl.DataFrame) -> str:
 def build_report(*, scores_path: Path, annotations_path: Path, output_dir: Path) -> dict[str, Path]:
     scores = pl.read_parquet(scores_path)
     annotations = validate_annotations(pl.read_csv(annotations_path))
-    table = build_threshold_table(scores, annotations, score_column="MSCI", thresholds=[0.0, 0.1, 0.25, 0.5, 0.75, 1.0])
+    score_column = "MSCI_resting_profile" if "MSCI_resting_profile" in scores.columns else "MSCI"
+    strata_columns = ("execution_anchor_mode",) if "execution_anchor_mode" in scores.columns else ()
+    table = build_threshold_table(
+        scores,
+        annotations,
+        score_column=score_column,
+        thresholds=[0.0, 0.1, 0.25, 0.5, 1.0, 1.5],
+        strata_columns=strata_columns,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = output_dir / "threshold_calibration.csv"
     markdown_path = output_dir / "threshold_calibration.md"
     table.write_csv(csv_path)
-    markdown_path.write_text("\n".join(["# Threshold Calibration", "", "This report summarizes alert workload and positive-label concentration by MSCI threshold.", "", _markdown_table(table), "", "Interpret precision_proxy cautiously when labels are sparse or exploratory.", ""]))
+    markdown_path.write_text(
+        "\n".join(
+            [
+                "# Threshold Calibration",
+                "",
+                "This report summarizes alert workload and positive-label concentration by "
+                "resting-profile MSCI threshold, stratified by execution anchor when available.",
+                "",
+                _markdown_table(table),
+                "",
+                "Threshold rows are exploratory calibration evidence, not selected production "
+                "thresholds. Passive and aggressive anchors must not be pooled; no aggressive "
+                "threshold is inferred here.",
+                "",
+                "Interpret precision_proxy cautiously when labels are sparse or exploratory.",
+                "",
+            ]
+        )
+    )
     return {"csv": csv_path, "markdown": markdown_path}
 
 

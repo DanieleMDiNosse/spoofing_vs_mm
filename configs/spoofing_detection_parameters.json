@@ -1,88 +1,110 @@
 {
   "metrics": {
     "top_n": 5,
+    "_comment_top_n": "Numero di livelli visibili bid e ask usati per costruire il profilo di profondità ponderato di ogni attore e calcolare DWI/MSCI.",
     "kappa": 1.0,
+    "_comment_kappa": "Parametro del kernel che rappresenta la protezione dal rischio di esecuzione: valori maggiori aumentano la protezione assegnata ai livelli lontani dalla migliore quotazione.",
     "lambda": 1.0,
-    "epsilon": 1e-12,
+    "_comment_lambda": "Parametro di decadimento della visibilità del kernel: valori maggiori riducono più rapidamente il peso dei livelli lontani dalla migliore quotazione.",
     "window_seconds": 10.0,
+    "_comment_window_seconds": "Finestra temporale, dopo l'esecuzione, usata per sintetizzare il percorso SCI e misurare la risposta della postura nel book.",
     "withdrawal_window_seconds": 2.0,
+    "_comment_withdrawal_window_seconds": "Ritardo massimo, dalla fine del cluster di esecuzione, entro cui una cancellazione sul lato potenzialmente ingannevole viene considerata un ritiro rapido attribuibile.",
     "reversion_horizon_seconds": 2.0,
+    "_comment_reversion_horizon_seconds": "Orizzonte temporale misurato separatamente da ogni cancellazione assegnata per calcolare la reversione del prezzo ancorata alla cancellazione.",
     "execution_cluster_max_gap_ms": 100,
+    "_comment_execution_cluster_max_gap_ms": "Intervallo massimo, in millisecondi, tra fill compatibili che vengono aggregati nello stesso cluster e nello stesso ramo di ancoraggio; è una soglia operativa da sottoporre ad analisi di sensibilità.",
     "max_deceptive_order_age_seconds": 90.0,
-    "gamma_grid": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+    "_comment_max_deceptive_order_age_seconds": "Età massima, prima dell'esecuzione, di un ordine candidato preesistente dello stesso attore sul lato opposto; gli ordini più vecchi sono esclusi come liquidità di fondo obsoleta.",
+    "gamma_grid": [0.0, 0.1, 0.25, 0.5, 1.0, 1.5],
+    "_comment_gamma_grid": "Soglie MSCI con segno usate per trasformare i superamenti a livello di evento nei punteggi di ripetizione MCPS per attore e tipo di ancoraggio.",
     "tick_size": null,
-    "state_client_mode": "passive-fill-clients",
+    "_comment_tick_size": "Incremento minimo di prezzo usato per le distanze di profondità; null richiede di inferirlo dal pannello ricostruito delle migliori quotazioni bid/ask.",
+    "state_client_mode": "execution-actors",
+    "_comment_state_client_mode": "Determina per quali attori produrre le righe di stato DWI: 'execution-actors' conserva gli attori osservati nei fill selezionati, 'all' tutti gli attori attivi, 'passive-fill-clients' mantiene la compatibilità storica limitata ai client passivi.",
     "compact_state": true,
-    "empirical_depth_kernel": null
+    "_comment_compact_state": "Se true, omette le colonne diagnostiche per singolo livello da actor_metric_time_series, conservando gli stati aggregati DWI, L_bid e L_ask necessari agli output successivi.",
+    "empirical_depth_kernel": null,
+    "_comment_empirical_depth_kernel": "Percorso opzionale a un kernel empirico parquet/csv; se valorizzato, i pesi empirici per rango sostituiscono il kernel scalare definito da kappa e lambda.",
+    "actor_identity_mode": "client_then_firm",
+    "_comment_actor_identity_mode": "Modalità di risoluzione dell'attore: usa prima lo shortcode originale del client e, se assente, un identificativo firm con namespace.",
+    "execution_anchor_modes": ["passive", "aggressive"],
+    "_comment_execution_anchor_modes": "Rami di esecuzione inclusi nell'analisi; passive e aggressive restano strati analitici separati."
   },
   "grid": {
     "depth_grid": [1, 2, 3, 5, 10],
+    "_comment_depth_grid": "Valori top-N della profondità del book valutati nell'analisi di sensibilità multidepth.",
     "kappa": 1.0,
+    "_comment_kappa": "Valore di kappa applicato a ogni profondità della griglia, salvo override esplicito da CLI.",
     "lambda": 1.0,
-    "epsilon": 1e-12,
+    "_comment_lambda": "Valore di lambda applicato a ogni profondità della griglia, salvo override esplicito da CLI.",
     "window_seconds": 10.0,
+    "_comment_window_seconds": "Finestra temporale post-esecuzione usata in ogni run della griglia.",
     "withdrawal_window_seconds": 2.0,
-    "reversion_horizon_seconds": 2.0,
+    "_comment_withdrawal_window_seconds": "Ritardo massimo dalla fine del cluster a una cancellazione attribuita allo stesso attore, applicato a ogni run della griglia.",
+    "reversion_horizon_seconds": 3.0,
+    "_comment_reversion_horizon_seconds": "Orizzonte della reversione di prezzo ancorata alla cancellazione, applicato a ogni run della griglia.",
     "execution_cluster_max_gap_ms": 100,
-    "max_deceptive_order_age_seconds": 90.0,
-    "gamma_grid": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+    "_comment_execution_cluster_max_gap_ms": "Intervallo massimo inclusivo tra fill compatibili aggregati nello stesso cluster e ramo di ancoraggio, applicato a ogni run della griglia.",
+    "max_deceptive_order_age_seconds": 15.0,
+    "_comment_max_deceptive_order_age_seconds": "Età massima degli ordini candidati potenzialmente ingannevoli prima dell'esecuzione, applicata a ogni run della griglia.",
+    "gamma_grid": [0.0, 0.1, 0.25, 0.5, 1.0, 1.5],
+    "_comment_gamma_grid": "Soglie di contrasto MSCI con segno usate per calcolare MCPS a ogni profondità della griglia.",
     "tick_size": null,
+    "_comment_tick_size": "Tick size esplicito per i run della griglia; null richiede di inferirlo dal pannello delle quotazioni.",
     "make_dashboard": false,
-    "empirical_depth_kernel": null
+    "_comment_make_dashboard": "Se true, genera spoofing_metric_dashboard.html per ogni profondità, oltre agli output parquet e di sintesi.",
+    "empirical_depth_kernel": null,
+    "_comment_empirical_depth_kernel": "Percorso opzionale a un kernel empirico parquet/csv applicato a tutti i run della griglia.",
+    "actor_identity_mode": "client_then_firm",
+    "_comment_actor_identity_mode": "Modalità di risoluzione canonica dell'attore applicata a ogni run della griglia.",
+    "execution_anchor_modes": ["passive", "aggressive"],
+    "_comment_execution_anchor_modes": "Rami di esecuzione inclusi in ogni run della griglia e mantenuti come strati analitici separati."
   },
   "event_review": {
     "top_n": 10,
+    "_comment_top_n": "Numero di livelli visibili del book ricostruiti e mostrati negli snapshot delle code per la revisione degli eventi.",
     "pre_window_seconds": 30.0,
-    "post_window_seconds": 35.0,
-    "queue_snapshot_mode": "key-events"
+    "_comment_pre_window_seconds": "Intervallo precedente all'esecuzione selezionata mostrato nel log dell'evento e nel contesto delle code LOB.",
+    "post_window_seconds": 30.0,
+    "_comment_post_window_seconds": "Intervallo successivo all'esecuzione selezionata mostrato nel log dell'evento e nel contesto delle code LOB.",
+    "queue_snapshot_mode": "key-events",
+    "_comment_queue_snapshot_mode": "Densità degli snapshot: 'all' salva ogni evento della finestra, mentre 'key-events' salva soltanto gli snapshot pre-esecuzione, esecuzione e post-esecuzione più vicini per ridurre la dimensione della dashboard."
   },
   "production_readiness": {
-    "msci_threshold": 0.1,
+    "msci_threshold_by_anchor": {
+      "passive": 0.1,
+      "_comment_passive": "Soglia MSCI calibrata per gli eventi ancorati a esecuzioni passive.",
+      "aggressive": null,
+      "_comment_aggressive": "null indica che per gli eventi aggressivi non è disponibile una soglia calibrata; gli alert dipendenti dalla soglia vengono quindi soppressi."
+    },
+    "_comment_msci_threshold_by_anchor": "Soglia MSCI del profilo resting distinta per tipo di ancoraggio, usata per costruire le feature di superamento a livello attore-sessione.",
     "min_events": 3,
-    "min_mcps": 0.0
+    "_comment_min_events": "Numero minimo di eventi ripetuti con ritiro associato necessario per emettere un alert destinato alla revisione umana.",
+    "min_mcps": 0.0,
+    "_comment_min_mcps": "Quota minima opzionale di eventi associati richiesta per un alert; 0 disabilita questo filtro, evitando di escludere attori molto attivi solo perché hanno un denominatore elevato.",
+    "actor_identity_mode": "client_then_firm",
+    "_comment_actor_identity_mode": "Risolutore dell'attore usato dalle metriche a monte: prima shortcode originale del client, poi fallback alla firm con namespace.",
+    "execution_anchor_modes": [
+      "passive",
+      "aggressive"
+    ],
+    "_comment_execution_anchor_modes": "Rami di esecuzione configurati e riportati nei metadati di production readiness, indipendentemente da quali siano presenti nell'input specifico."
   },
-  "parameter_descriptions": {
-    "metrics": {
-      "top_n": "Number of visible bid/ask book levels used to build each client's weighted depth profile for DWI/MSCI computation.",
-      "kappa": "Depth-kernel execution-risk protection parameter; larger values increase the protection-from-execution component for levels away from the best quote.",
-      "lambda": "Depth-kernel visibility-decay parameter; larger values down-weight levels farther from the best quote more aggressively.",
-      "epsilon": "Small numerical stabilizer used in denominators to avoid division by zero without changing ordinary finite ratios.",
-      "window_seconds": "Post-execution clock-time window used to collapse SCI paths and measure posture-to-execution response.",
-      "withdrawal_window_seconds": "Maximum delay from execution-cluster end to an attributed deceptive-side cancellation; the primary rapid-withdrawal definition is 2 seconds.",
-      "reversion_horizon_seconds": "Clock-time horizon measured separately from each assigned cancellation for cancel-anchored price reversion.",
-      "execution_cluster_max_gap_ms": "Operational maximum clock-time gap between compatible passive child fills merged into one execution cluster; sensitivity analysis is required because this is not a universal market constant.",
-      "max_deceptive_order_age_seconds": "Maximum allowed age of a pre-existing same-client opposite-side candidate order before the execution; older orders are excluded as stale background liquidity.",
-      "gamma_grid": "MSCI thresholds used to aggregate event-level MSCI exceedances into client-level MCPS repetition scores.",
-      "tick_size": "Explicit minimum price increment for depth-distance calculations; null means infer it from the reconstructed best bid/ask quote panel.",
-      "state_client_mode": "Controls which clients get DWI state rows: 'all' keeps all clients, while 'passive-fill-clients' keeps only clients that can enter passive-fill surveillance events to reduce memory.",
-      "compact_state": "When true, omits per-level diagnostic columns from client_metric_time_series while keeping the aggregate DWI/L_bid/L_ask state needed by downstream outputs.",
-      "empirical_depth_kernel": "Optional empirical depth-kernel parquet/csv artifact. When set, rank weights replace the scalar kappa/lambda kernel in DWI/MSCI weighting."
+  "session_features": {
+    "msci_threshold_by_anchor": {
+      "passive": 0.1,
+      "_comment_passive": "Soglia MSCI calibrata usata per contare i superamenti negli eventi passivi.",
+      "aggressive": null,
+      "_comment_aggressive": "null conserva esplicitamente l'assenza di calibrazione per gli eventi aggressivi, senza riutilizzare la soglia passiva."
     },
-    "grid": {
-      "depth_grid": "Set of top-N depths to evaluate in the multidepth sensitivity grid.",
-      "kappa": "Depth-kernel execution-risk protection parameter used for every depth-grid run unless overridden on the CLI.",
-      "lambda": "Depth-kernel visibility-decay parameter used for every depth-grid run unless overridden on the CLI.",
-      "epsilon": "Small denominator stabilizer used for every depth-grid run.",
-      "window_seconds": "Post-execution clock-time window used for every depth-grid run.",
-      "withdrawal_window_seconds": "Maximum delay from execution-cluster end to an attributed same-client cancellation in every depth-grid run.",
-      "reversion_horizon_seconds": "Cancel-anchored price-reversion horizon used in every depth-grid run.",
-      "execution_cluster_max_gap_ms": "Maximum inclusive gap between compatible passive child fills merged into one execution cluster in every depth-grid run.",
-      "max_deceptive_order_age_seconds": "Maximum age of candidate deceptive orders before the execution in every depth-grid run.",
-      "gamma_grid": "MSCI thresholds used to compute MCPS for each depth in the grid.",
-      "tick_size": "Explicit tick size for grid runs; null means infer it from the quote panel.",
-      "make_dashboard": "When true, writes a spoofing_metric_dashboard.html for each depth run in addition to parquet and summary outputs.",
-      "empirical_depth_kernel": "Optional empirical depth-kernel parquet/csv artifact applied to every depth-grid run when present."
-    },
-    "event_review": {
-      "top_n": "Number of visible book levels to reconstruct and display in event-review queue snapshots.",
-      "pre_window_seconds": "Clock-time interval before the selected execution shown in the event-review log and LOB queue context.",
-      "post_window_seconds": "Clock-time interval after the selected execution shown in the event-review log and LOB queue context.",
-      "queue_snapshot_mode": "Queue output density: 'all' writes snapshots for every event in the review window, while 'key-events' writes only nearest pre/execution/post snapshots to reduce dashboard size."
-    },
-    "production_readiness": {
-      "msci_threshold": "Event-level MSCI cutoff used when counting client-session MSCI exceedances for alert features.",
-      "min_events": "Minimum number of repeated matched-withdrawal events required before emitting a human-review alert.",
-      "min_mcps": "Optional minimum matched-event share required for an alert; 0 disables the share floor so active clients with many matched withdrawals are not dropped only because their denominator is large."
-    }
+    "_comment_msci_threshold_by_anchor": "Soglia MSCI del profilo resting distinta per tipo di ancoraggio, usata nel conteggio dei superamenti a livello attore-sessione.",
+    "actor_identity_mode": "client_then_firm",
+    "_comment_actor_identity_mode": "Risolutore dell'attore usato dalle metriche a monte: prima shortcode originale del client, poi fallback alla firm con namespace.",
+    "execution_anchor_modes": [
+      "passive",
+      "aggressive"
+    ],
+    "_comment_execution_anchor_modes": "Rami di esecuzione configurati e riportati nei metadati delle feature di sessione, indipendentemente da quali siano presenti nell'input specifico."
   }
 }

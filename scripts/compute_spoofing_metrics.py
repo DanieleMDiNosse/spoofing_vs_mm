@@ -16,24 +16,33 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from spoofing_detection.lob.actor_identity import resolve_actor_identity
 from spoofing_detection.lob.client_identity_audit import audit_missing_client_trading_capacity
 from spoofing_detection.lob.depth_kernel_calibration import load_empirical_kernel_weights
+from spoofing_detection.lob.enums import normalize_enum_code
 from spoofing_detection.lob.normalize import to_str_or_none
 from spoofing_detection.lob.spoofing_metrics import (
     MSCI_DEFINITION,
+    MSCI_RESTING_PROFILE_DEFINITION,
     MSCI_RANGE,
+    RATIO_ZERO_DENOMINATOR_POLICY,
+    WITHDRAWAL_PROFILE_SCALE_DEFINITION,
     compute_exploratory_metrics,
     compute_mcps_scores,
     infer_tick_size_from_best_quotes,
 )
-from spoofing_detection.lob.spoofing_config import DEFAULT_SPOOFING_CONFIG_PATH, load_spoofing_config_defaults
+from spoofing_detection.lob.spoofing_config import (
+    DEFAULT_SPOOFING_CONFIG_PATH,
+    load_spoofing_config_defaults,
+    parse_execution_anchor_modes,
+    validate_actor_identity_mode,
+)
 
 
 _CONFIGURABLE_DEFAULT_KEYS = {
     "top_n",
     "kappa",
     "lambda_",
-    "epsilon",
     "window_seconds",
     "withdrawal_window_seconds",
     "reversion_horizon_seconds",
@@ -45,15 +54,22 @@ _CONFIGURABLE_DEFAULT_KEYS = {
     "state_client_mode",
     "compact_state",
     "empirical_depth_kernel",
+    "actor_identity_mode",
+    "execution_anchor_modes",
 }
 
 
 def _population_metadata() -> dict[str, str]:
     return {
-        "analytical_event_population": "all_passive_execution_clusters",
-        "mcps_population": "all_attributable_client_execution_clusters",
+        "analytical_event_population": "all_selected_execution_anchor_clusters",
+        "mcps_population": "all_attributable_actor_execution_clusters_stratified_by_anchor",
         "review_event_selection": "canonically_assigned_matched_withdrawal_clusters_only",
     }
+
+
+OUTPUT_SCHEMA_VERSION = "actor_execution_anchor_v2"
+SCORE_GROUPING = ["actor_key", "execution_anchor_mode"]
+FIRM_FALLBACK_SEMANTICS = "aggregate only when client_original_id is missing"
 
 
 def _parse_float_grid(text: str) -> list[float]:
@@ -61,6 +77,21 @@ def _parse_float_grid(text: str) -> list[float]:
     if not values:
         raise ValueError("grid must contain at least one value")
     return values
+
+
+def _parse_execution_anchor_modes(text: str) -> tuple[str, ...]:
+    return parse_execution_anchor_modes(text)
+
+
+def _normalized_enum_code(column: str) -> pl.Expr:
+    return pl.col(column).map_elements(normalize_enum_code, return_dtype=pl.Int64)
+
+
+def _observed_execution_anchor_modes(executions: pl.DataFrame) -> list[str]:
+    if executions.is_empty() or "execution_anchor_mode" not in executions.columns:
+        return []
+    observed = executions.get_column("execution_anchor_mode").drop_nulls().unique().to_list()
+    return list(parse_execution_anchor_modes(observed)) if observed else []
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -88,10 +119,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Reconstructed lob_event_state_panel.parquet used only for tick-size inference",
     )
     parser.add_argument("--output-dir", type=Path, required=True, help="Output directory")
-    parser.add_argument("--top-n", type=int, default=3, help="Market top-N levels used for client depth profiles")
+    parser.add_argument("--top-n", type=int, default=3, help="Market top-N levels used for actor depth profiles")
     parser.add_argument("--kappa", type=float, default=1.0, help="Execution-risk protection parameter")
     parser.add_argument("--lambda", dest="lambda_", type=float, default=1.0, help="Visibility-decay parameter")
-    parser.add_argument("--epsilon", type=float, default=1e-12, help="Small denominator stabilizer")
     parser.add_argument("--window-seconds", type=float, default=1.0, help="Clock-time post-execution window")
     parser.add_argument(
         "--withdrawal-window-seconds",
@@ -109,7 +139,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--execution-cluster-max-gap-ms",
         type=int,
         default=100,
-        help="Maximum gap between passive child fills merged into one execution cluster",
+        help="Maximum gap between same-anchor child fills merged into one execution cluster",
     )
     parser.add_argument(
         "--max-deceptive-order-age-seconds",
@@ -117,9 +147,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=600.0,
         help="Maximum age of candidate deceptive orders before the execution, in seconds",
     )
-    parser.add_argument("--gamma-grid", default="0.1,0.2,0.3,0.4,0.5,0.6", help="Comma-separated MSCI thresholds")
+    parser.add_argument("--gamma-grid", default="0,0.1,0.25,0.5,1.0,1.5", help="Comma-separated signed MSCI thresholds")
     parser.add_argument("--tick-size", type=float, default=None, help="Optional explicit tick size")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional raw-row cap for smoke runs")
+    parser.add_argument(
+        "--actor-identity-mode",
+        choices=("client_then_firm",),
+        default="client_then_firm",
+        help="Resolve the original client shortcode first, then use firm fallback only when client is missing.",
+    )
+    parser.add_argument(
+        "--execution-anchor-modes",
+        default="passive",
+        help="Comma-separated execution branches; canonical order is passive,aggressive.",
+    )
     parser.add_argument(
         "--empirical-depth-kernel",
         type=Path,
@@ -128,21 +169,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--state-client-mode",
-        choices=("all", "passive-fill-clients"),
+        choices=("all", "execution-actors", "passive-fill-clients"),
         default="all",
         help=(
-            "Reduce client_metric_time_series memory by emitting DWI state rows only for clients that can enter "
-            "passive fill surveillance events. Use 'all' to preserve the full legacy state table."
+            "Choose actors represented in actor_metric_time_series. 'execution-actors' retains every client/firm "
+            "actor observed on a selected passive/aggressive fill while avoiding state rows for non-executing actors; "
+            "'all' emits all active actor profiles; 'passive-fill-clients' is the legacy client-only filter."
         ),
     )
     parser.add_argument(
         "--compact-state",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Omit per-level diagnostic columns from client_metric_time_series while keeping DWI/L_bid/L_ask metrics.",
+        help="Omit per-level diagnostic columns from actor_metric_time_series while keeping DWI/L_bid/L_ask metrics.",
     )
     parser.set_defaults(**config_defaults)
     args = parser.parse_args(argv)
+    try:
+        args.actor_identity_mode = validate_actor_identity_mode(args.actor_identity_mode)
+        args.execution_anchor_modes = _parse_execution_anchor_modes(args.execution_anchor_modes)
+    except ValueError as exc:
+        parser.error(str(exc))
+    valid_state_client_modes = ("all", "execution-actors", "passive-fill-clients")
+    if args.state_client_mode not in valid_state_client_modes:
+        parser.error(
+            "--state-client-mode must be one of: " + ", ".join(valid_state_client_modes)
+        )
     if args.empirical_depth_kernel is not None and not isinstance(args.empirical_depth_kernel, Path):
         args.empirical_depth_kernel = Path(args.empirical_depth_kernel)
     if args.execution_cluster_max_gap_ms < 0:
@@ -172,10 +224,10 @@ def _infer_state_client_ids(raw_events: pl.DataFrame, *, mode: str) -> set[str] 
         raise ValueError(f"cannot infer passive-fill clients; missing columns: {', '.join(missing)}")
 
     client_rows = raw_events.filter(
-        (pl.col("ORDEREVENTTYPE (*)") == 3)
+        (_normalized_enum_code("ORDEREVENTTYPE (*)") == 3)
         & (pl.col("PASSIVEORDER").cast(pl.Utf8).str.to_uppercase() == "Y")
         & (pl.col("AGGRESSIVEORDER").cast(pl.Utf8).fill_null("N").str.to_uppercase() != "Y")
-        & pl.col("ORDERTYPE (*)").is_in([2, 5])
+        & _normalized_enum_code("ORDERTYPE (*)").is_in([2, 5])
         & pl.col("NMSC_ORIGINALCLIENTIDSHORTCODE").is_not_null()
     )
     return {
@@ -183,6 +235,55 @@ def _infer_state_client_ids(raw_events: pl.DataFrame, *, mode: str) -> set[str] 
         for value in client_rows.get_column("NMSC_ORIGINALCLIENTIDSHORTCODE").unique().to_list()
         if (client_id := to_str_or_none(value)) is not None
     }
+
+
+def _infer_state_actor_keys(
+    raw_events: pl.DataFrame,
+    *,
+    mode: str,
+    execution_anchor_modes: tuple[str, ...],
+) -> set[str] | None:
+    if mode == "all":
+        return None
+    if mode == "passive-fill-clients":
+        client_ids = _infer_state_client_ids(raw_events, mode=mode)
+        return {f"client_original:{client_id}" for client_id in client_ids or ()}
+    if mode != "execution-actors":
+        raise ValueError(f"unknown state actor mode: {mode}")
+
+    required = {
+        "ORDEREVENTTYPE (*)",
+        "PASSIVEORDER",
+        "AGGRESSIVEORDER",
+        "NMSC_ORIGINALCLIENTIDSHORTCODE",
+        "FIRMID",
+    }
+    missing = sorted(required - set(raw_events.columns))
+    if missing:
+        raise ValueError(f"cannot infer execution actors; missing columns: {', '.join(missing)}")
+
+    passive_flag = pl.col("PASSIVEORDER").cast(pl.String).fill_null("").str.to_uppercase() == "Y"
+    aggressive_flag = pl.col("AGGRESSIVEORDER").cast(pl.String).fill_null("").str.to_uppercase() == "Y"
+    selected_role = pl.lit(False)
+    if "passive" in execution_anchor_modes:
+        selected_role = selected_role | (passive_flag & ~aggressive_flag)
+    if "aggressive" in execution_anchor_modes:
+        selected_role = selected_role | (aggressive_flag & ~passive_flag)
+
+    identity_rows = (
+        raw_events.filter((_normalized_enum_code("ORDEREVENTTYPE (*)") == 3) & selected_role)
+        .select("NMSC_ORIGINALCLIENTIDSHORTCODE", "FIRMID")
+        .unique()
+    )
+    actor_keys: set[str] = set()
+    for row in identity_rows.iter_rows(named=True):
+        identity = resolve_actor_identity(
+            client_original_id=row["NMSC_ORIGINALCLIENTIDSHORTCODE"],
+            firm_id=row["FIRMID"],
+        )
+        if identity is not None:
+            actor_keys.add(identity.actor_key)
+    return actor_keys
 
 
 def _write_parquet(df: pl.DataFrame, path: Path) -> None:
@@ -218,6 +319,38 @@ def _true_count(df: pl.DataFrame, column: str) -> int:
     return int(df.select(pl.col(column).fill_null(False).sum()).item())
 
 
+def _grouped_counts(
+    frame: pl.DataFrame,
+    group_columns: list[str],
+    *,
+    flag_column: str | None = None,
+) -> list[dict[str, Any]]:
+    if frame.is_empty() or any(column not in frame.columns for column in group_columns):
+        return []
+    selected = frame
+    if flag_column is not None:
+        if flag_column not in selected.columns:
+            return []
+        selected = selected.filter(pl.col(flag_column).fill_null(False))
+    if selected.is_empty():
+        return []
+    return selected.group_by(group_columns).len(name="rows").sort(group_columns).to_dicts()
+
+
+def _missing_actor_identity_rows(raw_events: pl.DataFrame) -> int:
+    def missing(column: str) -> pl.Expr:
+        if column not in raw_events.columns:
+            return pl.lit(True)
+        text = pl.col(column).cast(pl.Utf8, strict=False).str.strip_chars().str.to_lowercase()
+        return pl.col(column).is_null() | text.is_in(["", "nan", "none", "null"])
+
+    return int(
+        raw_events.select(
+            (missing("NMSC_ORIGINALCLIENTIDSHORTCODE") & missing("FIRMID")).sum()
+        ).item()
+    )
+
+
 def _markdown_table(rows: list[dict[str, Any]], cols: list[str]) -> list[str]:
     if not rows:
         return ["No rows to show."]
@@ -229,24 +362,53 @@ def _markdown_table(rows: list[dict[str, Any]], cols: list[str]) -> list[str]:
     return out
 
 
+def _stratified_top_rows(
+    frame: pl.DataFrame,
+    *,
+    columns: list[str],
+    sort_by: list[str],
+    descending: list[bool],
+    limit: int,
+) -> list[dict[str, Any]]:
+    ranked = frame.sort(sort_by, descending=descending)
+    strata = [column for column in ("identity_level", "execution_anchor_mode") if column in ranked.columns]
+    if not strata:
+        return ranked.head(limit).select(columns).to_dicts()
+
+    rows: list[dict[str, Any]] = []
+    strata_rows = sorted(
+        ranked.select(strata).unique().iter_rows(named=True),
+        key=lambda row: tuple(str(row[column]) for column in strata),
+    )
+    for stratum in strata_rows:
+        predicate = pl.lit(True)
+        for column in strata:
+            value = stratum[column]
+            predicate &= pl.col(column).is_null() if value is None else pl.col(column) == value
+        rows.extend(ranked.filter(predicate).head(limit).select(columns).to_dicts())
+    return rows
+
+
 def _top_execution_lines(execution_metrics: pl.DataFrame, limit: int = 20) -> list[str]:
-    if execution_metrics.is_empty() or "MSCI" not in execution_metrics.columns:
+    if execution_metrics.is_empty() or "MSCI_resting_profile" not in execution_metrics.columns:
         return ["No eligible executions."]
     cols = [
         col
         for col in (
             "sort_index",
             "event_ts",
-            "client_id",
+            "actor_id",
+            "identity_level",
+            "execution_anchor_mode",
             "execution_side",
             "deceptive_side",
-            "fill_qty",
+            "execution_quantity",
             "DWI_pre_window",
             "DWI_post_window",
             "SCI",
             "collapse_opposite_side",
             "collapse_same_side",
-            "MSCI",
+            "MSCI_resting_profile",
             "favorable_mid_move_pre_fill",
             "post_cancel_mid_reversion",
             "spoofing_compatible_sequence",
@@ -256,14 +418,18 @@ def _top_execution_lines(execution_metrics: pl.DataFrame, limit: int = 20) -> li
         )
         if col in execution_metrics.columns
     ]
-    rows = (
-        execution_metrics.filter(pl.col("MSCI").is_not_null())
-        .sort("MSCI", descending=True)
-        .head(limit)
-        .select(cols)
-        .to_dicts()
+    rows = _stratified_top_rows(
+        execution_metrics.filter(pl.col("MSCI_resting_profile").is_not_null()),
+        columns=cols,
+        sort_by=["MSCI_resting_profile"],
+        descending=[True],
+        limit=limit,
     )
-    return _markdown_table(rows, cols) if rows else ["No executions with finite MSCI."]
+    return (
+        _markdown_table(rows, cols)
+        if rows
+        else ["No executions with finite MSCI_resting_profile."]
+    )
 
 
 def _top_deceptive_cancel_lines(execution_metrics: pl.DataFrame, limit: int = 20) -> list[str]:
@@ -277,23 +443,30 @@ def _top_deceptive_cancel_lines(execution_metrics: pl.DataFrame, limit: int = 20
         for col in (
             "sort_index",
             "event_ts",
-            "client_id",
+            "actor_id",
+            "identity_level",
+            "execution_anchor_mode",
             "execution_side",
             "deceptive_side",
-            "fill_qty",
+            "execution_quantity",
             "candidate_deceptive_visible_qty_pre",
             "matched_deceptive_cancel_visible_qty_window",
             "matched_deceptive_cancel_order_ids_window",
             "matched_deceptive_cancel_fraction_window",
-            "MSCI",
+            "MSCI_resting_profile",
+            "withdrawal_profile_scale_event",
         )
         if col in matched.columns
     ]
-    rows = (
-        matched.sort(["matched_deceptive_cancel_visible_qty_window", "MSCI"], descending=[True, True])
-        .head(limit)
-        .select(cols)
-        .to_dicts()
+    rows = _stratified_top_rows(
+        matched,
+        columns=cols,
+        sort_by=[
+            "matched_deceptive_cancel_visible_qty_window",
+            "MSCI_resting_profile",
+        ],
+        descending=[True, True],
+        limit=limit,
     )
     return _markdown_table(rows, cols)
 
@@ -304,15 +477,18 @@ def _top_mcps_lines(mcps_scores: pl.DataFrame, limit: int = 20) -> list[str]:
     cols = [
         col
         for col in (
-            "client_id",
+            "actor_key",
+            "actor_id",
+            "identity_level",
+            "execution_anchor_mode",
             "top_n",
             "gamma",
             "executions",
             "finite_msci_executions",
             "msci_above_gamma_count",
-            "MCPS",
-            "max_MSCI",
-            "mean_MSCI",
+            "MCPS_resting_profile",
+            "max_MSCI_resting_profile",
+            "mean_MSCI_resting_profile",
             "mean_favorable_mid_move_pre_fill",
             "mean_post_cancel_mid_reversion",
             "mean_execution_price_advantage_vs_posture_mid",
@@ -321,7 +497,13 @@ def _top_mcps_lines(mcps_scores: pl.DataFrame, limit: int = 20) -> list[str]:
         )
         if col in mcps_scores.columns
     ]
-    rows = mcps_scores.sort(["MCPS", "max_MSCI", "executions"], descending=[True, True, True]).head(limit).select(cols).to_dicts()
+    rows = _stratified_top_rows(
+        mcps_scores,
+        columns=cols,
+        sort_by=["MCPS_resting_profile", "max_MSCI_resting_profile", "executions"],
+        descending=[True, True, True],
+        limit=limit,
+    )
     return _markdown_table(rows, cols)
 
 
@@ -357,14 +539,16 @@ def _write_summary_report(
         "",
         "## How to read this report",
         "",
-        "- DWI tells whether a client is ask-heavy or bid-heavy in the weighted top-n book profile.",
+        "- DWI tells whether an actor is ask-heavy or bid-heavy in the weighted top-n book profile.",
         "- SCI is the absolute DWI change from immediately before an execution cluster to the post-cluster window.",
         "- Collapse measures how much weighted liquidity disappears after the cluster on each side of the book.",
-        "- MSCI is the equally weighted mean of normalized SCI, opposite-side collapse, and positive collapse asymmetry; it ranges from 0 to 1.",
+        "- MSCI_resting_profile is the common signed resting-profile contrast SCI / 2 + opposite-side collapse - same-side collapse; it ranges from -1 to 2, and negative values mean same-side collapse dominates. MSCI is retained only as a legacy alias.",
+        "- withdrawal_profile_scale_event measures assigned resting withdrawal relative to branch-specific executed quantity. WMSCI_event is retained only as a legacy alias and is not a transformed MSCI.",
+        "- Passive-only same-level and resting-fill diagnostics are null for aggressive anchors; aggressive sweep diagnostics are null for passive anchors.",
         "- Price-response diagnostics are signed so positive values indicate a movement or execution price advantage favorable to the passive fill side; they are economic consistency checks, not causal proof.",
-        "- MCPS is a client-level repetition score: the fraction of execution clusters whose MSCI is above gamma.",
-        "- A candidate deceptive profile is the same client's pre-existing visible depth on the side opposite to the execution cluster, posted within the configured pre-execution age window; the name denotes a screening candidate, not proven intent.",
-        "- Each raw passive child fill belongs to exactly one cluster; each eligible cancellation is assigned to at most one cluster for metric totals.",
+        "- MCPS_resting_profile is an actor-and-anchor repetition score: the fraction of execution clusters whose MSCI_resting_profile is above gamma. MCPS is retained only as a legacy alias.",
+        "- A candidate deceptive profile is the same actor's pre-existing visible depth on the side opposite to the execution cluster, posted within the configured pre-execution age window; the name denotes a screening candidate, not proven intent.",
+        "- Each eligible child fill belongs to exactly one branch-specific cluster; each eligible cancellation is assigned to at most one cluster for metric totals.",
         "- Rapid withdrawal uses its own execution-to-cancel window; it is not the SCI collapse horizon.",
         "- Post-cancel reversion is measured from the state immediately before each assigned physical cancellation to that cancellation's own reversion horizon, then quantity-and-delay weighted within the cluster.",
         "- The spoofing-compatible sequence is a transparent descriptive gate, not a statistical test, score, or intent label: rapid attributed cancellation, fill smaller than withdrawn quantity, favorable pre-fill mid move, and positive cancel-anchored mid reversion must all be present.",
@@ -376,7 +560,7 @@ def _write_summary_report(
         f"- top_n: {metadata['top_n']}",
         f"- kappa: {metadata['kappa']}",
         f"- lambda: {metadata['lambda_']}",
-        f"- epsilon: {metadata['epsilon']}",
+        f"- ratio_zero_denominator_policy: {metadata['ratio_zero_denominator_policy']}",
         f"- window_seconds: {metadata['window_seconds']}",
         f"- withdrawal_window_seconds: {metadata.get('withdrawal_window_seconds', 2.0)}",
         f"- reversion_horizon_seconds: {metadata.get('reversion_horizon_seconds', 2.0)}",
@@ -384,36 +568,47 @@ def _write_summary_report(
         f"- max_deceptive_order_age_seconds: {metadata['max_deceptive_order_age_seconds']}",
         f"- gamma_grid: {metadata['gamma_grid']}",
         f"- tick_size: {metadata['tick_size']}",
-        "- identity: NMSC_ORIGINALCLIENTIDSHORTCODE only",
-        "- market orders included: false",
-        "- MCPS population: all attributable-client execution clusters",
+        f"- output_schema_version: {metadata['output_schema_version']}",
+        f"- actor_identity_mode: {metadata['actor_identity_mode']}",
+        f"- execution_anchor_modes: {metadata['execution_anchor_modes']}",
+        f"- firm_fallback_semantics: {metadata['firm_fallback_semantics']}",
+        "- MCPS population: all attributable actor execution clusters, stratified by anchor",
         "- review-event selection: canonically assigned matched-withdrawal clusters only",
         "",
         "## Client identity audit",
         "",
     ]
     lines.extend(_client_audit_lines(client_audit))
+    lines.extend(["", "## Actor identity and execution-anchor audit", ""])
+    for key, value in metadata.get("actor_execution_audit", {}).items():
+        lines.append(f"- {key}: {json.dumps(value, sort_keys=True, default=str)}")
     lines.extend(["", "## Row counts", ""])
     for key, value in metadata["row_counts"].items():
         lines.append(f"- {key}: {value}")
     lines.extend(
         [
-            f"- clients_with_topN_profile: {state_time_series.get_column('client_id').n_unique() if not state_time_series.is_empty() and 'client_id' in state_time_series.columns else 0}",
+            f"- actors_with_topN_profile: {state_time_series.get_column('actor_key').n_unique() if not state_time_series.is_empty() and 'actor_key' in state_time_series.columns else 0}",
             f"- finite_SCI_executions: {_finite_count(execution_metrics, 'SCI')}",
-            f"- finite_MSCI_executions: {_finite_count(execution_metrics, 'MSCI')}",
+            f"- finite_MSCI_resting_profile_executions: {_finite_count(execution_metrics, 'MSCI_resting_profile')}",
             f"- clusters_with_observed_post_window_state: {_true_count(execution_metrics, 'has_post_window_state')}",
             f"- clusters_with_candidate_profile_pre: {candidate_count}",
             f"- clusters_with_assigned_matched_cancel_window: {matched_count}",
             f"- candidate_deceptive_order_rows: {candidate_deceptive_orders.height}",
             "",
-            "## Top clients by MCPS",
+            "## Top actors by resting-profile MCPS, stratified by identity level and execution anchor",
             "",
         ]
     )
     lines.extend(_top_mcps_lines(mcps_scores))
-    lines.extend(["", "## Top execution clusters by MSCI (finite MSCI only)", ""])
+    lines.extend(
+        [
+            "",
+            "## Top execution clusters by resting-profile MSCI, stratified by identity level and execution anchor",
+            "",
+        ]
+    )
     lines.extend(_top_execution_lines(execution_metrics))
-    lines.extend(["", "## Top matched deceptive-order cancellations", ""])
+    lines.extend(["", "## Top matched deceptive-order cancellations, stratified by identity level and execution anchor", ""])
     lines.extend(_top_deceptive_cancel_lines(execution_metrics))
     output_path.write_text("\n".join(lines) + "\n")
 
@@ -432,7 +627,11 @@ def main(argv: list[str] | None = None) -> None:
         tick_size = infer_tick_size_from_best_quotes(pl.read_parquet(args.quote_panel))
 
     client_audit = audit_missing_client_trading_capacity(raw_events_for_compute)
-    state_client_ids = _infer_state_client_ids(raw_events_for_compute, mode=args.state_client_mode)
+    state_actor_keys = _infer_state_actor_keys(
+        raw_events_for_compute,
+        mode=args.state_client_mode,
+        execution_anchor_modes=args.execution_anchor_modes,
+    )
     empirical_kernel_weights = (
         load_empirical_kernel_weights(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None
     )
@@ -442,28 +641,28 @@ def main(argv: list[str] | None = None) -> None:
         tick_size=tick_size,
         kappa=args.kappa,
         lambda_=args.lambda_,
-        epsilon=args.epsilon,
         window_seconds=args.window_seconds,
         withdrawal_window_seconds=args.withdrawal_window_seconds,
         reversion_horizon_seconds=args.reversion_horizon_seconds,
         execution_cluster_max_gap_ms=args.execution_cluster_max_gap_ms,
         max_deceptive_order_age_seconds=args.max_deceptive_order_age_seconds,
         include_level_columns=not args.compact_state,
-        state_client_ids=state_client_ids,
+        state_actor_keys=state_actor_keys,
+        execution_anchor_modes=args.execution_anchor_modes,
         empirical_kernel_weights=empirical_kernel_weights,
     )
     mcps_scores = compute_mcps_scores(result.execution_metrics, gamma_grid=gamma_grid)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     paths = {
-        "state_time_series": args.output_dir / "client_metric_time_series.parquet",
+        "state_time_series": args.output_dir / "actor_metric_time_series.parquet",
         "execution_metrics": args.output_dir / "execution_metrics.parquet",
         "candidate_deceptive_orders": args.output_dir / "candidate_deceptive_orders.parquet",
         "execution_cluster_members": args.output_dir / "execution_cluster_members.parquet",
         "execution_cancel_candidates": args.output_dir / "execution_cancel_candidates.parquet",
         "spoofing_compatible_events": args.output_dir / "spoofing_compatible_events.parquet",
         "rejected_executions": args.output_dir / "rejected_executions.parquet",
-        "client_mcps_scores": args.output_dir / "client_mcps_scores.parquet",
+        "actor_mcps_scores": args.output_dir / "actor_mcps_scores.parquet",
         "metadata": args.output_dir / "metadata.json",
         "summary_report": args.output_dir / "summary_report.md",
     }
@@ -480,7 +679,7 @@ def main(argv: list[str] | None = None) -> None:
         args.output_dir / "spoofing_compatible_events.csv",
     )
     _write_parquet(result.rejected_executions, paths["rejected_executions"])
-    _write_parquet(mcps_scores, paths["client_mcps_scores"])
+    _write_parquet(mcps_scores, paths["actor_mcps_scores"])
 
     metadata: dict[str, Any] = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -488,10 +687,16 @@ def main(argv: list[str] | None = None) -> None:
         "quote_panel": str(args.quote_panel) if args.quote_panel is not None else None,
         "output_dir": str(args.output_dir),
         "config": str(args.config) if args.config is not None and args.config.exists() else None,
+        "output_schema_version": OUTPUT_SCHEMA_VERSION,
+        "actor_identity_mode": args.actor_identity_mode,
+        "execution_anchor_modes": list(args.execution_anchor_modes),
+        "observed_execution_anchor_modes": _observed_execution_anchor_modes(result.execution_metrics),
+        "score_grouping": SCORE_GROUPING,
+        "firm_fallback_semantics": FIRM_FALLBACK_SEMANTICS,
         "top_n": args.top_n,
         "kappa": args.kappa,
         "lambda_": args.lambda_,
-        "epsilon": args.epsilon,
+        "ratio_zero_denominator_policy": RATIO_ZERO_DENOMINATOR_POLICY,
         "window_seconds": args.window_seconds,
         "withdrawal_window_seconds": args.withdrawal_window_seconds,
         "reversion_horizon_seconds": args.reversion_horizon_seconds,
@@ -500,15 +705,54 @@ def main(argv: list[str] | None = None) -> None:
         "raw_audit_unit": "child_fill_message",
         "max_deceptive_order_age_seconds": args.max_deceptive_order_age_seconds,
         "msci_definition": MSCI_DEFINITION,
+        "metric_definitions": {
+            "MSCI_resting_profile": MSCI_RESTING_PROFILE_DEFINITION,
+            "withdrawal_profile_scale_event": WITHDRAWAL_PROFILE_SCALE_DEFINITION,
+        },
+        "legacy_metric_aliases": {
+            "MSCI": "MSCI_resting_profile",
+            "WMSCI_event": "withdrawal_profile_scale_event",
+            "fill_qty": "execution_quantity",
+            "event_price": "execution_vwap",
+        },
+        "execution_branch_applicability": {
+            "common_resting_profile": [
+                "MSCI_resting_profile",
+                "SCI",
+                "collapse_opposite_side",
+                "collapse_same_side",
+                "withdrawal_profile_scale_event",
+            ],
+            "passive_only": [
+                "passive_execution_quantity",
+                "passive_execution_vwap",
+                "passive_same_level_market_visible_qty_pre",
+                "passive_same_level_actor_visible_qty_pre",
+                "passive_smallness_fraction_market_level",
+                "passive_smallness_fraction_actor_level",
+                "WMSCI_passive",
+            ],
+            "aggressive_only": [
+                "aggressive_execution_quantity",
+                "aggressive_execution_vwap",
+                "aggressive_child_fill_count",
+                "aggressive_execution_price_level_count",
+                "aggressive_execution_price_min",
+                "aggressive_execution_price_max",
+                "aggressive_execution_sweep_id",
+                "WMSCI_aggressive",
+            ],
+            "non_applicable_policy": "null_not_zero",
+        },
         "msci_range": list(MSCI_RANGE),
         "gamma_grid": gamma_grid,
         "tick_size": tick_size,
-        "identity": "NMSC_ORIGINALCLIENTIDSHORTCODE",
+        "identity": "actor_key",
         "client_only": False,
         "event_metrics_include_unattributable_rows": True,
-        "client_scores_exclude_unattributable_rows": True,
-        "market_orders_included": False,
-        "event_selection": "all_passive_execution_clusters",
+        "actor_scores_exclude_unattributable_rows": True,
+        "market_orders_included": "aggressive" in args.execution_anchor_modes,
+        "event_selection": "selected_execution_anchor_clusters",
         "behavioral_gate": (
             "rapid_attributed_cancel AND fill_qty_lt_withdrawn_qty AND favorable_pre_fill_mid_move AND "
             "positive_cancel_anchored_mid_reversion"
@@ -516,11 +760,42 @@ def main(argv: list[str] | None = None) -> None:
         **_population_metadata(),
         "max_rows": args.max_rows,
         "state_client_mode": args.state_client_mode,
-        "state_client_count": len(state_client_ids) if state_client_ids is not None else None,
+        "state_client_count": (
+            len(state_actor_keys)
+            if args.state_client_mode == "passive-fill-clients" and state_actor_keys is not None
+            else None
+        ),
+        "state_actor_selection_mode": args.state_client_mode,
+        "state_actor_count": len(state_actor_keys) if state_actor_keys is not None else None,
         "compact_state": args.compact_state,
         "empirical_depth_kernel": str(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None,
         "kernel_mode": "empirical" if args.empirical_depth_kernel is not None else "parametric",
         "client_identity_audit": client_audit,
+        "actor_execution_audit": {
+            "execution_clusters_by_anchor_mode": _grouped_counts(
+                result.execution_metrics,
+                ["execution_anchor_mode"],
+            ),
+            "execution_clusters_by_identity_level": _grouped_counts(
+                result.execution_metrics,
+                ["identity_level"],
+            ),
+            "rejected_executions_by_reason": _grouped_counts(
+                result.rejected_executions,
+                ["reject_reason"],
+            ),
+            "matched_withdrawal_by_anchor_and_identity": _grouped_counts(
+                result.execution_metrics,
+                ["execution_anchor_mode", "identity_level"],
+                flag_column="has_matched_deceptive_cancel_window",
+            ),
+            "strict_sequence_by_anchor_and_identity": _grouped_counts(
+                result.execution_metrics,
+                ["execution_anchor_mode", "identity_level"],
+                flag_column="spoofing_compatible_sequence",
+            ),
+            "rows_missing_client_and_firm_identity": _missing_actor_identity_rows(raw_events_for_compute),
+        },
         "row_counts": {
             "input_rows_for_compute": raw_events_for_compute.height,
             "state_time_series": result.state_time_series.height,
@@ -530,7 +805,7 @@ def main(argv: list[str] | None = None) -> None:
             "execution_cancel_candidates": result.execution_cancel_candidates.height,
             "spoofing_compatible_events": result.spoofing_compatible_events.height,
             "rejected_executions": result.rejected_executions.height,
-            "client_mcps_scores": mcps_scores.height,
+            "actor_mcps_scores": mcps_scores.height,
         },
         "paths": {key: str(path) for key, path in paths.items()},
         "input_hashes": {
@@ -567,7 +842,7 @@ def main(argv: list[str] | None = None) -> None:
         "candidate_deceptive_orders",
 
         "rejected_executions",
-        "client_mcps_scores",
+        "actor_mcps_scores",
     ):
         print(f"{key}: {metadata['row_counts'][key]}")
     print(f"metadata: {paths['metadata']}")

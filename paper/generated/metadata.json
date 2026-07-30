@@ -1,31 +1,37 @@
 {
+  "actor_identity_mode": "client_then_firm",
   "analytical_unit": "execution_cluster",
-  "created_at_utc": "2026-07-22T11:12:14.436906+00:00",
+  "created_at_utc": "2026-07-29T15:50:12.023629+00:00",
+  "execution_anchor_modes": [
+    "passive",
+    "aggressive"
+  ],
+  "firm_fallback_semantics": "aggregate only when client_original_id is missing",
   "generator": "scripts/generate_spoofing_paper_tables.py",
   "runs": {
-    "Ferrari": {
+    "FERRARI": {
       "input_hashes": {
-        "execution_cancel_candidates": "4ffedf65ca78d56c74e8b541ba56a7a4b44ee0d3ad52eec3cd2452b14f3181ac",
-        "execution_metrics": "e2b236bb391778ac6089f2076a3ac05beeda945347e0ed36974b111d1746776c",
-        "run_metadata": "360c47f68fb860db805a43ca441a88be4a4464e8efe5992a69dcf68b51c3fe2d"
+        "execution_cancel_candidates": "324b27ed8755034ffb3aea6fc2bbfe83fcbd26b4ab4c6c70e46977559c7d88e4",
+        "execution_metrics": "6ecdbc8ffb629a80ab9c228d1936e3956f5d8b4c94f4396f094d3ed6f1615b4d",
+        "run_metadata": "71c93ff9bebaeb3fe8f5c7d41b1d3be2f36220d3a3f31393776549ace048deda"
       },
-      "run_dir": "outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/FERRARI_top10_h10_age90_empirical"
+      "run_dir": "/dev/shm/spoofing_detection/20260728_173801_actor_execution_anchor_v2_dashboard_refresh/FERRARI_top10_h10_age90_actor_execution_anchor_v2"
     },
-    "Nexi": {
+    "NEXI": {
       "input_hashes": {
-        "execution_cancel_candidates": "99cd1e9d906e257d97f55466e62b71e5170cb5cf22993d1c3355ad47d10156bf",
-        "execution_metrics": "d60371605f9ea4e3760d645a3598e891a56686383b229b72d77990829e536b6b",
-        "run_metadata": "65f843a8dc420690706696c5b472686496fdf5b9c9d6fbc62fd7c0523a9eacb3"
+        "execution_cancel_candidates": "62f858291d814d953b9a95173e83d13ba2ab0a2f9e616699970e9c590b2ef3e5",
+        "execution_metrics": "d30db45c676f7d861b6e7cd3671190b3dd3a96bf111fca820902e542b0a50635",
+        "run_metadata": "953a32d5de88211f59e624a7eb70bbb7cb2abfb364cd385cb046e56943736629"
       },
-      "run_dir": "outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/NEXI_top10_h10_age90_empirical"
+      "run_dir": "/dev/shm/spoofing_detection/20260728_173801_actor_execution_anchor_v2_dashboard_refresh/NEXI_top10_h10_age90_actor_execution_anchor_v2"
     },
-    "Risanamento": {
+    "RISANAMENTO": {
       "input_hashes": {
-        "execution_cancel_candidates": "3792b39d319c1f0be348ffe73c51e20e7e8e9ec4da2b679770a05df86ac61cb0",
-        "execution_metrics": "8bc2949f67702815db82c70af3b2f4d0bd340c0ca2144ec029bcce2229749223",
-        "run_metadata": "18158458bddae1fd45f5df1065d3290d371cbb5ef4065188447c839e28e3be37"
+        "execution_cancel_candidates": "4e48cee8a54c735690bf31c169ff3838012f6f0e00cfcf593445696d5b7ef899",
+        "execution_metrics": "ecd0de56c1ad53fc169eb8262d095fa79c1b46dd84e777bd904469fbd74048d3",
+        "run_metadata": "2da53f94c3e1818e4075e1f5189aeae9e08c377e503589376f923e8bb82d8a8a"
       },
-      "run_dir": "outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical"
+      "run_dir": "/dev/shm/spoofing_detection/20260728_173801_actor_execution_anchor_v2_dashboard_refresh/RISANAMENTO_top10_h10_age90_actor_execution_anchor_v2"
     }
   }
 }

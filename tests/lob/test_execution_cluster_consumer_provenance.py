@@ -36,7 +36,9 @@ def test_dashboard_uses_member_relation_for_noncontiguous_child_fills():
                 "cluster_first_sort_index": 10,
                 "cluster_last_sort_index": 12,
                 "child_fill_count": 2,
+                "withdrawal_profile_scale_event": 1.0,
                 "has_matched_deceptive_cancel_window": True,
+                "execution_anchor_mode": "passive",
             }
         ]
     )

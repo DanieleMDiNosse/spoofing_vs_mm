@@ -10,7 +10,7 @@ def test_cancel_candidate_must_follow_cluster_in_canonical_sort_order():
         [
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "deceptive_side": "bid",
                 "candidate_deceptive_order_ids_pre": "BD",
                 "execution_cluster_id": "EC000000020-000000022",
@@ -24,7 +24,7 @@ def test_cancel_candidate_must_follow_cluster_in_canonical_sort_order():
         [
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "side": "bid",
                 "ORDERID": "BD",
                 "sort_index": 10,
@@ -46,7 +46,12 @@ def test_cancel_candidate_must_follow_cluster_in_canonical_sort_order():
         "cancel_sort_index",
         "candidate_order_id",
         "execution_cluster_id",
-        "client_id",
+        "actor_key",
+        "actor_id",
+        "identity_level",
+        "identity_source",
+        "identity_fallback_flag",
+        "execution_anchor_mode",
         "execution_side",
         "deceptive_side",
         "cluster_end_ts",
@@ -83,7 +88,7 @@ def test_cancel_candidate_allows_equal_timestamp_with_later_sort_index():
         [
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "deceptive_side": "bid",
                 "candidate_deceptive_order_ids_pre": "BD",
                 "execution_cluster_id": "EC000000020-000000022",
@@ -97,7 +102,7 @@ def test_cancel_candidate_allows_equal_timestamp_with_later_sort_index():
         [
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "side": "bid",
                 "ORDERID": "BD",
                 "sort_index": 23,

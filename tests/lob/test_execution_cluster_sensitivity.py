@@ -22,9 +22,13 @@ def test_summarize_output_checks_cluster_and_cancellation_cardinality(tmp_path: 
     pl.DataFrame(
         {
             "execution_cluster_id": ["EC1", "EC2"],
-            "has_matched_deceptive_cancel_window": [True, False],
-            "WMSCI_event": [4.0, 0.0],
-            "withdrawal_to_fill_ratio": [8.0, 0.0],
+            "execution_anchor_mode": ["passive", "aggressive"],
+            "has_matched_deceptive_cancel_window": [True, True],
+            "withdrawal_profile_scale_event": [2.0, 3.0],
+            "WMSCI_passive": [4.0, None],
+            "WMSCI_aggressive": [None, 6.0],
+            "WMSCI_event": [-99.0, -99.0],
+            "withdrawal_to_fill_ratio": [-99.0, -99.0],
         }
     ).write_parquet(tmp_path / "execution_metrics.parquet")
     pl.DataFrame(
@@ -40,7 +44,7 @@ def test_summarize_output_checks_cluster_and_cancellation_cardinality(tmp_path: 
             "cancel_sort_index": [10, 11],
             "cluster_last_sort_index": [2, 3],
             "candidate_order_id": ["O1", "O2"],
-            "assigned_flag": [True, False],
+            "assigned_flag": [True, True],
         }
     ).write_parquet(tmp_path / "execution_cancel_candidates.parquet")
 
@@ -48,9 +52,15 @@ def test_summarize_output_checks_cluster_and_cancellation_cardinality(tmp_path: 
 
     assert row["execution_cluster_count"] == 2
     assert row["raw_fill_message_count"] == 3
-    assert row["matched_cluster_count"] == 1
-    assert row["assigned_candidate_count"] == 1
-    assert row["max_WMSCI"] == 4.0
+    assert row["matched_cluster_count"] == 2
+    assert row["assigned_candidate_count"] == 2
+    assert row["matched_cluster_count_passive"] == 1
+    assert row["matched_cluster_count_aggressive"] == 1
+    assert row["max_WMSCI_passive"] == 4.0
+    assert row["max_WMSCI_aggressive"] == 6.0
+    assert row["max_withdrawal_profile_scale_event_passive"] == 2.0
+    assert row["max_withdrawal_profile_scale_event_aggressive"] == 3.0
+    assert "max_WMSCI" not in row
 
 
 def test_summarize_output_rejects_noncausal_cancel_candidate(tmp_path: Path):

@@ -104,6 +104,14 @@ The document contains two relevant bit-field descriptions:
 
 This distinction matters. For a fill event, passive/aggressive status should normally refer to the role played by the order in the trade. For a standing order-book event, an order-level aggressiveness flag may instead describe whether the order was marketable/aggressive upon entry. Before using `PASSIVEORDER` and `AGGRESSIVEORDER` in empirical work, check whether they were decoded from `tradequalifier` or `orderqualifiers`.
 
+### Operational requirement for the spoofing detector
+
+The detector treats execution role as an exclusive event-level anchor: `PASSIVEORDER=Y, AGGRESSIVEORDER=N` selects the passive branch, while `PASSIVEORDER=N, AGGRESSIVEORDER=Y` selects the aggressive branch. Both-true, both-false, missing, and otherwise malformed combinations are left unassigned; they are not coerced into the passive baseline.
+
+For the aggressive branch, the execution quantity and price must come from positive finite `LASTSHARES` and `LASTTRADEDPX` values on the fill. An order or event price is not a substitute for `LASTTRADEDPX`. Passive and aggressive executions are clustered, scored, ranked, and audited separately.
+
+This operational rule does not resolve the source ambiguity above. Before interpreting aggressive-branch results, verify in the ETL that the selected `PASSIVEORDER` and `AGGRESSIVEORDER` columns are decoded from the trade-level role flags with the documented bit positions and Boolean mapping. Until that provenance is established and the branch is rerun and reviewed on real data, aggressive-branch output should be described as an experimental surveillance cue rather than confirmatory empirical evidence.
+
 ---
 
 ## 5. Agent, client, and regulatory identity

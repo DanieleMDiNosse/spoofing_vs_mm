@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "build_spoofing_event_dossier.py"
@@ -85,6 +87,7 @@ def test_build_stage_depth_summary_aggregates_candidate_and_total_volume():
     assert row["total_visible_qty"] == 1000
     assert row["candidate_visible_qty"] == 250
     assert row["candidate_level_share"] == 0.25
+    assert row["actor_queue_dict"] == '{"C1":{"perc_vol":0.25,"priority":1}}'
 
 
 def test_build_focal_timeline_excludes_unrelated_prior_fills():
@@ -129,6 +132,25 @@ def test_build_focal_timeline_excludes_unrelated_prior_fills():
     ]
 
 
+def test_build_focal_timeline_labels_aggressive_execution():
+    module = _load_module()
+    timeline = module.build_focal_timeline(
+        {"sort_index": 20, "execution_anchor_mode": "aggressive"},
+        pl.DataFrame(
+            [
+                {
+                    "sort_index": 20,
+                    "event_class": "fill",
+                    "is_candidate_deceptive_order": False,
+                    "is_matched_deceptive_cancel_order": False,
+                }
+            ]
+        ),
+    )
+
+    assert timeline.select("timeline_role").item() == "selected_aggressive_execution"
+
+
 def test_render_dossier_markdown_contains_core_sections():
     module = _load_module()
     event = {
@@ -137,12 +159,17 @@ def test_render_dossier_markdown_contains_core_sections():
         "event_ts": "2024-01-01T10:00:00",
         "execution_side": "ask",
         "deceptive_side": "bid",
-        "fill_qty": 100,
+        "execution_quantity": 100,
+        "fill_qty": -99,
         "DWI_pre_window": -0.7,
         "DWI_post_window": -0.1,
         "SCI": 0.6,
-        "MSCI": 0.3,
-        "WMSCI_event": 4.2,
+        "MSCI_resting_profile": 0.3,
+        "MSCI": -99.0,
+        "withdrawal_profile_scale_event": 8.0,
+        "WMSCI_passive": 2.4,
+        "WMSCI_aggressive": None,
+        "WMSCI_event": -99.0,
         "candidate_deceptive_visible_qty_pre": 1000,
         "matched_deceptive_cancel_visible_qty_window": 800,
         "matched_deceptive_cancel_fraction_window": 0.8,
@@ -185,25 +212,37 @@ def test_render_dossier_markdown_contains_core_sections():
     assert "## Stage depth summary" in text
     assert "## Actual event log" in text
     assert "DWI_pre_window" in text
-    assert "MSCI" in text
-    assert "WMSCI_event: 4.2" in text
-    assert "withdrawal_to_fill_ratio: 8.0" in text
+    assert "MSCI_resting_profile" in text
+    assert "WMSCI_passive" in text
+    assert "withdrawal_profile_scale_event: 8.0" in text
+    assert "WMSCI_passive: 2.4" in text
     assert "matched_deceptive_cancel_min_delay_seconds: 0.2" in text
     assert "favorable_mid_move_pre_fill: 0.02" in text
     assert "post_cancel_mid_reversion: 0.01" in text
     assert "execution_price_advantage_vs_posture_mid: 0.03" in text
 
 
-def test_build_parameter_robustness_uses_sort_index_across_runs(tmp_path):
+def test_build_parameter_robustness_ranks_within_execution_anchor(tmp_path):
     module = _load_module()
     root = tmp_path / "grid"
     run = root / "kappa_1.0_lambda_2.0"
     run.mkdir(parents=True)
-    (run / "metadata.json").write_text('{"kappa": 1.0, "lambda_": 2.0}')
+    (run / "metadata.json").write_text(
+        json.dumps(
+            {
+                "kappa": 1.0,
+                "lambda_": 2.0,
+                "msci_definition": module.MSCI_DEFINITION,
+                "msci_range": list(module.MSCI_RANGE),
+                "ratio_zero_denominator_policy": module.RATIO_ZERO_DENOMINATOR_POLICY,
+            }
+        )
+    )
     pl.DataFrame(
         [
-            {"sort_index": 10, "MSCI": 0.9, "SCI": 0.8, "collapse_opposite_side": 1.0, "collapse_same_side": 0.1, "has_matched_deceptive_cancel_window": True},
-            {"sort_index": 11, "MSCI": 0.2, "SCI": 0.3, "collapse_opposite_side": 0.5, "collapse_same_side": 0.2, "has_matched_deceptive_cancel_window": True},
+            {"sort_index": 10, "execution_anchor_mode": "passive", "MSCI_resting_profile": 0.5, "MSCI": -99.0, "SCI": 0.8, "collapse_opposite_side": 1.0, "collapse_same_side": 0.1, "has_matched_deceptive_cancel_window": True},
+            {"sort_index": 11, "execution_anchor_mode": "aggressive", "MSCI_resting_profile": 0.9, "MSCI": -99.0, "SCI": 0.3, "collapse_opposite_side": 0.5, "collapse_same_side": 0.2, "has_matched_deceptive_cancel_window": True},
+            {"sort_index": 12, "execution_anchor_mode": "passive", "MSCI_resting_profile": 0.2, "MSCI": -99.0, "SCI": 0.3, "collapse_opposite_side": 0.4, "collapse_same_side": 0.2, "has_matched_deceptive_cancel_window": True},
         ]
     ).write_parquet(run / "execution_metrics.parquet")
 
@@ -214,8 +253,31 @@ def test_build_parameter_robustness_uses_sort_index_across_runs(tmp_path):
     assert row["kappa"] == 1.0
     assert row["lambda"] == 2.0
     assert row["matched"] is True
-    assert row["MSCI"] == 0.9
-    assert row["rank_by_MSCI"] == 1
+    assert row["MSCI_resting_profile"] == 0.5
+    assert row["rank_by_MSCI_resting_profile"] == 1
+
+
+def test_build_parameter_robustness_rejects_incompatible_msci_provenance(tmp_path):
+    module = _load_module()
+    run = tmp_path / "grid" / "kappa_1.0_lambda_2.0"
+    run.mkdir(parents=True)
+    (run / "metadata.json").write_text(
+        json.dumps(
+            {
+                "kappa": 1.0,
+                "lambda_": 2.0,
+                "msci_definition": "obsolete_definition",
+                "msci_range": [0.0, 1.0],
+                "ratio_zero_denominator_policy": "epsilon_regularized",
+            }
+        )
+    )
+    pl.DataFrame([{"sort_index": 10, "MSCI": 0.9}]).write_parquet(
+        run / "execution_metrics.parquet"
+    )
+
+    with pytest.raises(ValueError, match="incompatible MSCI definition"):
+        module.build_parameter_robustness(10, tmp_path / "grid")
 
 
 def test_main_writes_dossier_files(tmp_path):
@@ -246,12 +308,38 @@ def test_main_writes_dossier_files(tmp_path):
             }
         ]
     ).write_parquet(review_dir / "matched_spoofing_lob_queue.parquet")
+    (review_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "metric_run_parameters": {
+                    "execution_anchor_modes": ["passive", "aggressive"],
+                    "observed_execution_anchor_modes": ["passive"],
+                    "actor_identity_mode": "client_then_firm",
+                    "msci_definition": module.MSCI_DEFINITION,
+                    "msci_range": list(module.MSCI_RANGE),
+                    "ratio_zero_denominator_policy": module.RATIO_ZERO_DENOMINATOR_POLICY,
+                }
+            }
+        )
+    )
 
     out = tmp_path / "out"
     module.main(["--review-dir", str(review_dir), "--event-id", "S10", "--output-dir", str(out)])
 
     assert (out / "dossier.md").exists()
     assert (out / "dossier.json").exists()
+    payload = json.loads((out / "dossier.json").read_text())
+    assert payload["event"]["event_client_original_id"] == "C1"
+    assert "client_id" not in payload["event"]
+    assert "client_id" not in payload["execution_cluster"]
+    assert "actor_queue_dict" in payload["stage_depth"][0]
+    assert payload["metric_run_parameters"]["execution_anchor_modes"] == [
+        "passive",
+        "aggressive",
+    ]
+    assert payload["metric_run_parameters"]["observed_execution_anchor_modes"] == [
+        "passive"
+    ]
 
 
 def test_cluster_bundle_requires_one_cluster_and_keeps_child_and_candidate_provenance():
@@ -290,3 +378,41 @@ def test_cluster_bundle_rejects_ambiguous_cluster_id():
         assert "exactly one" in str(exc)
     else:
         raise AssertionError("expected ambiguous cluster selection to fail")
+
+
+def test_dossier_exposes_actor_anchor_raw_identity_and_firm_scope_warning():
+    module = _load_module()
+    event = {
+        "execution_cluster_id": "EC1",
+        "actor_key": "firm:F1",
+        "actor_id": "F1",
+        "identity_level": "firm",
+        "identity_source": "FIRMID",
+        "identity_fallback_flag": True,
+        "execution_anchor_mode": "aggressive",
+        "event_client_original_id": None,
+        "event_firm_id": "F1",
+        "cluster_first_sort_index": 10,
+        "cluster_last_sort_index": 10,
+        "cluster_start_ts": "2024-01-01T10:00:00",
+        "cluster_end_ts": "2024-01-01T10:00:00",
+        "child_fill_count": 1,
+        "fill_qty": 10.0,
+    }
+
+    text = module.render_dossier_markdown(
+        event=event,
+        event_log=pl.DataFrame(),
+        stage_depth=pl.DataFrame(),
+        robustness=pl.DataFrame(),
+    )
+
+    assert "actor_key: firm:F1" in text
+    assert "actor_id: F1" in text
+    assert "identity_level: firm" in text
+    assert "execution_anchor_mode: aggressive" in text
+    assert "event_client_original_id: None" in text
+    assert "event_firm_id: F1" in text
+    assert "Firm-fallback scope warning" in text
+    assert "Client attribution caveat" not in text
+    assert "- client_id:" not in text

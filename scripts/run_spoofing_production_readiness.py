@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,13 +15,51 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from spoofing_detection.lob.alert_objects import build_client_session_alerts
-from spoofing_detection.lob.client_session_features import compute_client_session_features
-from spoofing_detection.lob.legitimacy_features import compute_legitimacy_features
-from spoofing_detection.lob.spoofing_config import DEFAULT_SPOOFING_CONFIG_PATH, load_spoofing_config_defaults
+from spoofing_detection.lob.alert_objects import build_actor_session_alerts
+from spoofing_detection.lob.client_session_features import (
+    compute_actor_session_features,
+    filter_attributable_actor_rows,
+)
+from spoofing_detection.lob.legitimacy_features import compute_actor_legitimacy_features
+from spoofing_detection.lob.spoofing_config import (
+    DEFAULT_SPOOFING_CONFIG_PATH,
+    load_spoofing_config_defaults,
+    parse_execution_anchor_modes,
+    parse_msci_threshold_by_anchor,
+    validate_actor_identity_mode,
+)
 
 
-_CONFIGURABLE_DEFAULT_KEYS = {"msci_threshold", "min_events", "min_mcps"}
+_CONFIGURABLE_DEFAULT_KEYS = {
+    "msci_threshold",
+    "msci_threshold_by_anchor",
+    "min_events",
+    "min_mcps",
+    "actor_identity_mode",
+    "execution_anchor_modes",
+}
+
+
+def _option_is_explicit(argv: list[str] | None, option: str) -> bool:
+    tokens = sys.argv[1:] if argv is None else argv
+    return any(token == option or token.startswith(f"{option}=") for token in tokens)
+
+
+def _market_observation(
+    configured_anchor_modes: tuple[str, ...],
+    observed_anchor_modes: list[str],
+) -> str:
+    configured = "_and_".join(configured_anchor_modes)
+    configured_text = f"configured_{configured}_execution_branch"
+    if len(configured_anchor_modes) != 1:
+        configured_text += "es"
+    if not observed_anchor_modes:
+        return f"{configured_text}; no_execution_branches_observed"
+    observed = "_and_".join(observed_anchor_modes)
+    observed_text = f"observed_{observed}_execution_branch"
+    if len(observed_anchor_modes) != 1:
+        observed_text += "es"
+    return f"{configured_text}; {observed_text}_only"
 
 
 def run_pipeline(
@@ -28,24 +67,76 @@ def run_pipeline(
     execution_metrics_path: Path,
     event_log_path: Path,
     output_dir: Path,
-    msci_threshold: float,
+    msci_threshold: float | Mapping[str, float | None],
     min_events: int,
     min_mcps: float,
+    actor_identity_mode: str = "client_then_firm",
+    execution_anchor_modes: tuple[str, ...] = ("passive",),
 ) -> dict[str, Path]:
+    actor_identity_mode = validate_actor_identity_mode(actor_identity_mode)
+    execution_anchor_modes = parse_execution_anchor_modes(execution_anchor_modes)
     executions = pl.read_parquet(execution_metrics_path)
+    observed_anchor_values = (
+        executions["execution_anchor_mode"].drop_nulls().unique().to_list()
+        if "execution_anchor_mode" in executions.columns
+        else []
+    )
+    observed_anchor_modes = (
+        list(parse_execution_anchor_modes(observed_anchor_values)) if observed_anchor_values else []
+    )
+    unconfigured_anchor_modes = sorted(set(observed_anchor_modes) - set(execution_anchor_modes))
+    if unconfigured_anchor_modes:
+        raise ValueError(f"input contains unconfigured execution anchor mode(s): {', '.join(unconfigured_anchor_modes)}")
     event_log = pl.read_parquet(event_log_path)
-    risk = compute_client_session_features(executions, msci_threshold=msci_threshold)
-    legitimacy = compute_legitimacy_features(event_log)
-    alerts = build_client_session_alerts(risk, legitimacy, min_events=min_events, min_mcps=min_mcps)
+    attributable_executions = filter_attributable_actor_rows(executions)
+    attributable_event_log = filter_attributable_actor_rows(event_log)
+    excluded_unattributable_execution_rows = executions.height - attributable_executions.height
+    excluded_unattributable_event_rows = event_log.height - attributable_event_log.height
+    risk = compute_actor_session_features(attributable_executions, msci_threshold=msci_threshold)
+    legitimacy = compute_actor_legitimacy_features(attributable_event_log)
+    alerts = build_actor_session_alerts(risk, legitimacy, min_events=min_events, min_mcps=min_mcps)
     output_dir.mkdir(parents=True, exist_ok=True)
-    risk_path = output_dir / "client_session_risk_features.parquet"
-    legitimacy_path = output_dir / "client_legitimacy_features.parquet"
-    alerts_path = output_dir / "client_session_alerts.parquet"
+    risk_path = output_dir / "actor_session_risk_features.parquet"
+    legitimacy_path = output_dir / "actor_legitimacy_features.parquet"
+    alerts_path = output_dir / "actor_session_alerts.parquet"
     metadata_path = output_dir / "metadata.json"
     risk.write_parquet(risk_path)
     legitimacy.write_parquet(legitimacy_path)
     alerts.write_parquet(alerts_path)
-    metadata_path.write_text(json.dumps({"created_at_utc": datetime.now(timezone.utc).isoformat(), "execution_metrics_path": str(execution_metrics_path), "event_log_path": str(event_log_path), "msci_threshold": msci_threshold, "min_events": min_events, "min_mcps": min_mcps, "alert_count": alerts.height}, indent=2, sort_keys=True))
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "created_at_utc": datetime.now(timezone.utc).isoformat(),
+                "output_schema_version": "actor_execution_anchor_v2",
+                "actor_identity_mode": actor_identity_mode,
+                "execution_anchor_modes": list(execution_anchor_modes),
+                "observed_execution_anchor_modes": observed_anchor_modes,
+                "identity": "actor_key with client_original preferred and firm fallback",
+                "firm_fallback_semantics": "aggregate only when client_original_id is missing",
+                "market_observation": _market_observation(execution_anchor_modes, observed_anchor_modes),
+                "score_grouping": ["actor_key", "execution_anchor_mode"],
+                "actor_feature_population": "attributable_execution_and_event_rows_only",
+                "excluded_unattributable_execution_rows": excluded_unattributable_execution_rows,
+                "excluded_unattributable_event_rows": excluded_unattributable_event_rows,
+                "event_selection": "execution clusters stratified by actor identity and execution anchor",
+                "execution_metrics_path": str(execution_metrics_path),
+                "event_log_path": str(event_log_path),
+                "msci_threshold": (
+                    None if isinstance(msci_threshold, Mapping) else float(msci_threshold)
+                ),
+                "msci_threshold_by_anchor": (
+                    dict(msci_threshold)
+                    if isinstance(msci_threshold, Mapping)
+                    else {anchor: float(msci_threshold) for anchor in execution_anchor_modes}
+                ),
+                "min_events": min_events,
+                "min_mcps": min_mcps,
+                "alert_count": alerts.height,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return {"risk": risk_path, "legitimacy": legitimacy_path, "alerts": alerts_path, "metadata": metadata_path}
 
 
@@ -69,7 +160,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--execution-metrics", type=Path, required=True)
     parser.add_argument("--event-log", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--msci-threshold", type=float, default=0.5)
+    parser.add_argument("--msci-threshold", type=float, default=0.1)
+    parser.add_argument(
+        "--msci-threshold-by-anchor",
+        type=parse_msci_threshold_by_anchor,
+        default=None,
+        help='JSON object, e.g. {"passive": 0.1, "aggressive": null}',
+    )
     parser.add_argument("--min-events", type=int, default=3, help="minimum repeated matched-withdrawal events required")
     parser.add_argument(
         "--min-mcps",
@@ -77,13 +174,47 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=0.0,
         help="optional minimum matched-event share floor; 0 disables the share floor",
     )
+    parser.add_argument("--actor-identity-mode", choices=("client_then_firm",), default="client_then_firm")
+    parser.add_argument("--execution-anchor-modes", default="passive")
     parser.set_defaults(**config_defaults)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    try:
+        args.actor_identity_mode = validate_actor_identity_mode(args.actor_identity_mode)
+        args.execution_anchor_modes = parse_execution_anchor_modes(args.execution_anchor_modes)
+        if args.msci_threshold_by_anchor is not None:
+            args.msci_threshold_by_anchor = parse_msci_threshold_by_anchor(
+                args.msci_threshold_by_anchor
+            )
+        if (
+            _option_is_explicit(argv, "--msci-threshold")
+            and not _option_is_explicit(argv, "--msci-threshold-by-anchor")
+            and args.msci_threshold_by_anchor is not None
+        ):
+            args.msci_threshold_by_anchor = {
+                **args.msci_threshold_by_anchor,
+                "passive": args.msci_threshold,
+            }
+    except ValueError as exc:
+        parser.error(str(exc))
+    return args
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    outputs = run_pipeline(execution_metrics_path=args.execution_metrics, event_log_path=args.event_log, output_dir=args.output_dir, msci_threshold=args.msci_threshold, min_events=args.min_events, min_mcps=args.min_mcps)
+    outputs = run_pipeline(
+        execution_metrics_path=args.execution_metrics,
+        event_log_path=args.event_log,
+        output_dir=args.output_dir,
+        msci_threshold=(
+            args.msci_threshold_by_anchor
+            if args.msci_threshold_by_anchor is not None
+            else args.msci_threshold
+        ),
+        min_events=args.min_events,
+        min_mcps=args.min_mcps,
+        actor_identity_mode=args.actor_identity_mode,
+        execution_anchor_modes=args.execution_anchor_modes,
+    )
     print(outputs["alerts"])
 
 

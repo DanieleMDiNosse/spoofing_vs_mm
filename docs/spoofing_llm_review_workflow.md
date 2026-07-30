@@ -71,16 +71,23 @@ Then run for real, optionally with `--limit 1` for a smoke test.
 
 After generating reviews, regenerate the dashboard:
 
+Set `SIGNED_RUN_DIR` to a run whose `metadata.json` declares
+`SCI / 2 + C_opposite - C_same`, range `[-1.0, 2.0]`, and the
+`exact_piecewise_v1` zero-denominator policy. The dashboard rejects missing or
+legacy metric provenance rather than relabeling incompatible outputs.
+
 ```bash
+SIGNED_RUN_DIR=outputs/spoofing_metrics/SIGNED_MSCI_RUN/RISANAMENTO_top10_h10_age90_empirical
+
 PYTHONDONTWRITEBYTECODE=1 conda run -n main python scripts/build_spoofing_event_review_dashboard.py \
   --config configs/spoofing_detection_parameters.json \
   --input data/ExportGridData_2026-05-20_090247703_RISANAMENTO_01062024_30112024_FG.parquet \
-  --execution-metrics outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/execution_metrics.parquet \
-  --candidate-deceptive-orders outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/candidate_deceptive_orders.parquet \
-  --execution-cluster-members outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/execution_cluster_members.parquet \
-  --execution-cancel-candidates outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/execution_cancel_candidates.parquet \
-  --client-session-alerts outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/production_readiness/client_session_alerts.parquet \
-  --output-dir outputs/spoofing_metrics/20260722_102341_empirical_kernel_top10_h10_age90_additive_msci/RISANAMENTO_top10_h10_age90_empirical/event_review \
+  --execution-metrics "$SIGNED_RUN_DIR/execution_metrics.parquet" \
+  --candidate-deceptive-orders "$SIGNED_RUN_DIR/candidate_deceptive_orders.parquet" \
+  --execution-cluster-members "$SIGNED_RUN_DIR/execution_cluster_members.parquet" \
+  --execution-cancel-candidates "$SIGNED_RUN_DIR/execution_cancel_candidates.parquet" \
+  --client-session-alerts "$SIGNED_RUN_DIR/production_readiness/client_session_alerts.parquet" \
+  --output-dir "$SIGNED_RUN_DIR/event_review" \
   --top-n 10 \
   --pre-window-seconds 30 \
   --post-window-seconds 35 \

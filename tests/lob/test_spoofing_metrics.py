@@ -5,14 +5,17 @@ from datetime import datetime, timedelta
 
 import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
+import spoofing_detection.lob.spoofing_metrics as spoofing_metrics_module
 from spoofing_detection.lob.models import ActiveOrder
 from spoofing_detection.lob.spoofing_metrics import (
-    _finite_additive_msci,
-    _stream_metric_inputs,
+    _collapse,
+    _finite_signed_msci,
     assign_cancellations_to_clusters,
     attach_sci_window_metrics,
     choose_event_timestamp,
+    compute_actor_top_n_exposures,
     compute_client_metric_time_series,
     compute_client_top_n_exposures,
     compute_exploratory_metrics,
@@ -26,21 +29,20 @@ from spoofing_detection.lob.spoofing_metrics import (
 @pytest.mark.parametrize(
     ("sci", "collapse_opposite", "collapse_same", "expected"),
     [
-        (0.8, 0.9, 0.9, (0.4 + 0.9) / 3.0),
-        (2.0, 1.0, 0.0, 1.0),
-        (3.0, 1.5, -0.5, 1.0),
-        (-1.0, -0.2, 1.2, 0.0),
+        (0.8, 0.9, 0.9, 0.4),
+        (2.0, 1.0, 0.0, 2.0),
+        (0.0, 0.0, 1.0, -1.0),
         (None, 0.9, 0.1, None),
         (math.nan, 0.9, 0.1, None),
     ],
 )
-def test_additive_msci_is_bounded_and_does_not_zero_equal_side_collapse(
+def test_signed_msci_preserves_evidence_minus_counterevidence_without_clipping(
     sci,
     collapse_opposite,
     collapse_same,
     expected,
 ):
-    result = _finite_additive_msci(sci, collapse_opposite, collapse_same)
+    result = _finite_signed_msci(sci, collapse_opposite, collapse_same)
 
     if expected is None:
         assert result is None
@@ -48,7 +50,34 @@ def test_additive_msci_is_bounded_and_does_not_zero_equal_side_collapse(
         assert result == pytest.approx(expected)
 
 
-def order(order_id, side, price, qty, client):
+@pytest.mark.parametrize(
+    ("pre", "post", "expected"),
+    [
+        (0.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (1.0, 0.0, 1.0),
+        (1.0, 0.25, 0.75),
+        (1.0, 2.0, 0.0),
+    ],
+)
+def test_collapse_uses_exact_piecewise_zero_denominator_semantics(pre, post, expected):
+    assert _collapse(pre, post) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("pre", "post"),
+    [
+        (-1.0, 0.0),
+        (1.0, -1.0),
+        (math.nan, 0.0),
+        (1.0, math.inf),
+    ],
+)
+def test_collapse_rejects_values_outside_nonnegative_finite_domain(pre, post):
+    assert _collapse(pre, post) is None
+
+
+def order(order_id, side, price, qty, client, *, firm="F1"):
     return ActiveOrder(
         order_id=order_id,
         side=side,
@@ -60,7 +89,7 @@ def order(order_id, side, price, qty, client):
         order_type_code=2,
         order_type_label="limit",
         time_in_force_code=0,
-        firm_id="F1",
+        firm_id=firm,
         client_original_id=client,
         first_seen_sort_index=1,
         last_update_sort_index=1,
@@ -81,7 +110,11 @@ def raw_event(
     trade_time=None,
     bookout=None,
     last_shares=None,
+    last_traded_px=None,
     aggressive="N",
+    passive=None,
+    firm="F1",
+    order_type=2,
 ):
     timestamp = bookout or f"2024-01-02 09:30:{seq:02d}"
     return {
@@ -107,12 +140,17 @@ def raw_event(
         "DISPLAYEDQTY": displayed,
         "LEAVESQTY": qty,
         "LASTSHARES": last_shares,
-        "ORDERTYPE (*)": 2,
+        "LASTTRADEDPX": last_traded_px,
+        "ORDERTYPE (*)": order_type,
         "TIMEINFORCE (*)": 0,
-        "FIRMID": "F1",
+        "FIRMID": firm,
         "NMSC_ORIGINALCLIENTIDSHORTCODE": client,
         "ORDER_TRADINGCAPACITY (*)": 3 if client is not None else 1,
-        "PASSIVEORDER": "Y" if event_type == 3 and aggressive != "Y" else None,
+        "PASSIVEORDER": (
+            passive
+            if event_type == 3 and passive is not None
+            else ("Y" if event_type == 3 and aggressive != "Y" else None)
+        ),
         "AGGRESSIVEORDER": aggressive if event_type == 3 else None,
     }
 
@@ -268,6 +306,331 @@ def test_compute_client_top_n_exposures_filters_numeric_client_ids_as_strings():
     assert [row["client_id"] for row in rows] == ["17295"]
 
 
+def test_compute_actor_top_n_exposures_keeps_client_and_firm_namespaces_distinct():
+    active = {
+        "CLIENT": order("CLIENT", "bid", 100.0, 10.0, "F2", firm="F1"),
+        "FALLBACK": order("FALLBACK", "ask", 100.2, 5.0, None, firm="F2"),
+    }
+
+    rows = compute_actor_top_n_exposures(
+        active,
+        top_n=1,
+        tick_size=0.1,
+        kappa=1.0,
+        lambda_=0.5,
+        partition_id="P",
+        sort_index=10,
+        event_ts=None,
+    )
+    by_actor = {row["actor_key"]: row for row in rows}
+
+    assert set(by_actor) == {"client_original:F2", "firm:F2"}
+    assert by_actor["client_original:F2"]["identity_level"] == "client_original"
+    assert by_actor["client_original:F2"]["identity_fallback_flag"] is False
+    assert by_actor["firm:F2"]["identity_level"] == "firm"
+    assert by_actor["firm:F2"]["identity_source"] == "FIRMID"
+    assert by_actor["firm:F2"]["identity_fallback_flag"] is True
+    assert "client_id" not in by_actor["firm:F2"]
+    assert by_actor["firm:F2"]["actor_ask_qty_topN"] == pytest.approx(5.0)
+
+
+def test_compute_actor_top_n_exposures_emits_explicit_zero_profile_by_actor_key():
+    rows = compute_actor_top_n_exposures(
+        {"CLIENT": order("CLIENT", "bid", 100.0, 10.0, "C1")},
+        top_n=1,
+        tick_size=0.1,
+        kappa=1.0,
+        lambda_=0.5,
+        partition_id="P",
+        sort_index=10,
+        event_ts=None,
+        actor_keys={"firm:F9"},
+        include_zero_actor_keys={"firm:F9"},
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["actor_key"] == "firm:F9"
+    assert row["actor_id"] == "F9"
+    assert row["identity_level"] == "firm"
+    assert row["has_active_top_n_profile"] is False
+    assert row["DWI"] == pytest.approx(0.0)
+
+
+def test_firm_fallback_passive_execution_is_attributed_end_to_end():
+    rows = [
+        raw_event(1, 1, "B0", 1, 100.0, 100, 100, None, firm="OTHER"),
+        raw_event(2, 1, "BD", 1, 99.9, 50, 50, None, firm="157922_3"),
+        raw_event(3, 1, "A1", 2, 100.2, 5, 5, None, firm="157922_3"),
+        raw_event(4, 1, "A0", 2, 100.3, 100, 100, None, firm="OTHER"),
+        raw_event(
+            5, 3, "A1", 2, 100.2, 0, 0, None,
+            firm="157922_3", last_shares=5,
+            bookout="2024-01-02 09:30:05.000000",
+        ),
+        raw_event(
+            6, 4, "BD", 1, 99.9, 0, 0, None,
+            firm="157922_3", bookout="2024-01-02 09:30:05.500000",
+        ),
+    ]
+
+    result = compute_exploratory_metrics(
+        pl.DataFrame(rows), top_n=2, tick_size=0.1, kappa=1.0,
+        lambda_=0.5, window_seconds=1.0,
+    )
+
+    assert result.rejected_executions.height == 0
+    assert result.rejected_executions.schema["reject_reason"] == pl.String
+    execution = result.execution_metrics.row(0, named=True)
+    assert execution["actor_key"] == "firm:157922_3"
+    assert execution["identity_level"] == "firm"
+    assert execution["identity_fallback_flag"] is True
+    assert execution["execution_anchor_mode"] == "passive"
+    assert execution["has_matched_deceptive_cancel_window"] is True
+    cancel_candidate = result.execution_cancel_candidates.row(0, named=True)
+    assert cancel_candidate["actor_key"] == "firm:157922_3"
+    assert cancel_candidate["identity_level"] == "firm"
+    assert cancel_candidate["execution_anchor_mode"] == "passive"
+    assert "client_id" not in result.execution_cancel_candidates.columns
+
+
+def test_aggressive_execution_uses_trade_fields_without_active_order():
+    rows = [
+        raw_event(1, 1, "B0", 1, 100.0, 100, 100, "OTHER"),
+        raw_event(2, 1, "BD", 1, 99.9, 50, 50, "C1"),
+        raw_event(3, 1, "A0", 2, 100.3, 100, 100, "OTHER"),
+        raw_event(
+            4, 3, "AGGRESSOR", 2, None, 0, 0, "C1",
+            aggressive="Y", last_shares=5, last_traded_px=100.2,
+            order_type=1,
+        ),
+    ]
+
+    result = compute_exploratory_metrics(
+        pl.DataFrame(rows), top_n=2, tick_size=0.1, kappa=1.0,
+        lambda_=0.5, window_seconds=1.0,
+    )
+
+    execution = result.execution_metrics.row(0, named=True)
+    assert execution["actor_key"] == "client_original:C1"
+    assert execution["execution_anchor_mode"] == "aggressive"
+    assert execution["execution_price_source"] == "LASTTRADEDPX"
+    assert execution["event_price"] == pytest.approx(100.2)
+    assert execution["fill_qty"] == pytest.approx(5.0)
+    assert execution["execution_quantity"] == pytest.approx(5.0)
+    assert execution["execution_vwap"] == pytest.approx(100.2)
+    assert execution["passive_execution_diagnostics_applicable"] is False
+    assert execution["aggressive_execution_diagnostics_applicable"] is True
+    assert execution["passive_execution_quantity"] is None
+    assert execution["aggressive_execution_quantity"] == pytest.approx(5.0)
+    assert execution["passive_same_level_market_visible_qty_pre"] is None
+    assert execution["passive_same_level_actor_visible_qty_pre"] is None
+    assert execution["passive_smallness_fraction_market_level"] is None
+    assert execution["passive_smallness_fraction_actor_level"] is None
+    assert execution["MSCI_resting_profile"] == execution["MSCI"]
+    assert execution["withdrawal_profile_scale_event"] == execution["WMSCI_event"]
+    assert execution["WMSCI_passive"] is None
+    assert execution["WMSCI_aggressive"] == pytest.approx(0.0)
+    assert execution["withdrawal_profile_scale_denominator_mode"] == "aggressive_execution_quantity"
+    assert execution["smallness_fraction_market_level"] is None
+    assert execution["smallness_fraction_actor_level"] is None
+    assert "client_id" not in execution
+    assert "same_level_client_visible_qty_pre" not in execution
+    assert "smallness_fraction_client_level" not in execution
+
+
+def test_selected_aggressive_actor_without_resting_orders_gets_zero_state_row():
+    rows = [
+        raw_event(1, 1, "B0", 1, 100.0, 100, 100, "OTHER"),
+        raw_event(2, 1, "A0", 2, 100.3, 100, 100, "OTHER"),
+        raw_event(
+            3,
+            3,
+            "AGGRESSOR",
+            2,
+            None,
+            0,
+            0,
+            "C1",
+            aggressive="Y",
+            last_shares=5,
+            last_traded_px=100.2,
+            order_type=1,
+        ),
+    ]
+
+    for state_actor_keys in (None, {"client_original:C1"}):
+        result = compute_exploratory_metrics(
+            pl.DataFrame(rows),
+            top_n=2,
+            tick_size=0.1,
+            kappa=1.0,
+            lambda_=0.5,
+            window_seconds=1.0,
+            state_actor_keys=state_actor_keys,
+        )
+
+        assert result.execution_metrics.get_column("actor_key").to_list() == [
+            "client_original:C1"
+        ]
+        actor_state = result.state_time_series.filter(
+            pl.col("actor_key") == "client_original:C1"
+        )
+        assert actor_state.height == 1
+        state = actor_state.row(0, named=True)
+        assert state["sort_index"] == 3
+        assert state["has_active_top_n_profile"] is False
+        assert state["DWI"] == pytest.approx(0.0)
+        if state_actor_keys is not None:
+            assert result.state_time_series.get_column("actor_key").unique().to_list() == [
+                "client_original:C1"
+            ]
+
+
+def test_execution_actor_state_filter_preserves_all_analytical_artifacts():
+    rows = [
+        raw_event(1, 1, "B0", 1, 100.0, 100, 100, "OTHER"),
+        raw_event(2, 1, "BD", 1, 99.9, 50, 50, "C1"),
+        raw_event(3, 1, "A1", 2, 100.2, 5, 5, "C1"),
+        raw_event(4, 1, "A2", 2, 100.3, 100, 100, "C2"),
+        raw_event(
+            5,
+            3,
+            "A1",
+            2,
+            100.2,
+            0,
+            0,
+            "C1",
+            last_shares=5,
+            bookout="2024-01-02 09:30:05.000000",
+        ),
+        raw_event(
+            6,
+            4,
+            "BD",
+            1,
+            99.9,
+            0,
+            0,
+            "C1",
+            bookout="2024-01-02 09:30:05.500000",
+        ),
+    ]
+    kwargs = {
+        "top_n": 2,
+        "tick_size": 0.1,
+        "kappa": 1.0,
+        "lambda_": 0.5,
+        "window_seconds": 1.0,
+    }
+
+    complete = compute_exploratory_metrics(pl.DataFrame(rows), **kwargs)
+    filtered = compute_exploratory_metrics(
+        pl.DataFrame(rows),
+        state_actor_keys={"client_original:C1"},
+        **kwargs,
+    )
+
+    assert set(filtered.state_time_series.get_column("actor_key").unique()) == {"client_original:C1"}
+    assert filtered.state_time_series.height < complete.state_time_series.height
+    for artifact in (
+        "execution_metrics",
+        "candidate_deceptive_orders",
+        "direct_cancellations",
+        "rejected_executions",
+        "execution_cluster_members",
+        "execution_cancel_candidates",
+        "spoofing_compatible_events",
+    ):
+        assert_frame_equal(getattr(filtered, artifact), getattr(complete, artifact))
+
+
+def test_actor_state_chunking_preserves_schema_order_and_values(monkeypatch):
+    rows = [
+        raw_event(1, 1, "B0", 1, 100.0, 100, 100, "OTHER"),
+        raw_event(2, 1, "BD", 1, 99.9, 50, 50, "C1"),
+        raw_event(3, 1, "A1", 2, 100.2, 5, 5, "C1"),
+        raw_event(4, 1, "A2", 2, 100.3, 100, 100, "C2"),
+    ]
+    kwargs = {
+        "top_n": 2,
+        "tick_size": 0.1,
+        "kappa": 1.0,
+        "lambda_": 0.5,
+        "include_level_columns": False,
+    }
+    monkeypatch.setattr(spoofing_metrics_module, "_STATE_ROW_CHUNK_SIZE", 1_000_000)
+    unchunked = spoofing_metrics_module.compute_actor_metric_time_series(pl.DataFrame(rows), **kwargs)
+
+    monkeypatch.setattr(spoofing_metrics_module, "_STATE_ROW_CHUNK_SIZE", 2)
+    chunked = spoofing_metrics_module.compute_actor_metric_time_series(pl.DataFrame(rows), **kwargs)
+
+    assert chunked.n_chunks() > 1
+    assert_frame_equal(chunked, unchunked)
+
+
+def test_empty_execution_artifacts_preserve_actor_anchor_audit_schema():
+    result = compute_exploratory_metrics(
+        pl.DataFrame([raw_event(1, 1, "B0", 1, 100.0, 100, 100, "C1")]),
+        top_n=2,
+        tick_size=0.1,
+        kappa=1.0,
+        lambda_=0.5,
+        window_seconds=1.0,
+    )
+
+    assert result.execution_metrics.is_empty()
+    assert {"actor_key", "identity_level", "execution_anchor_mode"}.issubset(result.execution_metrics.columns)
+    assert result.execution_cluster_members.is_empty()
+    assert {"actor_key", "identity_level", "execution_anchor_mode"}.issubset(
+        result.execution_cluster_members.columns
+    )
+    assert result.candidate_deceptive_orders.is_empty()
+    assert {"actor_key", "identity_level", "execution_anchor_mode"}.issubset(
+        result.candidate_deceptive_orders.columns
+    )
+    assert result.direct_cancellations.is_empty()
+    assert {"actor_key", "identity_level"}.issubset(result.direct_cancellations.columns)
+    assert result.execution_cancel_candidates.is_empty()
+    assert {"actor_key", "identity_level", "execution_anchor_mode"}.issubset(
+        result.execution_cancel_candidates.columns
+    )
+    assert result.spoofing_compatible_events.is_empty()
+    assert {"actor_key", "identity_level", "execution_anchor_mode", "spoofing_compatible_sequence"}.issubset(
+        result.spoofing_compatible_events.columns
+    )
+    assert result.rejected_executions.is_empty()
+    assert {"actor_key", "identity_level", "execution_anchor_mode", "reject_reason"}.issubset(
+        result.rejected_executions.columns
+    )
+
+
+def test_empty_state_artifact_preserves_actor_metric_schema():
+    empty_events = pl.DataFrame([raw_event(1, 1, "B0", 1, 100.0, 100, 100, "C1")]).head(0)
+
+    result = compute_exploratory_metrics(
+        empty_events,
+        top_n=2,
+        tick_size=0.1,
+        kappa=1.0,
+        lambda_=0.5,
+        window_seconds=1.0,
+    )
+
+    assert result.state_time_series.is_empty()
+    assert {
+        "actor_key",
+        "actor_id",
+        "identity_level",
+        "identity_source",
+        "identity_fallback_flag",
+        "DWI",
+        "bid_level_1_actor_visible_qty",
+        "ask_level_2_actor_visible_qty",
+    }.issubset(result.state_time_series.columns)
+
+
 def test_compute_exploratory_metrics_can_emit_compact_state_for_selected_clients_only():
     df = pl.DataFrame(
         [
@@ -290,7 +653,8 @@ def test_compute_exploratory_metrics_can_emit_compact_state_for_selected_clients
         state_client_ids={"C1"},
     )
 
-    assert set(result.state_time_series["client_id"].to_list()) == {"C1"}
+    assert set(result.state_time_series["actor_key"].to_list()) == {"client_original:C1"}
+    assert "client_id" not in result.state_time_series.columns
     assert "bid_level_1_price" not in result.state_time_series.columns
     assert result.execution_metrics.height == 1
 
@@ -337,11 +701,11 @@ def test_compute_client_metric_time_series_emits_client_only_top_n_dwi_states():
     assert "imbalance" not in c1_latest
 
 
-def test_attach_sci_window_metrics_computes_side_collapse_and_additive_msci():
+def test_attach_sci_window_metrics_computes_side_collapse_and_signed_msci():
     states = pl.DataFrame(
         {
             "partition_id": ["P", "P", "P"],
-            "client_id": ["C1", "C1", "C1"],
+            "actor_key": ["client_original:C1"] * 3,
             "event_ts": [
                 datetime(2024, 1, 2, 9, 30, 8),
                 datetime(2024, 1, 2, 9, 30, 9),
@@ -357,23 +721,23 @@ def test_attach_sci_window_metrics_computes_side_collapse_and_additive_msci():
     )
     executions = pl.DataFrame(
         {
-            "partition_id": ["P"],
-            "client_id": ["C1"],
-            "event_ts": [datetime(2024, 1, 2, 9, 30, 10)],
-            "sort_index": [10],
-            "execution_side": ["ask"],
-            "deceptive_side": ["bid"],
-            "event_price": [100.12],
-            "candidate_deceptive_first_seen_sort_index_min": [8],
+            "partition_id": ["P", "P"],
+            "actor_key": ["client_original:C1"] * 2,
+            "event_ts": [datetime(2024, 1, 2, 9, 30, 10)] * 2,
+            "sort_index": [10, 10],
+            "execution_side": ["ask", "bid"],
+            "deceptive_side": ["bid", "ask"],
+            "event_price": [100.12, 100.12],
+            "candidate_deceptive_first_seen_sort_index_min": [8, 8],
         }
     )
 
-    out = attach_sci_window_metrics(executions, states, window_seconds=1.0, epsilon=1e-12)
+    out = attach_sci_window_metrics(executions, states, window_seconds=1.0)
 
     sci = 0.7
     c_bid = (0.9 - 0.2) / 0.9
     c_ask = (0.4 - 0.3) / 0.4
-    expected_msci = ((sci / 2.0) + c_bid + max(c_bid - c_ask, 0.0)) / 3.0
+    expected_msci = (sci / 2.0) + c_bid - c_ask
     assert out.item(0, "DWI_pre_window") == pytest.approx(-0.8)
     assert out.item(0, "DWI_post_window") == pytest.approx(-0.1)
     assert out.item(0, "SCI") == pytest.approx(sci)
@@ -384,6 +748,9 @@ def test_attach_sci_window_metrics_computes_side_collapse_and_additive_msci():
     assert out.item(0, "collapse_opposite_side") == pytest.approx(c_bid)
     assert out.item(0, "collapse_same_side") == pytest.approx(c_ask)
     assert out.item(0, "MSCI") == pytest.approx(expected_msci)
+    assert out.item(1, "collapse_opposite_side") == pytest.approx(c_ask)
+    assert out.item(1, "collapse_same_side") == pytest.approx(c_bid)
+    assert out.item(1, "MSCI") == pytest.approx((sci / 2.0) + c_ask - c_bid)
     assert out.item(0, "market_mid_posture") == pytest.approx(100.00)
     assert out.item(0, "market_mid_pre_window") == pytest.approx(100.10)
     assert out.item(0, "market_mid_post_window") == pytest.approx(100.02)
@@ -398,7 +765,7 @@ def test_attach_sci_window_metrics_does_not_impute_missing_post_state_as_zero():
     states = pl.DataFrame(
         {
             "partition_id": ["P", "P"],
-            "client_id": ["C1", "C1"],
+            "actor_key": ["client_original:C1"] * 2,
             "event_ts": [
                 datetime(2024, 1, 2, 9, 30, 8),
                 datetime(2024, 1, 2, 9, 30, 9),
@@ -414,7 +781,7 @@ def test_attach_sci_window_metrics_does_not_impute_missing_post_state_as_zero():
     executions = pl.DataFrame(
         {
             "partition_id": ["P"],
-            "client_id": ["C1"],
+            "actor_key": ["client_original:C1"],
             "event_ts": [datetime(2024, 1, 2, 9, 30, 10)],
             "sort_index": [10],
             "execution_side": ["ask"],
@@ -443,7 +810,7 @@ def test_attach_sci_window_metrics_accepts_post_event_state_at_cluster_last_sort
     states = pl.DataFrame(
         {
             "partition_id": ["P1", "P1"],
-            "client_id": ["C1", "C1"],
+            "actor_key": ["client_original:C1"] * 2,
             "sort_index": [9, 10],
             "event_ts": [
                 datetime(2024, 1, 1, 12, 0, 8),
@@ -457,7 +824,7 @@ def test_attach_sci_window_metrics_accepts_post_event_state_at_cluster_last_sort
     executions = pl.DataFrame(
         {
             "partition_id": ["P1"],
-            "client_id": ["C1"],
+            "actor_key": ["client_original:C1"],
             "sort_index": [10],
             "cluster_last_sort_index": [10],
             "event_ts": [datetime(2024, 1, 1, 12, 0, 10)],
@@ -478,15 +845,19 @@ def test_attach_sci_window_metrics_accepts_post_event_state_at_cluster_last_sort
     assert out.item(0, "MSCI") is not None
 
 
-def test_compute_mcps_scores_groups_by_client_and_gamma():
+def test_compute_mcps_scores_groups_by_actor_anchor_and_gamma():
     executions = pl.DataFrame(
         {
             "partition_id": ["P", "P", "P", "P"],
-            "client_id": ["C1", "C1", "C1", "C2"],
+            "actor_key": ["client_original:C1", "client_original:C1", "client_original:C1", "client_original:C2"],
+            "execution_anchor_mode": ["passive", "passive", "passive", "aggressive"],
             "top_n": [3, 3, 3, 3],
             "kappa": [1.0, 1.0, 1.0, 1.0],
             "lambda_": [0.5, 0.5, 0.5, 0.5],
-            "MSCI": [0.2, 0.8, None, 0.9],
+            "MSCI_resting_profile": [0.2, 0.8, None, 0.9],
+            # Deliberately discordant compatibility alias: consumers must use
+            # the canonical resting-profile field when both are present.
+            "MSCI": [0.0, 0.0, 0.0, 0.0],
             "SCI": [0.4, 0.9, None, 1.0],
             "collapse_opposite_side": [0.5, 0.9, None, 0.8],
             "collapse_same_side": [0.1, 0.2, None, 0.1],
@@ -501,21 +872,59 @@ def test_compute_mcps_scores_groups_by_client_and_gamma():
     )
 
     scores = compute_mcps_scores(executions, gamma_grid=[0.5])
-    c1 = scores.filter(pl.col("client_id") == "C1").to_dicts()[0]
+    c1 = scores.filter(pl.col("actor_key") == "client_original:C1").to_dicts()[0]
 
     assert c1["executions"] == 3
     assert c1["finite_msci_executions"] == 2
     assert c1["msci_above_gamma_count"] == 1
     assert c1["MCPS"] == pytest.approx(1 / 3)
+    assert c1["MCPS_resting_profile"] == pytest.approx(1 / 3)
+    assert c1["median_MSCI_resting_profile"] == pytest.approx(0.5)
     assert c1["candidate_profile_share"] == pytest.approx(2 / 3)
     assert c1["mean_favorable_mid_move_pre_fill"] == pytest.approx(0.0)
     assert c1["mean_post_cancel_mid_reversion"] == pytest.approx(0.05)
 
 
-def test_compute_mcps_scores_excludes_unattributable_client_bucket():
+def test_compute_mcps_scores_excludes_nonfinite_values_and_rejects_nonfinite_gamma():
     executions = pl.DataFrame(
         {
-            "client_id": ["0", "C1"],
+            "partition_id": ["P", "P", "P"],
+            "actor_key": ["client_original:C1"] * 3,
+            "execution_anchor_mode": ["passive"] * 3,
+            "MSCI": [0.75, float("nan"), float("inf")],
+            "SCI": [0.5, float("nan"), float("-inf")],
+            "collapse_opposite_side": [0.4, float("nan"), float("inf")],
+            "collapse_same_side": [0.1, float("nan"), float("-inf")],
+            "favorable_mid_move_pre_fill": [0.2, float("nan"), float("inf")],
+        }
+    )
+
+    score = compute_mcps_scores(executions, gamma_grid=[0.5]).to_dicts()[0]
+
+    assert score["executions"] == 3
+    assert score["finite_msci_executions"] == 1
+    assert score["msci_above_gamma_count"] == 1
+    assert score["MCPS"] == pytest.approx(1 / 3)
+    assert score["median_MSCI"] == pytest.approx(0.75)
+    assert score["max_MSCI"] == pytest.approx(0.75)
+    assert score["mean_MSCI"] == pytest.approx(0.75)
+    assert score["mean_SCI"] == pytest.approx(0.5)
+    assert score["mean_favorable_mid_move_pre_fill"] == pytest.approx(0.2)
+    assert all(
+        value is None or not isinstance(value, float) or math.isfinite(value)
+        for value in score.values()
+    )
+
+    for invalid_gamma in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match="gamma thresholds must be finite"):
+            compute_mcps_scores(executions, gamma_grid=[invalid_gamma])
+
+
+def test_compute_mcps_scores_excludes_unattributable_actor_bucket():
+    executions = pl.DataFrame(
+        {
+            "actor_key": ["", "client_original:C1"],
+            "execution_anchor_mode": ["passive", "passive"],
             "MSCI": [0.9, 0.2],
             "SCI": [1.0, 0.3],
             "collapse_opposite_side": [0.9, 0.4],
@@ -525,7 +934,44 @@ def test_compute_mcps_scores_excludes_unattributable_client_bucket():
 
     scores = compute_mcps_scores(executions, gamma_grid=[0.5])
 
-    assert scores.get_column("client_id").to_list() == ["C1"]
+    assert scores.get_column("actor_key").to_list() == ["client_original:C1"]
+
+
+def test_compute_mcps_scores_does_not_pool_execution_anchor_branches():
+    executions = pl.DataFrame(
+        {
+            "partition_id": ["P", "P"],
+            "actor_key": ["firm:F1", "firm:F1"],
+            "execution_anchor_mode": ["passive", "aggressive"],
+            "MSCI": [0.9, 0.1],
+            "SCI": [1.0, 0.2],
+            "collapse_opposite_side": [0.9, 0.2],
+            "collapse_same_side": [0.0, 0.0],
+        }
+    )
+
+    scores = compute_mcps_scores(executions, gamma_grid=[0.5]).sort("execution_anchor_mode")
+
+    assert scores.get_column("execution_anchor_mode").to_list() == ["aggressive", "passive"]
+    assert scores.get_column("executions").to_list() == [1, 1]
+    assert scores.get_column("MCPS").to_list() == [0.0, 1.0]
+
+
+def test_compute_mcps_scores_preserves_actor_anchor_schema_when_empty():
+    scores = compute_mcps_scores(pl.DataFrame(), gamma_grid=[0.5])
+
+    assert scores.is_empty()
+    assert {
+        "actor_key",
+        "actor_id",
+        "identity_level",
+        "identity_source",
+        "identity_fallback_flag",
+        "execution_anchor_mode",
+        "gamma",
+        "executions",
+        "MCPS",
+    }.issubset(scores.columns)
 
 
 def test_sci_post_state_lookup_handles_timestamps_nonmonotonic_in_sort_order():
@@ -534,7 +980,7 @@ def test_sci_post_state_lookup_handles_timestamps_nonmonotonic_in_sort_order():
         [
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "event_ts": base,
                 "cluster_start_ts": base,
                 "cluster_end_ts": base,
@@ -549,7 +995,7 @@ def test_sci_post_state_lookup_handles_timestamps_nonmonotonic_in_sort_order():
     states = pl.DataFrame(
         {
             "partition_id": ["P", "P", "P"],
-            "client_id": ["C1", "C1", "C1"],
+            "actor_key": ["client_original:C1"] * 3,
             "sort_index": [1, 2, 3],
             "event_ts": [
                 base + timedelta(seconds=2),
@@ -607,7 +1053,8 @@ def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
 
     assert result.execution_metrics.height == 1
     row = result.execution_metrics.to_dicts()[0]
-    assert row["client_id"] == "C1"
+    assert row["actor_key"] == "client_original:C1"
+    assert row["actor_id"] == "C1"
     assert row["execution_side"] == "ask"
     assert row["deceptive_side"] == "bid"
     assert row["candidate_deceptive_order_count_pre"] == 1
@@ -625,6 +1072,24 @@ def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
     assert row["withdrawal_to_fill_ratio"] == pytest.approx(50.0 / 5.0)
     assert row["weighted_withdrawal_to_fill_ratio"] == pytest.approx(50.0 * math.exp(-0.5 / 10.0) / 5.0)
     assert row["WMSCI_event"] > 0
+    assert row["MSCI_resting_profile"] == row["MSCI"]
+    assert row["withdrawal_profile_scale_event"] == row["WMSCI_event"]
+    assert row["WMSCI_passive"] == row["WMSCI_event"]
+    assert row["WMSCI_aggressive"] is None
+    assert row["withdrawal_profile_scale_denominator_mode"] == "passive_execution_quantity"
+    assert row["execution_quantity"] == pytest.approx(5.0)
+    assert row["execution_vwap"] == pytest.approx(100.2)
+    assert row["passive_execution_diagnostics_applicable"] is True
+    assert row["aggressive_execution_diagnostics_applicable"] is False
+    assert row["passive_execution_quantity"] == pytest.approx(5.0)
+    assert row["passive_execution_vwap"] == pytest.approx(100.2)
+    assert row["passive_same_level_market_visible_qty_pre"] == pytest.approx(5.0)
+    assert row["passive_same_level_actor_visible_qty_pre"] == pytest.approx(5.0)
+    assert row["passive_smallness_fraction_market_level"] == pytest.approx(1.0)
+    assert row["passive_smallness_fraction_actor_level"] == pytest.approx(1.0)
+    assert row["aggressive_execution_quantity"] is None
+    assert row["aggressive_execution_vwap"] is None
+    assert row["aggressive_child_fill_count"] is None
     assert row["smallness_fraction_market_level"] == pytest.approx(1.0)
     assert row["DWI_pre_window"] is not None
     assert row["has_post_window_state"] is True
@@ -730,6 +1195,52 @@ def test_assign_cancellations_uses_latest_cluster_end_then_first_sort_tiebreak()
     assert [row["execution_cluster_id"] for row in winner] == ["EC000000020-000000022"]
     assert set(assigned["assignment_rule"].to_list()) == {"latest_prior_cluster_end"}
     assert set(assigned["competing_cluster_count"].to_list()) == {3}
+
+
+def test_assign_cancellations_selects_one_winning_execution_anchor_branch():
+    candidate_links = pl.DataFrame(
+        {
+            "partition_id": ["P", "P"],
+            "actor_key": ["client_original:C1", "client_original:C1"],
+            "execution_anchor_mode": ["passive", "aggressive"],
+            "cancel_sort_index": [30, 30],
+            "candidate_order_id": ["BD", "BD"],
+            "execution_cluster_id": ["PASSIVE", "AGGRESSIVE"],
+            "cluster_end_ts": [
+                datetime(2024, 1, 2, 9, 30, 1),
+                datetime(2024, 1, 2, 9, 30, 2),
+            ],
+            "cluster_first_sort_index": [10, 20],
+        }
+    )
+
+    assigned = assign_cancellations_to_clusters(candidate_links)
+
+    assert assigned.get_column("assigned_flag").to_list() == [False, True]
+    assert assigned.get_column("competing_cluster_count").to_list() == [2, 2]
+
+
+def test_assign_cancellations_does_not_compete_across_actor_namespaces():
+    candidate_links = pl.DataFrame(
+        {
+            "partition_id": ["P", "P"],
+            "actor_key": ["client_original:F1", "firm:F1"],
+            "execution_anchor_mode": ["passive", "passive"],
+            "cancel_sort_index": [30, 30],
+            "candidate_order_id": ["BD", "BD"],
+            "execution_cluster_id": ["CLIENT", "FIRM"],
+            "cluster_end_ts": [
+                datetime(2024, 1, 2, 9, 30, 1),
+                datetime(2024, 1, 2, 9, 30, 2),
+            ],
+            "cluster_first_sort_index": [10, 20],
+        }
+    )
+
+    assigned = assign_cancellations_to_clusters(candidate_links)
+
+    assert assigned.get_column("assigned_flag").to_list() == [True, True]
+    assert assigned.get_column("competing_cluster_count").to_list() == [1, 1]
 
 
 

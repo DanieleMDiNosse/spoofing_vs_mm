@@ -3,16 +3,25 @@ from __future__ import annotations
 import bisect
 import math
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import polars as pl
 
+from spoofing_detection.lob.actor_identity import (
+    ActorIdentity,
+    actor_identity_from_event,
+    actor_identity_from_order,
+    same_actor,
+)
 from spoofing_detection.lob.behavioral_gate import attach_spoofing_compatible_sequence_gate
 from spoofing_detection.lob.config import LOBConfig
-from spoofing_detection.lob.execution_clusters import cluster_passive_execution_fills
+from spoofing_detection.lob.execution_clusters import (
+    classify_execution_anchor,
+    cluster_execution_fills,
+)
 from spoofing_detection.lob.models import ActiveOrder
 from spoofing_detection.lob.normalize import normalize_event
 from spoofing_detection.lob.panel import (
@@ -24,18 +33,187 @@ from spoofing_detection.lob.panel import (
 )
 BEST_QUOTE_COLUMNS = ("post_best_bid", "post_best_ask")
 VISIBLE_LIMIT_ORDER_TYPES = {"limit", "iceberg"}
-MSCI_DEFINITION = (
-    "mean(clip(SCI / 2, 0, 1), clip(C_opposite, 0, 1), "
-    "max(clip(C_opposite, 0, 1) - clip(C_same, 0, 1), 0))"
+MSCI_DEFINITION = "SCI / 2 + C_opposite - C_same"
+MSCI_RESTING_PROFILE_DEFINITION = MSCI_DEFINITION
+WITHDRAWAL_PROFILE_SCALE_DEFINITION = (
+    "log1p(candidate_deceptive_visible_qty_pre / execution_quantity) * "
+    "log1p(weighted_net_withdrawal_qty_window / execution_quantity) * "
+    "matched_deceptive_cancel_fraction_window"
 )
-MSCI_RANGE = (0.0, 1.0)
+MSCI_RANGE = (-1.0, 2.0)
+RATIO_ZERO_DENOMINATOR_POLICY = (
+    "exact_piecewise_v1: collapse=0 when pre_liquidity=0; "
+    "DWI=0 only for explicit zero-profile states; other undefined ratios=null"
+)
+
+ACTOR_IDENTITY_SCHEMA: dict[str, pl.DataType] = {
+    "actor_key": pl.String,
+    "actor_id": pl.String,
+    "identity_level": pl.String,
+    "identity_source": pl.String,
+    "identity_fallback_flag": pl.Boolean,
+}
+EXECUTION_EMPTY_SCHEMA: dict[str, pl.DataType] = {
+    "partition_id": pl.String,
+    "sort_index": pl.Int64,
+    "event_ts": pl.Datetime("us"),
+    **ACTOR_IDENTITY_SCHEMA,
+    "execution_anchor_mode": pl.String,
+    "execution_cluster_id": pl.String,
+    "execution_side": pl.String,
+    "fill_qty": pl.Float64,
+    "execution_quantity": pl.Float64,
+    "execution_vwap": pl.Float64,
+    "passive_execution_diagnostics_applicable": pl.Boolean,
+    "aggressive_execution_diagnostics_applicable": pl.Boolean,
+    "passive_execution_quantity": pl.Float64,
+    "aggressive_execution_quantity": pl.Float64,
+    "MSCI": pl.Float64,
+    "MSCI_resting_profile": pl.Float64,
+    "withdrawal_profile_scale_event": pl.Float64,
+    "WMSCI_passive": pl.Float64,
+    "WMSCI_aggressive": pl.Float64,
+}
+CANDIDATE_DECEPTIVE_ORDER_EMPTY_SCHEMA: dict[str, pl.DataType] = {
+    "partition_id": pl.String,
+    "execution_sort_index": pl.Int64,
+    "execution_ts": pl.Datetime("us"),
+    **ACTOR_IDENTITY_SCHEMA,
+    "execution_anchor_mode": pl.String,
+    "execution_cluster_id": pl.String,
+    "deceptive_order_id": pl.String,
+}
+EXECUTION_CLUSTER_MEMBER_EMPTY_SCHEMA: dict[str, pl.DataType] = {
+    "execution_cluster_id": pl.String,
+    "partition_id": pl.String,
+    **ACTOR_IDENTITY_SCHEMA,
+    "execution_anchor_mode": pl.String,
+    "child_order_id": pl.String,
+    "child_sort_index": pl.Int64,
+    "child_fill_qty": pl.Float64,
+    "child_fill_price": pl.Float64,
+}
+DIRECT_CANCELLATION_EMPTY_SCHEMA: dict[str, pl.DataType] = {
+    "partition_id": pl.String,
+    "sort_index": pl.Int64,
+    "event_ts": pl.Datetime("us"),
+    **ACTOR_IDENTITY_SCHEMA,
+    "ORDERID": pl.String,
+    "visible_qty_pre_cancel": pl.Float64,
+}
+
+MCPS_SCORE_SCHEMA: dict[str, pl.DataType] = {
+    "partition_id": pl.String,
+    "actor_key": pl.String,
+    "actor_id": pl.String,
+    "identity_level": pl.String,
+    "identity_source": pl.String,
+    "identity_fallback_flag": pl.Boolean,
+    "execution_anchor_mode": pl.String,
+    "top_n": pl.Int64,
+    "kappa": pl.Float64,
+    "lambda_": pl.Float64,
+    "gamma": pl.Float64,
+    "executions": pl.Int64,
+    "finite_msci_executions": pl.Int64,
+    "msci_above_gamma_count": pl.Int64,
+    "MCPS": pl.Float64,
+    "MCPS_resting_profile": pl.Float64,
+    "median_MSCI": pl.Float64,
+    "max_MSCI": pl.Float64,
+    "mean_MSCI": pl.Float64,
+    "median_MSCI_resting_profile": pl.Float64,
+    "max_MSCI_resting_profile": pl.Float64,
+    "mean_MSCI_resting_profile": pl.Float64,
+    "mean_SCI": pl.Float64,
+    "mean_collapse_opposite_side": pl.Float64,
+    "mean_collapse_same_side": pl.Float64,
+    "mean_favorable_mid_move_pre_fill": pl.Float64,
+    "mean_favorable_microprice_move_pre_fill": pl.Float64,
+    "mean_post_cancel_mid_reversion": pl.Float64,
+    "mean_execution_price_advantage_vs_posture_mid": pl.Float64,
+    "matched_deceptive_cancel_share": pl.Float64,
+    "direct_opposite_cancel_share": pl.Float64,
+    "candidate_profile_share": pl.Float64,
+}
+
+
+def _state_metric_empty_schema(*, top_n: int, include_level_columns: bool) -> dict[str, pl.DataType]:
+    schema: dict[str, pl.DataType] = {
+        "partition_id": pl.String,
+        "sort_index": pl.Int64,
+        "event_ts": pl.Datetime("us"),
+        **ACTOR_IDENTITY_SCHEMA,
+        "has_active_top_n_profile": pl.Boolean,
+        "top_n": pl.Int64,
+        "tick_size": pl.Float64,
+        "kappa": pl.Float64,
+        "lambda_": pl.Float64,
+        "market_best_bid": pl.Float64,
+        "market_best_ask": pl.Float64,
+        "market_mid": pl.Float64,
+        "market_microprice": pl.Float64,
+    }
+    for side in ("bid", "ask"):
+        if include_level_columns:
+            for rank in range(1, top_n + 1):
+                prefix = f"{side}_level_{rank}"
+                schema.update(
+                    {
+                        f"{prefix}_price": pl.Float64,
+                        f"{prefix}_market_visible_qty": pl.Float64,
+                        f"{prefix}_actor_visible_qty": pl.Float64,
+                        f"{prefix}_actor_fraction": pl.Float64,
+                        f"{prefix}_actor_relative_depth": pl.Float64,
+                        f"{prefix}_delta_ticks": pl.Float64,
+                        f"{prefix}_depth_distance_ticks": pl.Float64,
+                        f"{prefix}_kernel_weight": pl.Float64,
+                        f"{prefix}_weighted_liquidity_contribution": pl.Float64,
+                    }
+                )
+        schema.update(
+            {
+                f"actor_{side}_qty_topN": pl.Float64,
+                f"market_{side}_qty_topN": pl.Float64,
+                f"raw_{side}_fraction_topN": pl.Float64,
+                f"L_{side}_topN": pl.Float64,
+            }
+        )
+    schema.update({"DWI_denominator": pl.Float64, "DWI": pl.Float64})
+    return schema
+
+
+_STATE_ROW_CHUNK_SIZE = 50_000
+
+
+REJECTED_EXECUTION_SCHEMA: dict[str, pl.DataType] = {
+    "partition_id": pl.String,
+    "sort_index": pl.Int64,
+    "event_ts": pl.Datetime("us"),
+    "ORDERID": pl.String,
+    "client_original_id": pl.String,
+    "firm_id": pl.String,
+    "execution_side": pl.String,
+    "actor_key": pl.String,
+    "actor_id": pl.String,
+    "identity_level": pl.String,
+    "identity_source": pl.String,
+    "identity_fallback_flag": pl.Boolean,
+    "execution_anchor_mode": pl.String,
+    "reject_reason": pl.String,
+}
 
 EXECUTION_CANCEL_CANDIDATE_SCHEMA: dict[str, pl.DataType] = {
     "partition_id": pl.String,
     "cancel_sort_index": pl.Int64,
     "candidate_order_id": pl.String,
     "execution_cluster_id": pl.String,
-    "client_id": pl.String,
+    "actor_key": pl.String,
+    "actor_id": pl.String,
+    "identity_level": pl.String,
+    "identity_source": pl.String,
+    "identity_fallback_flag": pl.Boolean,
+    "execution_anchor_mode": pl.String,
     "execution_side": pl.String,
     "deceptive_side": pl.String,
     "cluster_end_ts": pl.Datetime("us"),
@@ -61,17 +239,6 @@ EXECUTION_CANCEL_CANDIDATE_SCHEMA: dict[str, pl.DataType] = {
     "cancel_reversion_weight": pl.Float64,
     "has_cancel_reversion_state": pl.Boolean,
 }
-
-
-@dataclass(frozen=True)
-class ExploratoryMetricsConfig:
-    top_n: int = 3
-    kappa: float = 1.0
-    lambda_: float = 1.0
-    epsilon: float = 1e-12
-    window_seconds: float = 1.0
-    withdrawal_window_seconds: float = 2.0
-    reversion_horizon_seconds: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -205,7 +372,7 @@ def _side_depth_metadata(
     }
 
 
-def compute_client_top_n_exposures(
+def compute_actor_top_n_exposures(
     active_orders: Mapping[str, ActiveOrder],
     *,
     top_n: int,
@@ -216,8 +383,8 @@ def compute_client_top_n_exposures(
     sort_index: int,
     event_ts: datetime | None,
     include_level_columns: bool = True,
-    client_ids: set[str] | None = None,
-    include_zero_client_ids: set[str] | None = None,
+    actor_keys: set[str] | None = None,
+    include_zero_actor_keys: set[str] | None = None,
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> list[dict[str, Any]]:
     if top_n <= 0:
@@ -260,34 +427,41 @@ def compute_client_top_n_exposures(
         for side, side_levels in levels.items()
     }
 
-    client_level_qty: dict[tuple[str, str, int], float] = defaultdict(float)
-    active_client_ids: set[str] = set()
+    actor_level_qty: dict[tuple[str, str, int], float] = defaultdict(float)
+    active_identities: dict[str, ActorIdentity] = {}
     for order in active_orders.values():
-        client_id = str(order.client_original_id) if order.client_original_id is not None else None
+        identity = actor_identity_from_order(order)
         qty = _visible_qty(order)
-        if client_id is None or qty <= 0 or order.side not in {"bid", "ask"}:
+        if identity is None or qty <= 0 or order.side not in {"bid", "ask"}:
             continue
-        if client_ids is not None and client_id not in client_ids:
+        if actor_keys is not None and identity.actor_key not in actor_keys:
             continue
         rank = price_to_rank[order.side].get(float(order.price))
         if rank is None:
             continue
-        active_client_ids.add(client_id)
-        client_level_qty[(client_id, order.side, rank)] += qty
+        active_identities[identity.actor_key] = identity
+        actor_level_qty[(identity.actor_key, order.side, rank)] += qty
 
-    profile_client_ids = set(active_client_ids)
-    zero_client_ids = set(include_zero_client_ids or ()) - profile_client_ids
-    if client_ids is not None:
-        zero_client_ids.intersection_update(client_ids)
+    profile_actor_keys = set(active_identities)
+    zero_actor_keys = set(include_zero_actor_keys or ()) - profile_actor_keys
+    if actor_keys is not None:
+        zero_actor_keys.intersection_update(actor_keys)
 
     rows: list[dict[str, Any]] = []
-    for client_id in sorted(profile_client_ids | zero_client_ids):
+    for actor_key in sorted(profile_actor_keys | zero_actor_keys):
+        identity = active_identities.get(actor_key) or _actor_identity_from_key(actor_key)
+        if identity is None:
+            continue
         row: dict[str, Any] = {
             "partition_id": partition_id,
             "sort_index": sort_index,
             "event_ts": event_ts,
-            "client_id": client_id,
-            "has_active_top_n_profile": client_id in profile_client_ids,
+            "actor_key": identity.actor_key,
+            "actor_id": identity.actor_id,
+            "identity_level": identity.identity_level,
+            "identity_source": identity.identity_source,
+            "identity_fallback_flag": identity.identity_fallback_flag,
+            "has_active_top_n_profile": actor_key in profile_actor_keys,
             "top_n": top_n,
             "tick_size": tick_size,
             "kappa": kappa,
@@ -299,14 +473,14 @@ def compute_client_top_n_exposures(
         }
         liquidity: dict[str, float] = {}
         for side in ("bid", "ask"):
-            client_side_qty = 0.0
+            actor_side_qty = 0.0
             side_liquidity = 0.0
             for rank in range(1, top_n + 1):
                 if rank <= len(levels[side]):
                     price, market_qty = levels[side][rank - 1]
-                    client_qty = client_level_qty[(client_id, side, rank)]
+                    actor_qty = actor_level_qty[(actor_key, side, rank)]
                     meta = side_meta[side][price]
-                    relative_depth = client_qty / market_qty if market_qty > 0 else 0.0
+                    relative_depth = actor_qty / market_qty if market_qty > 0 else 0.0
                     contribution = meta["kernel_weight"] * relative_depth
                     delta_ticks = meta["delta_ticks"]
                     depth_distance = meta["depth_distance_ticks"]
@@ -314,48 +488,132 @@ def compute_client_top_n_exposures(
                 else:
                     price = None
                     market_qty = 0.0
-                    client_qty = 0.0
+                    actor_qty = 0.0
                     relative_depth = 0.0
                     contribution = 0.0
                     delta_ticks = None
                     depth_distance = None
                     kernel_weight = 0.0
-                client_side_qty += client_qty
+                actor_side_qty += actor_qty
                 side_liquidity += contribution
                 if include_level_columns:
                     row[f"{side}_level_{rank}_price"] = price
                     row[f"{side}_level_{rank}_market_visible_qty"] = market_qty
-                    row[f"{side}_level_{rank}_client_visible_qty"] = client_qty
-                    row[f"{side}_level_{rank}_client_fraction"] = client_qty / market_qty if market_qty > 0 else 0.0
-                    row[f"{side}_level_{rank}_client_relative_depth"] = relative_depth
+                    row[f"{side}_level_{rank}_actor_visible_qty"] = actor_qty
+                    row[f"{side}_level_{rank}_actor_fraction"] = actor_qty / market_qty if market_qty > 0 else 0.0
+                    row[f"{side}_level_{rank}_actor_relative_depth"] = relative_depth
                     row[f"{side}_level_{rank}_delta_ticks"] = delta_ticks
                     row[f"{side}_level_{rank}_depth_distance_ticks"] = depth_distance
                     row[f"{side}_level_{rank}_kernel_weight"] = kernel_weight
                     row[f"{side}_level_{rank}_weighted_liquidity_contribution"] = contribution
             liquidity[side] = side_liquidity
-            row[f"client_{side}_qty_topN"] = client_side_qty
+            row[f"actor_{side}_qty_topN"] = actor_side_qty
             row[f"market_{side}_qty_topN"] = market_total[side]
-            row[f"raw_{side}_fraction_topN"] = client_side_qty / market_total[side] if market_total[side] > 0 else 0.0
+            row[f"raw_{side}_fraction_topN"] = actor_side_qty / market_total[side] if market_total[side] > 0 else 0.0
             row[f"L_{side}_topN"] = side_liquidity
         denom = liquidity["ask"] + liquidity["bid"]
         row["DWI_denominator"] = denom
         row["DWI"] = (
             (liquidity["ask"] - liquidity["bid"]) / denom
             if denom > 0
-            else (0.0 if client_id in zero_client_ids else None)
+            else (0.0 if actor_key in zero_actor_keys else None)
         )
         rows.append(row)
     return rows
 
 
+def _actor_identity_from_key(actor_key: str) -> ActorIdentity | None:
+    prefix, separator, actor_id = str(actor_key).partition(":")
+    if not separator or not actor_id:
+        return None
+    if prefix == "client_original":
+        return ActorIdentity(
+            actor_key=actor_key,
+            actor_id=actor_id,
+            identity_level="client_original",
+            identity_source="NMSC_ORIGINALCLIENTIDSHORTCODE",
+            identity_fallback_flag=False,
+        )
+    if prefix == "firm":
+        return ActorIdentity(
+            actor_key=actor_key,
+            actor_id=actor_id,
+            identity_level="firm",
+            identity_source="FIRMID",
+            identity_fallback_flag=True,
+        )
+    return None
+
+
+def compute_client_top_n_exposures(
+    active_orders: Mapping[str, ActiveOrder],
+    *,
+    top_n: int,
+    tick_size: float,
+    kappa: float,
+    lambda_: float,
+    partition_id: str | None,
+    sort_index: int,
+    event_ts: datetime | None,
+    include_level_columns: bool = True,
+    client_ids: set[str] | None = None,
+    include_zero_client_ids: set[str] | None = None,
+    empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
+) -> list[dict[str, Any]]:
+    """Compatibility adapter for client-only callers; official outputs are actor-aware."""
+    available_client_keys = {
+        identity.actor_key
+        for order in active_orders.values()
+        if (identity := actor_identity_from_order(order)) is not None
+        and identity.identity_level == "client_original"
+    }
+    requested_keys = (
+        {f"client_original:{client_id}" for client_id in client_ids}
+        if client_ids is not None
+        else available_client_keys
+    )
+    zero_keys = {f"client_original:{client_id}" for client_id in include_zero_client_ids or ()}
+    actor_rows = compute_actor_top_n_exposures(
+        active_orders,
+        top_n=top_n,
+        tick_size=tick_size,
+        kappa=kappa,
+        lambda_=lambda_,
+        partition_id=partition_id,
+        sort_index=sort_index,
+        event_ts=event_ts,
+        include_level_columns=include_level_columns,
+        actor_keys=requested_keys,
+        include_zero_actor_keys=zero_keys,
+        empirical_kernel_weights=empirical_kernel_weights,
+    )
+    rows: list[dict[str, Any]] = []
+    for actor_row in actor_rows:
+        row: dict[str, Any] = {}
+        for key, value in actor_row.items():
+            if key in {
+                "actor_key",
+                "actor_id",
+                "identity_level",
+                "identity_source",
+                "identity_fallback_flag",
+            }:
+                continue
+            row[key.replace("_actor_", "_client_").replace("actor_", "client_", 1)] = value
+        row["client_id"] = actor_row["actor_id"]
+        rows.append(row)
+    return rows
+
+
 def _same_level_visible_qty(
-    active_orders: Mapping[str, ActiveOrder], *, side: str, price: float, client_id: str | None = None
+    active_orders: Mapping[str, ActiveOrder], *, side: str, price: float, actor_key: str | None = None
 ) -> float:
     total = 0.0
     for order in active_orders.values():
         if order.side != side or float(order.price) != float(price):
             continue
-        if client_id is not None and order.client_original_id != client_id:
+        identity = actor_identity_from_order(order)
+        if actor_key is not None and (identity is None or identity.actor_key != actor_key):
             continue
         total += _visible_qty(order)
     return total
@@ -376,8 +634,14 @@ def _opposite_side(side: str) -> str:
     return "ask" if side == "bid" else "bid"
 
 
-def _is_aggressive(event: dict[str, Any]) -> bool:
-    return str(event.get("AGGRESSIVEORDER") or "").upper() == "Y"
+def _positive_trade_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) and parsed > 0 else None
 
 
 def _execution_candidate_or_rejection(
@@ -386,39 +650,85 @@ def _execution_candidate_or_rejection(
     *,
     event_ts: datetime | None,
     partition_id: str | None,
+    allowed_anchor_modes: Collection[str] = ("passive", "aggressive"),
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     if event["event_class"] != "fill":
         return None, None
 
-    base = {
+    actor = actor_identity_from_event(event)
+    base: dict[str, Any] = {
         "partition_id": partition_id,
         "sort_index": event["sort_index"],
         "event_ts": event_ts,
         "ORDERID": event["ORDERID"],
-        "client_id": event["client_original_id"],
+        "client_original_id": event.get("client_original_id"),
+        "firm_id": event.get("firm_id"),
         "execution_side": event["side_label"],
     }
+    if actor is not None:
+        base.update(
+            {
+                "actor_key": actor.actor_key,
+                "actor_id": actor.actor_id,
+                "identity_level": actor.identity_level,
+                "identity_source": actor.identity_source,
+                "identity_fallback_flag": actor.identity_fallback_flag,
+            }
+        )
 
     def rejected(reason: str) -> tuple[None, dict[str, Any]]:
         return None, {**base, "reject_reason": reason}
 
     if event_ts is None:
         return rejected("missing_event_timestamp")
-    if event["client_original_id"] is None:
-        return rejected("missing_client_id")
+    if actor is None:
+        return rejected("missing_actor_identity")
     if event["side_label"] not in {"bid", "ask"}:
         return rejected("missing_or_invalid_side")
+
+    allowed_modes = {str(mode).strip().lower() for mode in allowed_anchor_modes}
+    unknown_modes = allowed_modes - {"passive", "aggressive"}
+    if unknown_modes:
+        raise ValueError(f"unsupported execution anchor modes: {sorted(unknown_modes)}")
+    anchor_mode = classify_execution_anchor(event)
+    if anchor_mode is None:
+        passive_flag = str(event.get("PASSIVEORDER") or "").strip().upper() == "Y"
+        aggressive_flag = str(event.get("AGGRESSIVEORDER") or "").strip().upper() == "Y"
+        reason = "ambiguous_execution_role" if passive_flag and aggressive_flag else "missing_execution_role"
+        return rejected(reason)
+    if anchor_mode not in allowed_modes:
+        return rejected(f"execution_anchor_mode_disabled:{anchor_mode}")
+    base["execution_anchor_mode"] = anchor_mode
+
+    if anchor_mode == "aggressive":
+        fill_qty = _positive_trade_value(event.get("LASTSHARES"))
+        if fill_qty is None:
+            return rejected("missing_or_invalid_last_shares")
+        execution_price = _positive_trade_value(event.get("LASTTRADEDPX"))
+        if execution_price is None:
+            return rejected("missing_or_invalid_last_traded_price")
+        return {
+            **base,
+            "deceptive_side": _opposite_side(event["side_label"]),
+            "event_price": execution_price,
+            "fill_qty": fill_qty,
+            "execution_price_source": "LASTTRADEDPX",
+            "same_level_market_visible_qty_pre": None,
+            "same_level_actor_visible_qty_pre": None,
+            "smallness_fraction_market_level": None,
+            "smallness_fraction_actor_level": None,
+        }, None
+
     if event["event_order_type_label"] not in VISIBLE_LIMIT_ORDER_TYPES:
         return rejected("non_limit_order_type")
-    if _is_aggressive(event):
-        return rejected("aggressive_execution")
 
     order_id = event["ORDERID"]
     active_order = active_orders.get(order_id)
     if active_order is None:
         return rejected("fill_order_not_active_before_execution")
-    if active_order.client_original_id != event["client_original_id"]:
-        return rejected("active_order_client_mismatch")
+    active_actor = actor_identity_from_order(active_order)
+    if not same_actor(actor, active_actor):
+        return rejected("active_order_actor_mismatch")
     if active_order.side != event["side_label"]:
         return rejected("active_order_side_mismatch")
     if active_order.order_type_label not in VISIBLE_LIMIT_ORDER_TYPES:
@@ -426,23 +736,23 @@ def _execution_candidate_or_rejection(
 
     fill_qty = _fill_qty(event, active_order)
     market_qty = _same_level_visible_qty(active_orders, side=active_order.side, price=active_order.price)
-    client_qty = _same_level_visible_qty(
+    actor_qty = _same_level_visible_qty(
         active_orders,
         side=active_order.side,
         price=active_order.price,
-        client_id=active_order.client_original_id,
+        actor_key=actor.actor_key,
     )
     return {
         **base,
-        "client_id": active_order.client_original_id,
         "execution_side": active_order.side,
         "deceptive_side": _opposite_side(active_order.side),
         "event_price": active_order.price,
         "fill_qty": fill_qty,
+        "execution_price_source": "active_order_price",
         "same_level_market_visible_qty_pre": market_qty,
-        "same_level_client_visible_qty_pre": client_qty,
+        "same_level_actor_visible_qty_pre": actor_qty,
         "smallness_fraction_market_level": fill_qty / market_qty if market_qty > 0 else None,
-        "smallness_fraction_client_level": fill_qty / client_qty if client_qty > 0 else None,
+        "smallness_fraction_actor_level": fill_qty / actor_qty if actor_qty > 0 else None,
     }, None
 
 
@@ -477,7 +787,13 @@ def _candidate_deceptive_order_rows(
     execution_ts = _parse_ts(execution.get("event_ts"))
     for order in sorted(active_orders.values(), key=lambda item: (item.side, item.price, item.order_id)):
         qty = _visible_qty(order)
-        if qty <= 0 or order.client_original_id != execution["client_id"] or order.side != deceptive_side:
+        order_actor = actor_identity_from_order(order)
+        if (
+            qty <= 0
+            or order_actor is None
+            or order_actor.actor_key != execution.get("actor_key")
+            or order.side != deceptive_side
+        ):
             continue
         price = float(order.price)
         rank = price_to_rank.get(price)
@@ -499,7 +815,14 @@ def _candidate_deceptive_order_rows(
                 "partition_id": execution["partition_id"],
                 "execution_sort_index": execution["sort_index"],
                 "execution_ts": execution["event_ts"],
-                "client_id": execution["client_id"],
+                "actor_key": execution["actor_key"],
+                "actor_id": execution["actor_id"],
+                "identity_level": execution["identity_level"],
+                "identity_source": execution["identity_source"],
+                "identity_fallback_flag": execution["identity_fallback_flag"],
+                "execution_anchor_mode": execution["execution_anchor_mode"],
+                "client_original_id": order.client_original_id,
+                "firm_id": order.firm_id,
                 "execution_order_id": execution["ORDERID"],
                 "execution_side": execution["execution_side"],
                 "deceptive_side": deceptive_side,
@@ -602,7 +925,10 @@ def _direct_cancel_row(
         return None
     order_id = event["ORDERID"]
     active_order = active_orders.get(order_id)
-    if active_order is None or active_order.client_original_id is None or active_order.side not in {"bid", "ask"}:
+    if active_order is None or active_order.side not in {"bid", "ask"}:
+        return None
+    actor = actor_identity_from_order(active_order)
+    if actor is None:
         return None
     qty = _visible_qty(active_order)
     if qty <= 0:
@@ -611,15 +937,33 @@ def _direct_cancel_row(
         "partition_id": partition_id,
         "sort_index": event["sort_index"],
         "event_ts": event_ts,
-        "client_id": active_order.client_original_id,
+        "actor_key": actor.actor_key,
+        "actor_id": actor.actor_id,
+        "identity_level": actor.identity_level,
+        "identity_source": actor.identity_source,
+        "identity_fallback_flag": actor.identity_fallback_flag,
+        "client_original_id": active_order.client_original_id,
+        "firm_id": active_order.firm_id,
         "side": active_order.side,
         "ORDERID": order_id,
         "visible_qty_pre_cancel": qty,
     }
 
 
-def _empty_frame() -> pl.DataFrame:
-    return pl.DataFrame()
+def _coerce_frame_schema(frame: pl.DataFrame, schema: Mapping[str, pl.DataType]) -> pl.DataFrame:
+    if frame.is_empty():
+        return pl.DataFrame(schema=schema)
+    missing = [
+        pl.lit(None).cast(dtype).alias(column)
+        for column, dtype in schema.items()
+        if column not in frame.columns
+    ]
+    if missing:
+        frame = frame.with_columns(missing)
+    return frame.select(
+        pl.col(column).cast(dtype, strict=False)
+        for column, dtype in schema.items()
+    )
 
 
 def _sync_order_first_seen_timestamps(
@@ -646,7 +990,9 @@ def _stream_metric_inputs(
     max_rows: int | None = None,
     include_level_columns: bool = True,
     max_deceptive_order_age_seconds: float = 600.0,
+    state_actor_keys: set[str] | None = None,
     state_client_ids: set[str] | None = None,
+    execution_anchor_modes: Collection[str] = ("passive", "aggressive"),
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     config = LOBConfig(top_n=max(top_n, 1), snapshot_mode="none")
@@ -663,8 +1009,24 @@ def _stream_metric_inputs(
     pending_aggressive_residuals: dict[str, tuple[dict[str, Any], tuple[Any, ...] | None]] = {}
     non_resting_order_ids: set[str] = set()
     current_partition_id: str | None = None
+    if state_actor_keys is not None and state_client_ids is not None:
+        raise ValueError("state_actor_keys and state_client_ids are mutually exclusive")
+    selected_actor_keys = (
+        state_actor_keys
+        if state_actor_keys is not None
+        else (
+            {f"client_original:{client_id}" for client_id in state_client_ids}
+            if state_client_ids is not None
+            else None
+        )
+    )
     state_rows: list[dict[str, Any]] = []
-    previous_profile_client_ids: set[str] = set()
+    state_chunks: list[pl.DataFrame] = []
+    state_schema = _state_metric_empty_schema(
+        top_n=top_n,
+        include_level_columns=include_level_columns,
+    )
+    previous_profile_actor_keys: set[str] = set()
     execution_rows: list[dict[str, Any]] = []
     candidate_deceptive_rows: list[dict[str, Any]] = []
     candidate_rows_by_execution_sort_index: dict[int, list[dict[str, Any]]] = {}
@@ -682,7 +1044,7 @@ def _stream_metric_inputs(
             order_first_seen_ts = {}
             pending_aggressive_residuals = {}
             non_resting_order_ids = set()
-            previous_profile_client_ids = set()
+            previous_profile_actor_keys = set()
             current_partition_id = partition_id
 
         event_ts = choose_event_timestamp(event)
@@ -691,6 +1053,7 @@ def _stream_metric_inputs(
             active_orders,
             event_ts=event_ts,
             partition_id=partition_id,
+            allowed_anchor_modes=execution_anchor_modes,
         )
         if execution is not None:
             execution.update({"top_n": top_n, "kappa": kappa, "lambda_": lambda_})
@@ -721,17 +1084,19 @@ def _stream_metric_inputs(
         if direct_cancel is not None:
             direct_cancel_rows.append(direct_cancel)
 
-        cluster_source_rows.append(
-            {
-                **event,
-                "partition_id": partition_id,
-                "event_ts": event_ts,
-                "is_passive_fill": execution is not None,
-                "event_price": execution.get("event_price") if execution is not None else event.get("ORDERPX"),
-                "fill_qty": execution.get("fill_qty") if execution is not None else None,
-                "metric_row": execution,
-            }
-        )
+        cluster_source = {
+            **event,
+            "partition_id": partition_id,
+            "event_ts": event_ts,
+            "is_passive_fill": execution is not None and execution.get("execution_anchor_mode") == "passive",
+            "is_execution_fill": execution is not None,
+            "event_price": execution.get("event_price") if execution is not None else event.get("ORDERPX"),
+            "fill_qty": execution.get("fill_qty") if execution is not None else None,
+            "metric_row": execution,
+        }
+        if execution is not None:
+            cluster_source.update(execution)
+        cluster_source_rows.append(cluster_source)
 
         _apply_event(
             active_orders,
@@ -747,7 +1112,14 @@ def _stream_metric_inputs(
             keep_group=next_group,
         )
         _sync_order_first_seen_timestamps(active_orders, order_first_seen_ts, event_ts)
-        exposure_rows = compute_client_top_n_exposures(
+        current_execution_actor_keys = {
+            str(execution["actor_key"])
+            for execution in (execution,)
+            if execution is not None
+            and execution.get("actor_key") is not None
+            and (selected_actor_keys is None or str(execution["actor_key"]) in selected_actor_keys)
+        }
+        exposure_rows = compute_actor_top_n_exposures(
             active_orders,
             top_n=top_n,
             tick_size=tick_size,
@@ -757,18 +1129,22 @@ def _stream_metric_inputs(
             sort_index=event["sort_index"],
             event_ts=event_ts,
             include_level_columns=include_level_columns,
-            client_ids=state_client_ids,
-            include_zero_client_ids=previous_profile_client_ids,
+            actor_keys=selected_actor_keys,
+            include_zero_actor_keys=previous_profile_actor_keys | current_execution_actor_keys,
             empirical_kernel_weights=empirical_kernel_weights,
         )
         state_rows.extend(exposure_rows)
-        previous_profile_client_ids = {
-            str(row["client_id"]) for row in exposure_rows if row["has_active_top_n_profile"]
+        if len(state_rows) >= _STATE_ROW_CHUNK_SIZE:
+            state_chunks.append(pl.DataFrame(state_rows, schema=state_schema, strict=False))
+            state_rows = []
+        previous_profile_actor_keys = {
+            str(row["actor_key"]) for row in exposure_rows if row["has_active_top_n_profile"]
         }
 
-    cluster_rows, member_rows = cluster_passive_execution_fills(
+    cluster_rows, member_rows = cluster_execution_fills(
         cluster_source_rows,
         max_gap_ms=execution_cluster_max_gap_ms,
+        allowed_anchor_modes=execution_anchor_modes,
     )
     clustered_candidate_rows: list[dict[str, Any]] = []
     for cluster in cluster_rows:
@@ -783,13 +1159,66 @@ def _stream_metric_inputs(
                 }
             )
 
-    state_df = pl.DataFrame(state_rows, infer_schema_length=None) if state_rows else _empty_frame()
-    execution_df = pl.DataFrame(cluster_rows, infer_schema_length=None) if cluster_rows else _empty_frame()
-    candidate_df = pl.DataFrame(clustered_candidate_rows, infer_schema_length=None) if clustered_candidate_rows else _empty_frame()
-    cancel_df = pl.DataFrame(direct_cancel_rows, infer_schema_length=None) if direct_cancel_rows else _empty_frame()
-    rejected_df = pl.DataFrame(rejected_rows, infer_schema_length=None) if rejected_rows else _empty_frame()
-    member_df = pl.DataFrame(member_rows, infer_schema_length=None) if member_rows else _empty_frame()
+    if state_rows:
+        state_chunks.append(pl.DataFrame(state_rows, schema=state_schema, strict=False))
+    state_df = (
+        pl.concat(state_chunks, how="vertical", rechunk=False)
+        if state_chunks
+        else pl.DataFrame(schema=state_schema)
+    )
+    execution_df = (
+        pl.DataFrame(cluster_rows, infer_schema_length=None)
+        if cluster_rows
+        else pl.DataFrame(schema=EXECUTION_EMPTY_SCHEMA)
+    )
+    candidate_df = (
+        pl.DataFrame(clustered_candidate_rows, infer_schema_length=None)
+        if clustered_candidate_rows
+        else pl.DataFrame(schema=CANDIDATE_DECEPTIVE_ORDER_EMPTY_SCHEMA)
+    )
+    cancel_df = (
+        pl.DataFrame(direct_cancel_rows, infer_schema_length=None)
+        if direct_cancel_rows
+        else pl.DataFrame(schema=DIRECT_CANCELLATION_EMPTY_SCHEMA)
+    )
+    rejected_df = _coerce_frame_schema(
+        pl.DataFrame(rejected_rows, infer_schema_length=None) if rejected_rows else pl.DataFrame(),
+        REJECTED_EXECUTION_SCHEMA,
+    )
+    member_df = (
+        pl.DataFrame(member_rows, infer_schema_length=None)
+        if member_rows
+        else pl.DataFrame(schema=EXECUTION_CLUSTER_MEMBER_EMPTY_SCHEMA)
+    )
     return state_df, execution_df, candidate_df, cancel_df, rejected_df, member_df
+
+
+def compute_actor_metric_time_series(
+    raw_events: pl.DataFrame,
+    *,
+    top_n: int,
+    tick_size: float,
+    kappa: float,
+    lambda_: float = 1.0,
+    max_rows: int | None = None,
+    include_level_columns: bool = True,
+    state_actor_keys: set[str] | None = None,
+    execution_anchor_modes: Collection[str] = ("passive", "aggressive"),
+    empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
+) -> pl.DataFrame:
+    state_df, _, _, _, _, _ = _stream_metric_inputs(
+        raw_events,
+        top_n=top_n,
+        tick_size=tick_size,
+        kappa=kappa,
+        lambda_=lambda_,
+        max_rows=max_rows,
+        include_level_columns=include_level_columns,
+        state_actor_keys=state_actor_keys,
+        execution_anchor_modes=execution_anchor_modes,
+        empirical_kernel_weights=empirical_kernel_weights,
+    )
+    return state_df
 
 
 def compute_client_metric_time_series(
@@ -804,7 +1233,8 @@ def compute_client_metric_time_series(
     state_client_ids: set[str] | None = None,
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> pl.DataFrame:
-    state_df, _, _, _, _, _ = _stream_metric_inputs(
+    """Compatibility adapter for legacy client-only time-series consumers."""
+    state = compute_actor_metric_time_series(
         raw_events,
         top_n=top_n,
         tick_size=tick_size,
@@ -812,17 +1242,45 @@ def compute_client_metric_time_series(
         lambda_=lambda_,
         max_rows=max_rows,
         include_level_columns=include_level_columns,
-        state_client_ids=state_client_ids,
+        state_actor_keys=(
+            {f"client_original:{client_id}" for client_id in state_client_ids}
+            if state_client_ids is not None
+            else None
+        ),
+        execution_anchor_modes=("passive",),
         empirical_kernel_weights=empirical_kernel_weights,
     )
-    return state_df
+    if state.is_empty() or "identity_level" not in state.columns:
+        return state
+    state = state.filter(pl.col("identity_level") == "client_original")
+    if state.is_empty():
+        return state.drop(
+            [
+                column
+                for column in ("actor_key", "actor_id", "identity_level", "identity_source", "identity_fallback_flag")
+                if column in state.columns
+            ]
+        ).with_columns(pl.lit(None, dtype=pl.String).alias("client_id"))
+    rename = {
+        column: column.replace("_actor_", "_client_").replace("actor_", "client_", 1)
+        for column in state.columns
+        if "actor_" in column and column not in {"actor_key", "actor_id"}
+    }
+    state = state.rename(rename).with_columns(pl.col("actor_id").alias("client_id"))
+    return state.drop(
+        [
+            column
+            for column in ("actor_key", "actor_id", "identity_level", "identity_source", "identity_fallback_flag")
+            if column in state.columns
+        ]
+    )
 
 
 def _group_state_rows(states: pl.DataFrame) -> dict[tuple[Any, str], list[dict[str, Any]]]:
     groups: dict[tuple[Any, str], list[dict[str, Any]]] = defaultdict(list)
     if states.is_empty():
         return groups
-    required = {"partition_id", "client_id", "event_ts", "DWI", "L_bid_topN", "L_ask_topN"}
+    required = {"partition_id", "actor_key", "event_ts", "DWI", "L_bid_topN", "L_ask_topN"}
     if not required.issubset(states.columns):
         return groups
     optional = [
@@ -836,7 +1294,7 @@ def _group_state_rows(states: pl.DataFrame) -> dict[tuple[Any, str], list[dict[s
         if ts is None:
             continue
         row = {**row, "sort_index": row.get("sort_index"), "_ts": ts}
-        groups[(row["partition_id"], row["client_id"])].append(row)
+        groups[(row["partition_id"], row["actor_key"])].append(row)
     for values in groups.values():
         values.sort(key=lambda item: (float("inf") if item.get("sort_index") is None else int(item["sort_index"]), item["_ts"]))
     return groups
@@ -947,27 +1405,27 @@ def _execution_price_advantage(direction: float | None, benchmark: float | None,
     return values[0] * (values[2] - values[1])
 
 
-def _collapse(pre: float | None, post: float | None, *, epsilon: float) -> float | None:
+def _collapse(pre: float | None, post: float | None) -> float | None:
     if pre is None or post is None:
         return None
     pre_value = float(pre)
     post_value = float(post)
-    if not math.isfinite(pre_value) or not math.isfinite(post_value) or pre_value + epsilon <= 0:
+    if not math.isfinite(pre_value) or not math.isfinite(post_value):
         return None
-    return max(pre_value - post_value, 0.0) / (pre_value + epsilon)
+    if pre_value < 0 or post_value < 0:
+        return None
+    if pre_value == 0:
+        return 0.0
+    return max(pre_value - post_value, 0.0) / pre_value
 
 
-def _finite_additive_msci(sci: float | None, c_opposite: float | None, c_same: float | None) -> float | None:
+def _finite_signed_msci(sci: float | None, c_opposite: float | None, c_same: float | None) -> float | None:
     if sci is None or c_opposite is None or c_same is None:
         return None
     values = [float(sci), float(c_opposite), float(c_same)]
     if not all(math.isfinite(value) for value in values):
         return None
-    normalized_sci = min(max(values[0] / 2.0, 0.0), 1.0)
-    opposite_collapse = min(max(values[1], 0.0), 1.0)
-    same_side_collapse = min(max(values[2], 0.0), 1.0)
-    collapse_asymmetry = max(opposite_collapse - same_side_collapse, 0.0)
-    return (normalized_sci + opposite_collapse + collapse_asymmetry) / 3.0
+    return values[0] / 2.0 + values[1] - values[2]
 
 
 def _finite_wmsci(
@@ -991,7 +1449,6 @@ def attach_sci_window_metrics(
     states: pl.DataFrame,
     *,
     window_seconds: float,
-    epsilon: float = 1e-12,
 ) -> pl.DataFrame:
     if executions.is_empty():
         return executions
@@ -1009,7 +1466,7 @@ def attach_sci_window_metrics(
         post_target = None
         if event_ts is not None and cluster_end_ts is not None:
             post_target = cluster_end_ts + window
-            values = grouped_states.get((row.get("partition_id"), row.get("client_id")), [])
+            values = grouped_states.get((row.get("partition_id"), row.get("actor_key")), [])
             posture_state = _lookup_state_at_or_after_index(
                 values,
                 int(row["candidate_deceptive_first_seen_sort_index_min"])
@@ -1029,8 +1486,8 @@ def attach_sci_window_metrics(
         l_bid_post = post_state.get("L_bid_topN") if post_state is not None else None
         l_ask_pre = pre_state.get("L_ask_topN") if pre_state is not None else None
         l_ask_post = post_state.get("L_ask_topN") if post_state is not None else None
-        collapse_bid = _collapse(l_bid_pre, l_bid_post, epsilon=epsilon)
-        collapse_ask = _collapse(l_ask_pre, l_ask_post, epsilon=epsilon)
+        collapse_bid = _collapse(l_bid_pre, l_bid_post)
+        collapse_ask = _collapse(l_ask_pre, l_ask_post)
         if row.get("deceptive_side") == "bid":
             collapse_opposite = collapse_bid
             collapse_same = collapse_ask
@@ -1040,6 +1497,7 @@ def attach_sci_window_metrics(
         else:
             collapse_opposite = None
             collapse_same = None
+        msci_resting_profile = _finite_signed_msci(sci, collapse_opposite, collapse_same)
         price_direction = _execution_price_direction(row.get("execution_side"))
         posture_mid = posture_state.get("market_mid") if posture_state is not None else None
         pre_mid = pre_state.get("market_mid") if pre_state is not None else None
@@ -1093,7 +1551,10 @@ def attach_sci_window_metrics(
                 "collapse_ask": collapse_ask,
                 "collapse_opposite_side": collapse_opposite,
                 "collapse_same_side": collapse_same,
-                "MSCI": _finite_additive_msci(sci, collapse_opposite, collapse_same),
+                # MSCI is derived only from the common resting profile.
+                # ``MSCI`` remains as a compatibility alias.
+                "MSCI_resting_profile": msci_resting_profile,
+                "MSCI": msci_resting_profile,
             }
         )
     return pl.DataFrame(rows, infer_schema_length=None)
@@ -1116,10 +1577,16 @@ def assign_cancellations_to_clusters(candidate_links: pl.DataFrame) -> pl.DataFr
         raise ValueError(f"candidate links missing required columns: {', '.join(missing)}")
 
     rows = candidate_links.to_dicts()
-    groups: dict[tuple[Any, int, str], list[int]] = defaultdict(list)
+    partition_columns = [
+        column
+        for column in ("actor_key",)
+        if column in candidate_links.columns
+    ]
+    groups: dict[tuple[Any, ...], list[int]] = defaultdict(list)
     for index, row in enumerate(rows):
         key = (
             row.get("partition_id"),
+            *(row.get(column) for column in partition_columns),
             int(row["cancel_sort_index"]),
             str(row["candidate_order_id"]),
         )
@@ -1170,7 +1637,7 @@ def _build_execution_cancel_candidates(
         cancel_groups[
             (
                 cancel["partition_id"],
-                cancel["client_id"],
+                cancel["actor_key"],
                 cancel["side"],
                 str(cancel.get("ORDERID")),
             )
@@ -1200,7 +1667,7 @@ def _build_execution_cancel_candidates(
             candidates = cancel_groups.get(
                 (
                     execution.get("partition_id"),
-                    execution.get("client_id"),
+                    execution.get("actor_key"),
                     execution.get("deceptive_side"),
                     order_id,
                 ),
@@ -1224,7 +1691,12 @@ def _build_execution_cancel_candidates(
                         "cancel_sort_index": cancel_sort_index,
                         "candidate_order_id": order_id,
                         "execution_cluster_id": execution.get("execution_cluster_id"),
-                        "client_id": execution.get("client_id"),
+                        "actor_key": execution.get("actor_key"),
+                        "actor_id": execution.get("actor_id"),
+                        "identity_level": execution.get("identity_level"),
+                        "identity_source": execution.get("identity_source"),
+                        "identity_fallback_flag": execution.get("identity_fallback_flag"),
+                        "execution_anchor_mode": execution.get("execution_anchor_mode"),
                         "execution_side": execution.get("execution_side"),
                         "deceptive_side": execution.get("deceptive_side"),
                         "cluster_end_ts": cluster_end_ts,
@@ -1310,7 +1782,7 @@ def attach_cancel_anchored_reversion(
             continue
 
         target_ts = cancel_ts + timedelta(seconds=reversion_horizon_seconds)
-        values = grouped_states.get((candidate.get("partition_id"), candidate.get("client_id")), [])
+        values = grouped_states.get((candidate.get("partition_id"), candidate.get("actor_key")), [])
         pre_state = _lookup_pre_state(values, cancel_ts, int(cancel_sort_index))
         has_target_coverage = _has_post_target_coverage(
             values,
@@ -1418,7 +1890,7 @@ def _attach_direct_cancellation_window(
     cancel_groups: dict[tuple[Any, str, str], list[dict[str, Any]]] = defaultdict(list)
     if not cancellations.is_empty():
         for row in cancellations.iter_rows(named=True):
-            cancel_groups[(row["partition_id"], row["client_id"], row["side"])].append(row)
+            cancel_groups[(row["partition_id"], row["actor_key"], row["side"])].append(row)
     assigned_by_cluster: dict[str, list[dict[str, Any]]] = defaultdict(list)
     if assigned_candidates is not None and not assigned_candidates.is_empty():
         for candidate in assigned_candidates.filter(pl.col("assigned_flag")).iter_rows(named=True):
@@ -1430,7 +1902,7 @@ def _attach_direct_cancellation_window(
         matches: list[dict[str, Any]] = []
         if event_ts is not None:
             end = event_ts + window
-            candidates = cancel_groups.get((row.get("partition_id"), row.get("client_id"), row.get("deceptive_side")), [])
+            candidates = cancel_groups.get((row.get("partition_id"), row.get("actor_key"), row.get("deceptive_side")), [])
             matches = [
                 cancel
                 for cancel in candidates
@@ -1443,7 +1915,8 @@ def _attach_direct_cancellation_window(
         matched_order_ids = ";".join(str(cancel["ORDERID"]) for cancel in matched)
         matched_qty = sum(float(cancel["visible_qty_pre_cancel"] or 0.0) for cancel in matched)
         candidate_qty = float(row.get("candidate_deceptive_visible_qty_pre") or 0.0)
-        fill_qty = float(row.get("fill_qty") or 0.0)
+        execution_quantity = float(row.get("execution_quantity") or row.get("fill_qty") or 0.0)
+        anchor_mode = row.get("execution_anchor_mode")
         matched_fraction = matched_qty / candidate_qty if candidate_qty > 0 else None
         matched_delays: list[float] = []
         weighted_withdrawal_qty = 0.0
@@ -1457,6 +1930,12 @@ def _attach_direct_cancellation_window(
                 weighted_withdrawal_qty += float(cancel["visible_qty_pre_cancel"] or 0.0) * math.exp(
                     -delay / withdrawal_decay_seconds
                 )
+        withdrawal_profile_scale = _finite_wmsci(
+            candidate_qty=candidate_qty,
+            weighted_withdrawal_qty=weighted_withdrawal_qty,
+            fill_qty=execution_quantity,
+            matched_fraction=matched_fraction,
+        )
         rows.append(
             {
                 **row,
@@ -1472,17 +1951,49 @@ def _attach_direct_cancellation_window(
                 "matched_deceptive_cancel_min_delay_seconds": min(matched_delays) if matched_delays else None,
                 "matched_deceptive_cancel_max_delay_seconds": max(matched_delays) if matched_delays else None,
                 "weighted_net_withdrawal_qty_window": weighted_withdrawal_qty,
-                "withdrawal_to_fill_ratio": matched_qty / fill_qty if fill_qty > 0 else None,
-                "weighted_withdrawal_to_fill_ratio": weighted_withdrawal_qty / fill_qty if fill_qty > 0 else None,
-                "WMSCI_event": _finite_wmsci(
-                    candidate_qty=candidate_qty,
-                    weighted_withdrawal_qty=weighted_withdrawal_qty,
-                    fill_qty=fill_qty,
-                    matched_fraction=matched_fraction,
+                "withdrawal_to_execution_ratio": (
+                    matched_qty / execution_quantity if execution_quantity > 0 else None
                 ),
+                "weighted_withdrawal_to_execution_ratio": (
+                    weighted_withdrawal_qty / execution_quantity if execution_quantity > 0 else None
+                ),
+                # Compatibility aliases retained for existing artifacts.
+                "withdrawal_to_fill_ratio": (
+                    matched_qty / execution_quantity if execution_quantity > 0 else None
+                ),
+                "weighted_withdrawal_to_fill_ratio": (
+                    weighted_withdrawal_qty / execution_quantity if execution_quantity > 0 else None
+                ),
+                "withdrawal_profile_scale_denominator_mode": (
+                    f"{anchor_mode}_execution_quantity"
+                    if anchor_mode in {"passive", "aggressive"}
+                    else None
+                ),
+                "withdrawal_profile_scale_event": withdrawal_profile_scale,
+                "WMSCI_passive": withdrawal_profile_scale if anchor_mode == "passive" else None,
+                "WMSCI_aggressive": withdrawal_profile_scale if anchor_mode == "aggressive" else None,
+                "WMSCI_event": withdrawal_profile_scale,
             }
         )
     return pl.DataFrame(rows, infer_schema_length=None)
+
+
+def _finite_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def _finite_column_values(rows: list[dict[str, Any]], column: str) -> list[float]:
+    return [
+        numeric
+        for row in rows
+        if (numeric := _finite_float_or_none(row.get(column))) is not None
+    ]
 
 
 def _mean(values: list[float]) -> float | None:
@@ -1506,49 +2017,64 @@ def _bool_share(rows: list[dict[str, Any]], column: str) -> float | None:
 
 
 def compute_mcps_scores(execution_metrics: pl.DataFrame, *, gamma_grid: list[float]) -> pl.DataFrame:
-    if execution_metrics.is_empty():
-        return pl.DataFrame()
     if not gamma_grid:
         raise ValueError("gamma_grid must contain at least one threshold")
-    group_cols = [col for col in ("partition_id", "client_id", "top_n", "kappa", "lambda_") if col in execution_metrics.columns]
+    try:
+        finite_gammas = [float(gamma) for gamma in gamma_grid]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("gamma thresholds must be finite numeric values") from exc
+    if not all(math.isfinite(gamma) for gamma in finite_gammas):
+        raise ValueError("gamma thresholds must be finite numeric values")
+    if execution_metrics.is_empty():
+        return pl.DataFrame(schema=MCPS_SCORE_SCHEMA)
+    msci_column = (
+        "MSCI_resting_profile"
+        if "MSCI_resting_profile" in execution_metrics.columns
+        else "MSCI"
+    )
+    group_cols = [
+        col
+        for col in (
+            "partition_id",
+            "actor_key",
+            "actor_id",
+            "identity_level",
+            "identity_source",
+            "identity_fallback_flag",
+            "execution_anchor_mode",
+            "top_n",
+            "kappa",
+            "lambda_",
+        )
+        if col in execution_metrics.columns
+    ]
     grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
     for row in execution_metrics.to_dicts():
-        client_id = str(row.get("client_id") or "").strip().lower()
-        if client_id in {"", "0", "none", "null", "nan"}:
+        actor_key = str(row.get("actor_key") or "").strip()
+        anchor_mode = str(row.get("execution_anchor_mode") or "").strip().lower()
+        if not actor_key.startswith(("client_original:", "firm:")):
+            continue
+        if anchor_mode not in {"passive", "aggressive"}:
             continue
         grouped[tuple(row.get(col) for col in group_cols)].append(row)
 
     out_rows: list[dict[str, Any]] = []
-    for gamma in gamma_grid:
+    for gamma in finite_gammas:
         for key, rows in grouped.items():
-            finite_msci = [float(row["MSCI"]) for row in rows if row.get("MSCI") is not None]
-            finite_sci = [float(row["SCI"]) for row in rows if row.get("SCI") is not None]
-            collapse_opposite = [
-                float(row["collapse_opposite_side"]) for row in rows if row.get("collapse_opposite_side") is not None
-            ]
-            collapse_same = [
-                float(row["collapse_same_side"]) for row in rows if row.get("collapse_same_side") is not None
-            ]
-            favorable_mid_moves = [
-                float(row["favorable_mid_move_pre_fill"])
-                for row in rows
-                if row.get("favorable_mid_move_pre_fill") is not None
-            ]
-            favorable_microprice_moves = [
-                float(row["favorable_microprice_move_pre_fill"])
-                for row in rows
-                if row.get("favorable_microprice_move_pre_fill") is not None
-            ]
-            post_cancel_mid_reversions = [
-                float(row["post_cancel_mid_reversion"])
-                for row in rows
-                if row.get("post_cancel_mid_reversion") is not None
-            ]
-            execution_advantages = [
-                float(row["execution_price_advantage_vs_posture_mid"])
-                for row in rows
-                if row.get("execution_price_advantage_vs_posture_mid") is not None
-            ]
+            finite_msci = _finite_column_values(rows, msci_column)
+            finite_sci = _finite_column_values(rows, "SCI")
+            collapse_opposite = _finite_column_values(rows, "collapse_opposite_side")
+            collapse_same = _finite_column_values(rows, "collapse_same_side")
+            favorable_mid_moves = _finite_column_values(rows, "favorable_mid_move_pre_fill")
+            favorable_microprice_moves = _finite_column_values(
+                rows, "favorable_microprice_move_pre_fill"
+            )
+            post_cancel_mid_reversions = _finite_column_values(
+                rows, "post_cancel_mid_reversion"
+            )
+            execution_advantages = _finite_column_values(
+                rows, "execution_price_advantage_vs_posture_mid"
+            )
             above = sum(1 for value in finite_msci if value > gamma)
             out = {col: key[idx] for idx, col in enumerate(group_cols)}
             out.update(
@@ -1558,9 +2084,13 @@ def compute_mcps_scores(execution_metrics: pl.DataFrame, *, gamma_grid: list[flo
                     "finite_msci_executions": len(finite_msci),
                     "msci_above_gamma_count": above,
                     "MCPS": above / len(rows) if rows else None,
+                    "MCPS_resting_profile": above / len(rows) if rows else None,
                     "median_MSCI": _median(finite_msci),
                     "max_MSCI": max(finite_msci) if finite_msci else None,
                     "mean_MSCI": _mean(finite_msci),
+                    "median_MSCI_resting_profile": _median(finite_msci),
+                    "max_MSCI_resting_profile": max(finite_msci) if finite_msci else None,
+                    "mean_MSCI_resting_profile": _mean(finite_msci),
                     "mean_SCI": _mean(finite_sci),
                     "mean_collapse_opposite_side": _mean(collapse_opposite),
                     "mean_collapse_same_side": _mean(collapse_same),
@@ -1571,12 +2101,22 @@ def compute_mcps_scores(execution_metrics: pl.DataFrame, *, gamma_grid: list[flo
                     "matched_deceptive_cancel_share": _bool_share(rows, "has_matched_deceptive_cancel_window"),
                     "direct_opposite_cancel_share": _bool_share(rows, "has_direct_opposite_cancel_window"),
                     "candidate_profile_share": sum(
-                        1.0 for row in rows if float(row.get("candidate_deceptive_order_count_pre") or 0.0) > 0
+                        1.0
+                        for row in rows
+                        if (
+                            _finite_float_or_none(
+                                row.get("candidate_deceptive_order_count_pre")
+                            )
+                            or 0.0
+                        )
+                        > 0
                     )
                     / len(rows),
                 }
             )
             out_rows.append(out)
+    if not out_rows:
+        return pl.DataFrame(schema=MCPS_SCORE_SCHEMA)
     return pl.DataFrame(out_rows, infer_schema_length=None)
 
 
@@ -1588,14 +2128,15 @@ def compute_exploratory_metrics(
     kappa: float,
     window_seconds: float,
     lambda_: float = 1.0,
-    epsilon: float = 1e-12,
     withdrawal_window_seconds: float = 2.0,
     reversion_horizon_seconds: float = 2.0,
     max_rows: int | None = None,
     include_level_columns: bool = True,
     max_deceptive_order_age_seconds: float = 600.0,
     execution_cluster_max_gap_ms: int = 100,
+    state_actor_keys: set[str] | None = None,
     state_client_ids: set[str] | None = None,
+    execution_anchor_modes: Collection[str] = ("passive", "aggressive"),
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> ExploratoryMetricsResult:
     (
@@ -1615,14 +2156,15 @@ def compute_exploratory_metrics(
         include_level_columns=include_level_columns,
         max_deceptive_order_age_seconds=max_deceptive_order_age_seconds,
         execution_cluster_max_gap_ms=execution_cluster_max_gap_ms,
+        state_actor_keys=state_actor_keys,
         state_client_ids=state_client_ids,
+        execution_anchor_modes=execution_anchor_modes,
         empirical_kernel_weights=empirical_kernel_weights,
     )
     execution_df = attach_sci_window_metrics(
         execution_df,
         state_df,
         window_seconds=window_seconds,
-        epsilon=epsilon,
     )
     cancel_candidate_df = _build_execution_cancel_candidates(
         execution_df,

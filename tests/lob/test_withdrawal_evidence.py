@@ -17,7 +17,7 @@ def _execution() -> pl.DataFrame:
         [
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "execution_cluster_id": "EC1",
                 "execution_side": "ask",
                 "deceptive_side": "bid",
@@ -35,7 +35,7 @@ def test_withdrawal_candidate_window_includes_two_seconds_and_excludes_later_can
         [
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "side": "bid",
                 "ORDERID": "B1",
                 "sort_index": 20,
@@ -44,7 +44,7 @@ def test_withdrawal_candidate_window_includes_two_seconds_and_excludes_later_can
             },
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "side": "bid",
                 "ORDERID": "B2",
                 "sort_index": 21,
@@ -69,7 +69,7 @@ def test_cancel_anchored_reversion_uses_each_actual_cancel_and_quantity_delay_we
     states = pl.DataFrame(
         {
             "partition_id": ["P"] * 7,
-            "client_id": ["C1"] * 7,
+            "actor_key": ["client_original:C1"] * 7,
             "sort_index": [10, 19, 20, 21, 22, 23, 24],
             "event_ts": [
                 datetime(2024, 1, 2, 9, 30, 5),
@@ -91,7 +91,7 @@ def test_cancel_anchored_reversion_uses_each_actual_cancel_and_quantity_delay_we
         [
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "candidate_order_id": "B1",
                 "ORDERID": "B1",
                 "execution_cluster_id": "EC1",
@@ -104,7 +104,7 @@ def test_cancel_anchored_reversion_uses_each_actual_cancel_and_quantity_delay_we
             },
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "candidate_order_id": "B2",
                 "ORDERID": "B2",
                 "execution_cluster_id": "EC1",
@@ -151,7 +151,7 @@ def test_cancel_anchored_reversion_keeps_unobserved_horizon_null():
     states = pl.DataFrame(
         {
             "partition_id": ["P", "P", "P"],
-            "client_id": ["C1", "C1", "C1"],
+            "actor_key": ["client_original:C1"] * 3,
             "sort_index": [10, 19, 20],
             "event_ts": [
                 datetime(2024, 1, 2, 9, 30, 5),
@@ -169,7 +169,7 @@ def test_cancel_anchored_reversion_keeps_unobserved_horizon_null():
         [
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "candidate_order_id": "B1",
                 "ORDERID": "B1",
                 "execution_cluster_id": "EC1",
@@ -201,7 +201,7 @@ def test_cancel_reversion_coverage_handles_timestamps_nonmonotonic_in_sort_order
     states = pl.DataFrame(
         {
             "partition_id": ["P"] * 4,
-            "client_id": ["C1"] * 4,
+            "actor_key": ["client_original:C1"] * 4,
             "sort_index": [19, 20, 21, 22],
             "event_ts": [
                 base.replace(second=9, microsecond=900_000),
@@ -220,7 +220,7 @@ def test_cancel_reversion_coverage_handles_timestamps_nonmonotonic_in_sort_order
         [
             {
                 "partition_id": "P",
-                "client_id": "C1",
+                "actor_key": "client_original:C1",
                 "candidate_order_id": "B1",
                 "ORDERID": "B1",
                 "execution_cluster_id": "EC1",

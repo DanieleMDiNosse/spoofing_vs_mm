@@ -57,6 +57,31 @@ def summarize_output(instrument: str, gap_ms: int, output_dir: Path) -> dict[str
     assigned_ids = set(assigned.get_column("execution_cluster_id").to_list())
     if matched_ids != assigned_ids:
         raise ValueError(f"matched-cluster flags disagree with assigned cancellations at gap={gap_ms}")
+    scale_column = (
+        "withdrawal_profile_scale_event"
+        if "withdrawal_profile_scale_event" in matched.columns
+        else "withdrawal_to_fill_ratio"
+    )
+    branch_summaries: dict[str, object] = {}
+    for anchor_mode, canonical_metric in (
+        ("passive", "WMSCI_passive"),
+        ("aggressive", "WMSCI_aggressive"),
+    ):
+        branch = matched.filter(pl.col("execution_anchor_mode") == anchor_mode)
+        product_column = canonical_metric if canonical_metric in branch.columns else "WMSCI_event"
+        branch_summaries[f"matched_cluster_count_{anchor_mode}"] = branch.height
+        branch_summaries[f"max_withdrawal_profile_scale_event_{anchor_mode}"] = (
+            branch.select(pl.col(scale_column).max()).item() if not branch.is_empty() else None
+        )
+        branch_summaries[f"median_withdrawal_profile_scale_event_{anchor_mode}"] = (
+            branch.select(pl.col(scale_column).median()).item() if not branch.is_empty() else None
+        )
+        branch_summaries[f"max_{canonical_metric}"] = (
+            branch.select(pl.col(product_column).max()).item() if not branch.is_empty() else None
+        )
+        branch_summaries[f"median_{canonical_metric}"] = (
+            branch.select(pl.col(product_column).median()).item() if not branch.is_empty() else None
+        )
     return {
         "instrument": instrument,
         "execution_cluster_max_gap_ms": gap_ms,
@@ -65,15 +90,7 @@ def summarize_output(instrument: str, gap_ms: int, output_dir: Path) -> dict[str
         "matched_cluster_count": matched.height,
         "assigned_candidate_count": assigned.height,
         "candidate_link_count": candidates.height,
-        "max_WMSCI": matched.select(pl.col("WMSCI_event").max()).item()
-        if "WMSCI_event" in matched.columns and not matched.is_empty()
-        else None,
-        "median_WMSCI": matched.select(pl.col("WMSCI_event").median()).item()
-        if "WMSCI_event" in matched.columns and not matched.is_empty()
-        else None,
-        "max_withdrawal_to_fill_ratio": matched.select(pl.col("withdrawal_to_fill_ratio").max()).item()
-        if "withdrawal_to_fill_ratio" in matched.columns and not matched.is_empty()
-        else None,
+        **branch_summaries,
         "execution_metrics_sha256": _sha256(execution_path),
         "members_sha256": _sha256(members_path),
         "candidates_sha256": _sha256(candidates_path),

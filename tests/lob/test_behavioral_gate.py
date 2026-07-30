@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import polars as pl
+import pytest
 
 from spoofing_detection.lob.behavioral_gate import attach_spoofing_compatible_sequence_gate
 
@@ -8,7 +9,8 @@ from spoofing_detection.lob.behavioral_gate import attach_spoofing_compatible_se
 def _execution(cluster_id: str, **overrides: object) -> dict[str, object]:
     row: dict[str, object] = {
         "partition_id": "P",
-        "client_id": "C1",
+        "actor_key": "client_original:C1",
+        "execution_anchor_mode": "passive",
         "execution_cluster_id": cluster_id,
         "fill_qty": 10.0,
         "has_matched_deceptive_cancel_window": True,
@@ -57,3 +59,18 @@ def test_gate_preserves_schema_for_empty_execution_frame():
     assert enriched.is_empty()
     assert gated.is_empty()
     assert gated.schema == enriched.schema
+
+
+@pytest.mark.parametrize("execution_anchor_mode", ["passive", "aggressive"])
+def test_gate_semantics_and_anchor_provenance_are_branch_invariant(
+    execution_anchor_mode: str,
+):
+    executions = pl.DataFrame(
+        [_execution("PASS", execution_anchor_mode=execution_anchor_mode)],
+        infer_schema_length=None,
+    )
+
+    enriched, gated = attach_spoofing_compatible_sequence_gate(executions)
+
+    assert enriched.item(0, "spoofing_compatible_sequence") is True
+    assert gated.item(0, "execution_anchor_mode") == execution_anchor_mode

@@ -55,16 +55,19 @@
 \end{center}
 
 \begin{abstract}
-We develop an auditable microstructure framework for screening order-book sequences that are compatible with spoofing.
-Legitimate liquidity provision remains an explicit alternative explanation. The framework reconstructs the visible limit
-order book and consolidates related executions into clusters. A cluster can be anchored either to the participant's resting
-order being executed or to the participant trading aggressively. We attribute orders through the original client code when
-it is available and otherwise through the firm identifier, while preserving the identity level. Each cluster is linked to
-same-actor orders posted on the opposite side during the preceding $90$ seconds and withdrawn within $2$ seconds after the
-cluster. An empirical top-$10$ depth kernel weights visible liquidity by book rank. We apply the framework to three Italian
-equity samples and report mechanical withdrawal and price-response diagnostics. The resulting conjunction supports
-reproducible surveillance triage. It does not constitute a statistical test, identify manipulative intent, estimate causal
-effects, or measure the prevalence of spoofing.
+How can surveillance data isolate order-book sequences that are compatible with spoofing without treating ordinary
+liquidity provision as manipulation? We address this question with an auditable microstructure framework that reconstructs
+the visible limit order book and consolidates related executions into clusters. A cluster can be anchored either to the
+participant's resting order being executed or to the participant trading aggressively. We attribute orders through the
+original client code when it is available and otherwise through the firm identifier, while preserving the identity level.
+The strict gate is a four-condition conjunction: same-actor liquidity posted on the side opposite to an execution during the
+preceding $90$ seconds is withdrawn within $2$ seconds; the withdrawn quantity exceeds the clustered execution quantity; the
+price first moves in a direction favorable to the execution; and it subsequently reverts. An empirical top-$10$ depth kernel
+weights visible liquidity by book rank. Across three Italian equity samples, the reconstruction finds rapid withdrawals after
+both passive and aggressive executions, while the complete four-condition sequence selects a smaller subset. These findings
+support reproducible surveillance triage, but they do
+not constitute a statistical test, identify manipulative intent, estimate causal effects, or measure the prevalence of
+spoofing. Legitimate liquidity provision remains an explicit alternative explanation.
 \end{abstract}
 
 \paragraph{Keywords.}
@@ -91,14 +94,20 @@ control inventory, or limit adverse selection. Static size thresholds, cancellat
 therefore cannot by themselves distinguish manipulative conduct from legitimate liquidity provision. Such rules can
 produce false positives and cannot establish the participant's intent.
 
-We address this surveillance problem by reconstructing participant-level order sequences rather than classifying isolated
-messages. The framework combines five observable elements: a recent opposite-side liquidity profile, an execution by the
-same actor, a rapid withdrawal of that profile, a price movement favorable to the execution, and subsequent price reversion.
-The execution can be passive or aggressive. Actor identity is a separate data problem: we use the original client code when
-present and the firm identifier only as a fallback. Related execution messages are consolidated into clusters, and each
-physical cancellation is assigned to at most one cluster. The output is an auditable set of descriptive screening
-diagnostics for analyst review, not a statistical validation, a label of manipulation, or an estimate of causal price
-impact.
+This paper asks whether the observable conjunction implied by the hypothesized mechanism can be reconstructed from
+participant-level messages without treating frequent cancellation itself as evidence of spoofing. The proposed screen
+therefore combines five observable elements: a recent opposite-side liquidity profile, an execution by the same actor, rapid
+withdrawal of that profile, a price movement favorable to the execution, and subsequent price reversion. The execution can
+be passive or aggressive. Actor identity is a separate data problem, so we use the original client code when present and the
+firm identifier only as a fallback. We also consolidate related execution messages into clusters and assign each physical
+cancellation to at most one cluster.
+
+The empirical reconstruction identifies rapid same-actor withdrawals in all three samples and after both execution routes.
+The full four-condition sequence is less common because it additionally requires withdrawn quantity to exceed clustered
+execution quantity, favorable movement, and reversion. This distinction is the main interpretive result: a mechanical
+withdrawal can motivate review, but it is not equivalent to a sequence that also satisfies the size and price-path conditions
+of the stylized mechanism. The output is therefore an auditable set of descriptive screening diagnostics for analyst review,
+not a statistical validation, a label of manipulation, or an estimate of causal price impact.
 
 \section{Market Making Versus Spoofing}
 \label{sec:mm_vs_spoofing}
@@ -273,7 +282,7 @@ linking these observed actions through anonymized actor identifiers at the clien
 
 Machine-learning methods add temporal or relational structure. \cite{TuccellaNadlerSerban2021} formulate spoofing as an
 early-warning problem and train a gated recurrent unit model on cryptocurrency order-book event streams. Graph-based
-graph-based methods move the unit of analysis from isolated orders to networks of traders and transactions. This representation can
+methods move the unit of analysis from isolated orders to networks of traders and transactions. This representation can
 capture coordinated spoofing patterns \cite{KangMuNing2023,KangMuNing2024,XiangEtAl2025}. Reported models combine
 temporal transaction graphs, community features, and dynamic latent representations. Their practical performance remains
 difficult to compare because open labels and chronological cross-market validation are limited.
@@ -315,10 +324,12 @@ resulting surveillance dossiers support analyst review and are not enforcement l
 
 \section{Model}
 \label{sec:model}
-This section translates the stylized contrast between market making and spoofing into observable sequence diagnostics. We
-first represent each participant's liquidity across the top $n$ book levels. We then measure whether a recent
-opposite-side profile disappears after the participant's own execution and whether the associated price path is
-economically consistent with the hypothesized strategy.
+The model translates the stylized contrast between market making and spoofing into a sequence of observable conditions. Its
+central question is whether a recent liquidity profile disappears specifically after the same participant executes on the
+opposite side. To answer it, we first represent the participant's liquidity across the top $n$ book levels. We then measure
+the conditional withdrawal of that profile and test whether the associated price path is economically consistent with the
+hypothesized strategy. The withdrawal and price-response quantities remain separate because they describe different parts
+of the mechanism.
 
 % \subsection{Spoofer's timeline}
 % \label{subsec:spoofing_timeline}
@@ -460,10 +471,12 @@ as the participant's displayed volume at time $t$ on side $s$ and rank $k$. The 
     \mathbf{V}^{i,s}_{n}(t)
     = \left(V^{i,s}_{1}(t),\ldots,V^{i,s}_{n}(t)\right)
 \end{equation}
-collects these quantities over the first $n$ ranks.
+collects these quantities over the first $n$ ranks. The vector preserves where liquidity is displayed rather than reducing
+the participant's entire side of the book to one total. This distinction matters because a large order near the touch has
+different execution risk from the same quantity posted at a deeper rank.
 
-Raw displayed volume may not be comparable across assets or intraday periods with different market depth. The reported
-implementation therefore divides participant volume by total displayed market depth at the same side and rank:
+Raw displayed volume may not be comparable across assets or intraday periods with different market depth. The relative
+profile therefore divides participant volume by total displayed market depth at the same side and rank:
 \begin{equation}
     \widetilde V^{i,s}_{k}(t)
     =
@@ -673,10 +686,10 @@ receives high weight only when it combines price association with low short-hori
 
 In the remaining formulas, the operational value of $\omega^{s}_{k}(t)$ is
 $\widehat\omega^{m,s}_{k}(H)$. Every event for instrument $m$ uses the same calibrated kernel. The kernel is not
-re-estimated by actor, event, or observed outcome. Calibration produces one row for each $(m,s,k)$ cell, and the runtime
-loader rejects duplicate rank rows instead of resolving them by row order. The descriptive analysis uses the full
-available sample for each instrument. A prospective or out-of-sample application must instead estimate the kernel on an
-earlier training period and hold it fixed, so that future order flow does not enter the weights.
+re-estimated by actor, event, or observed outcome, and calibration admits only one weight for each $(m,s,k)$ cell. The
+descriptive analysis uses the full available sample for each instrument. A prospective or out-of-sample application must
+instead estimate the kernel on an earlier training period and hold it fixed, so that future order flow does not enter the
+weights.
 
 \begin{table}[htbp]
 \centering
@@ -803,7 +816,9 @@ We summarize the difference between the two sides with the \textit{Multilevel Di
 When the denominator is positive, $\operatorname{DWI}^{i}_{n}(t)>0$ denotes an ask-heavy profile and
 $\operatorname{DWI}^{i}_{n}(t)<0$ denotes a bid-heavy profile. The denominator scales the difference by the participant's
 total weighted footprint, reducing sensitivity to the absolute scale of that footprint within the same instrument and
-kernel calibration. Setting $n=1$ gives the best-level measure. Larger values of $n$ also capture candidate liquidity
+kernel calibration. Values near $+1$ and $-1$ correspond to profiles concentrated almost entirely on the ask and bid sides,
+respectively. A value near zero denotes a balanced positive footprint, whereas the statistic remains undefined when both
+weighted sides are absent. Setting $n=1$ gives the best-level measure. Larger values of $n$ also capture candidate liquidity
 posted behind the touch. \Cref{fig:topn_imbalance_dynamics} illustrates two stylized paths; it is not an empirical
 classification rule.
 
@@ -963,7 +978,9 @@ weighted liquidity that disappears from each side after the fill using an exact 
 \end{equation}
 where $[x]_{+}=\max\{x,0\}$. A large $C^{i,\bar{s}_c}_{c,n}$ indicates that recent liquidity disappeared from the side
 opposite to the clustered execution, as required by the mechanical sequence. A two-sided quote refresh after a mid-price
-change can instead generate material collapse on both sides.
+change can instead generate material collapse on both sides. The boundary values have a direct interpretation:
+$C^{i,s}_{c,n}=1$ means that the entire weighted pre-execution profile on side $s$ disappeared, whereas
+$C^{i,s}_{c,n}=0$ means that it did not decrease or was absent before execution.
 
 To summarize these diagnostics while preserving evidence in both directions, define the event-level signed contrast
 \begin{equation}
@@ -981,7 +998,7 @@ The positive part in the definition of $C$ distinguishes liquidity disappearance
 the subsequent cross-side contrast. The three inputs remain separately inspectable, so a two-sided quote refresh is
 distinguishable from an asymmetric collapse. MSCI is a secondary event-level diagnostic that enters actor-level feature
 summaries. It is neither a probability nor matched-withdrawal evidence. It does not enter the four-condition event gate or the
-generated result tables.
+reported result tables.
 
 \subsubsection{Canonical Matched Withdrawal}
 \label{subsec:canonical_matched_withdrawal}
@@ -1020,9 +1037,11 @@ the candidate profile before execution. We report the fraction of that profile r
     \end{cases}
     \label{eq:assigned_withdrawal_share}
 \end{equation}
-These quantities remain separately inspectable. The full descriptive gate requires $U^{i}_{c,n}>Q_c$ rather than applying
-a threshold to a composite score. We summarize repeated behavior through counts and withdrawal rates at the
-actor--partition level. We do not use a scalar aggregate to rank actors or infer intent.
+The two ratios answer different questions. $R^{i}_{c,n}$ compares the assigned withdrawal with the executed quantity, whereas
+$A^{i}_{c,n}$ compares it with the candidate profile that was available to withdraw. These quantities remain separately
+inspectable. The full descriptive gate requires $U^{i}_{c,n}>Q_c$ rather than applying a threshold to a composite score. We
+summarize repeated behavior through counts and withdrawal rates at the actor--partition level. We do not use a scalar
+aggregate to rank actors or infer intent.
 
 \subsubsection{Price-Response Diagnostics}
 \label{subsec:price_response_diagnostics}
@@ -1088,8 +1107,8 @@ price $P_c$, we also define the local execution advantage relative to the pre-po
 \end{equation}
 The execution advantage is positive when a sell executes above the benchmark or a buy executes below it.
 
-We compute each diagnostic with both the mid-price and the queue microprice in the event-level artifacts. The generated
-summary tables and the event gate use the mid-price versions. We report price responses separately from withdrawal counts,
+We compute each diagnostic with both the mid-price and the queue microprice in the event-level records. The reported summary
+tables and the event gate use the mid-price versions. We report price responses separately from withdrawal counts,
 quantities, and rates instead of multiplying all components into one detector. Withdrawal variables describe the
 reconstructed message sequence. The variables $\operatorname{FPM}$, $\operatorname{REV}$, and $\operatorname{ADV}$
 describe the associated price path. This separation distinguishes repeated conditional withdrawals without a favorable
@@ -1100,7 +1119,8 @@ price response from episodes that also exhibit favorable pre-execution movement 
 
 We reconstruct events from order-level messages rather than aggregate snapshots. A resting order can change book rank
 when the best quote moves even though its owner has neither modified nor cancelled it. Snapshot changes alone can therefore
-confound repricing of the surrounding book with withdrawal by the participant. The operational procedure is:
+confound repricing of the surrounding book with withdrawal by the participant. The reconstruction follows the economic
+sequence from actor identification to execution, withdrawal, and price response:
 \begin{enumerate}
     \item Resolve the canonical actor and classify each fill as exclusively passive or aggressive. Construct cluster $c$
     from compatible child executions while preserving the ordered mapping to raw messages.
@@ -1126,15 +1146,15 @@ liquidity. Canonical assignment ensures that one physical cancellation does not 
 clusters under the stated eligibility rule.
 
 The event-level \textit{spoofing-compatible sequence} gate requires four observed conditions: a rapid assigned
-withdrawal, withdrawn quantity greater than cluster execution quantity, positive favorable pre-execution mid-price movement, and
-positive mid-price reversion from the assigned cancellation over an observable $2$-second horizon. Right-censored
-reversion outcomes fail the gate. This transparent conjunction supports analyst triage; it is descriptive and is not a
-statistical test, manipulation label, or proof of intent.
+withdrawal, withdrawn quantity greater than cluster execution quantity, positive favorable pre-execution mid-price movement,
+and positive mid-price reversion from the assigned cancellation over an observable $2$-second horizon. The conjunction is
+deliberately stricter than withdrawal matching alone. Right-censored reversion outcomes fail the gate because the final
+condition cannot be observed. This transparent rule supports analyst triage; it is descriptive and is not a statistical
+test, manipulation label, or proof of intent.
 
-The all-sample run uses a $10$-second structural window, $2$-second rapid-attribution and cancel-anchored reversion
+The reported specification uses a $10$-second structural window, $2$-second rapid-attribution and cancel-anchored reversion
 windows, and a $90$-second candidate-order age limit. We estimate the empirical top-$10$ kernel separately for each
-instrument. The reported outputs keep withdrawal and price-response components separate rather than reducing them to a
-scalar composite score.
+instrument. Withdrawal and price-response components remain separate rather than being reduced to a scalar composite score.
 
 \section{Results}
 \label{sec:results}
@@ -1142,39 +1162,60 @@ scalar composite score.
 \subsection{Cross-Instrument Detection Summary}
 \label{subsec:cross_instrument_results}
 
-We apply the same episode-conditioned top-$10$ reconstruction to all three samples.
-\Cref{tab:empirical_spoofing_diagnostics} reports the resulting exploratory diagnostics. Each instrument uses its
-full-sample empirical kernel from \cref{tab:empirical_depth_kernel_calibration} with $H=10$ seconds.
+Rapid same-actor withdrawals occur in all three samples and after both passive and aggressive executions. The complete
+withdrawal-and-price sequence is less frequent because it also requires the withdrawn quantity, favorable movement, and
+post-cancellation reversion conditions. \Cref{tab:empirical_spoofing_diagnostics} reports this progressive narrowing under
+the same episode-conditioned top-$10$ reconstruction. Each instrument uses its full-sample empirical kernel from
+\cref{tab:empirical_depth_kernel_calibration} with $H=10$ seconds.
 
 A matched cluster is a passive or aggressive execution followed within $2$ seconds by a canonically assigned cancellation
 of a same-actor, opposite-side candidate order. The separate $10$-second interval is the structural reconstruction horizon.
-The table separates the two execution anchors, distinguishes clusters from their raw child execution messages, and counts
-each assigned physical cancellation once. Its firm-fallback column shows how many matched clusters use firm identity because
-the original client code is missing. The strict column counts clusters that also satisfy the withdrawal-size, favorable
-mid-price movement, and post-cancellation reversion conditions. These quantities are descriptive screening diagnostics,
-not manipulation labels or evidence of intent.
+The table distinguishes clusters from their raw child execution messages and counts each assigned physical cancellation
+once. The firm-fallback column records the coarser cases in which the original client code is missing. The strict column then
+retains matched clusters that also satisfy the withdrawal-size and two price-response conditions. These quantities are
+descriptive screening diagnostics, not manipulation labels or evidence of intent.
 
 \InputIfFileExists{generated/spoofing_empirical_tables.tex}{}{%
     \fbox{\parbox{0.9\textwidth}{Run \texttt{scripts/generate\_spoofing\_paper\_tables.py} to generate the empirical tables.}}%
 }
 \FloatBarrier
 
-The reported empirical quantities are direct reconstruction counts and conditional descriptive shares. No counterfactual
-comparison or inferential test is applied, so the table does not provide $p$-values, confidence intervals, or evidence that
-withdrawal is more likely after the focal actor's own execution than under an otherwise comparable no-execution condition.
+The main empirical pattern is a gap between mechanical matching and the complete price-consistent sequence. The
+reconstruction identifies \FerrariMatchedClusters{} matched clusters for Ferrari, \NexiMatchedClusters{} for Nexi, and
+\RisanamentoMatchedClusters{} for Risanamento. The strict gate retains \FerrariCompatibleSequences{},
+\NexiCompatibleSequences{}, and \RisanamentoCompatibleSequences{}, respectively. Favorable pre-execution movement is
+positive in \FerrariFPMShare{}, \NexiFPMShare{}, and \RisanamentoFPMShare{} of observed matched clusters, whereas positive
+reversion occurs in \FerrariREVShare{}, \NexiREVShare{}, and \RisanamentoREVShare{}. Thus, the withdrawal condition is not
+being used as a substitute for the full hypothesized price path.
+
+These empirical quantities are direct reconstruction counts and conditional descriptive shares. No counterfactual
+comparison or inferential test is applied. The table therefore does not provide $p$-values, confidence intervals, or evidence
+that withdrawal is more likely after the focal actor's own execution than under an otherwise comparable no-execution
+condition.
+
+\paragraph{Event-accounting denominators.}
+The instrument-specific counts in \Cref{tab:empirical_spoofing_diagnostics} preserve the provenance of these conditional
+shares. The Risanamento sample contains \RisanamentoRawFills{} raw execution messages, consolidated into
+\RisanamentoClusters{} clusters: \RisanamentoPassiveClusters{} passive and \RisanamentoAggressiveClusters{} aggressive.
+Among the \RisanamentoMatchedClusters{} matched clusters, \RisanamentoPassiveMatchedClusters{} have passive anchors and
+\RisanamentoAggressiveMatchedClusters{} have aggressive anchors; \RisanamentoFirmFallbackMatchedClusters{} use firm fallback
+and jointly own \RisanamentoAssignedCancellations{} assigned physical cancellations. Nexi contains \NexiRawFills{} raw
+execution messages and \NexiClusters{} clusters, split into \NexiPassiveClusters{} passive and \NexiAggressiveClusters{}
+aggressive anchors. Its \NexiMatchedClusters{} matched clusters comprise \NexiPassiveMatchedClusters{} passive and
+\NexiAggressiveMatchedClusters{} aggressive anchors; \NexiFirmFallbackMatchedClusters{} use firm fallback and jointly own
+\NexiAssignedCancellations{} assigned cancellations. Ferrari contains \FerrariRawFills{} raw execution messages and
+\FerrariClusters{} clusters, of which \FerrariPassiveClusters{} are passive and \FerrariAggressiveClusters{} are aggressive.
+Its matched set contains \FerrariPassiveMatchedClusters{} passive and \FerrariAggressiveMatchedClusters{} aggressive anchors;
+\FerrariFirmFallbackMatchedClusters{} use firm fallback and jointly own \FerrariAssignedCancellations{} assigned cancellations.
 
 \subsection{Risanamento}
 \label{subsec:risanamento_results}
 
-The Risanamento sample contains \RisanamentoRawFills{} raw execution messages, consolidated into
-\RisanamentoClusters{} clusters: \RisanamentoPassiveClusters{} passive and \RisanamentoAggressiveClusters{} aggressive.
-Canonical linkage identifies \RisanamentoMatchedClusters{} matched clusters, including
-\RisanamentoPassiveMatchedClusters{} passive and \RisanamentoAggressiveMatchedClusters{} aggressive anchors.
-\RisanamentoFirmFallbackMatchedClusters{} matched clusters use firm fallback. These clusters own
-\RisanamentoAssignedCancellations{} physical cancellations, each assigned at most once, and
-\RisanamentoCompatibleSequences{} satisfy the strict four-condition gate. Among matched clusters with an observed
-diagnostic, \RisanamentoFPMShare{} have positive favorable pre-execution movement and \RisanamentoREVShare{} have positive
-cancel-anchored reversion.
+Risanamento has the smallest matched set, and only \RisanamentoCompatibleSequences{} clusters satisfy the strict
+four-condition gate. Favorable pre-execution movement is nevertheless positive in \RisanamentoFPMShare{} of matched clusters
+with an observed diagnostic, while positive cancel-anchored reversion occurs in \RisanamentoREVShare{}. The relatively low
+reversion share shows that many matched withdrawals fail one price-path condition; the strict gate also depends on withdrawal
+size and favorable pre-execution movement.
 
 The event-review dashboard contains a cluster-first dossier and reconstructed top-$10$ window for each of the
 \RisanamentoMatchedClusters{} matched clusters. These review objects organize observed facts, counter-evidence, and
@@ -1183,12 +1224,10 @@ legitimate alternatives. They are triage aids, not empirical labels or proof of 
 \subsection{Nexi}
 \label{subsec:nexi_results}
 
-The Nexi sample contains \NexiRawFills{} raw execution messages and \NexiClusters{} clusters, split into
-\NexiPassiveClusters{} passive and \NexiAggressiveClusters{} aggressive anchors. Reconstruction identifies
-\NexiMatchedClusters{} matched clusters; \NexiFirmFallbackMatchedClusters{} use firm fallback. They own
-\NexiAssignedCancellations{} assigned cancellations, and \NexiCompatibleSequences{} pass the strict gate. Positive
-favorable pre-execution movement occurs in \NexiFPMShare{} of matched clusters with an observed diagnostic, and positive
-cancel-anchored reversion occurs in \NexiREVShare{}.
+Nexi exhibits matched withdrawals after both execution routes, but the full price-consistent path remains a subset.
+Reconstruction identifies \NexiMatchedClusters{} matched clusters, of which \NexiCompatibleSequences{} pass the strict gate.
+Positive favorable pre-execution movement occurs in \NexiFPMShare{} of matched clusters with an observed diagnostic, while
+positive cancel-anchored reversion occurs in \NexiREVShare{}.
 
 Differences from the other instruments are not causal contrasts because the samples cover different periods and actor
 compositions.
@@ -1196,28 +1235,31 @@ compositions.
 \subsection{Ferrari}
 \label{subsec:ferrari_results}
 
-The Ferrari sample contains \FerrariRawFills{} raw execution messages and \FerrariClusters{} clusters, of which
-\FerrariPassiveClusters{} are passive and \FerrariAggressiveClusters{} are aggressive. Reconstruction identifies
-\FerrariMatchedClusters{} matched clusters; \FerrariFirmFallbackMatchedClusters{} use firm fallback. They own
-\FerrariAssignedCancellations{} assigned cancellations, and \FerrariCompatibleSequences{} pass the strict gate. The shares
-with positive favorable pre-execution movement and positive reversion among observed matched-cluster diagnostics are
-\FerrariFPMShare{} and \FerrariREVShare{}.
+Ferrari has the largest matched set, with contributions from both passive and aggressive execution anchors.
+Reconstruction identifies \FerrariMatchedClusters{} matched clusters, and \FerrariCompatibleSequences{} pass the strict
+gate. Among observed matched-cluster diagnostics, the shares with positive favorable pre-execution movement and positive
+reversion are \FerrariFPMShare{} and \FerrariREVShare{}.
 
 These are descriptive screening outcomes, not manipulation labels or prevalence estimates.
 
 \subsection{Actor-Level Attribution and Interpretation}
 \label{subsec:actor_level_results}
 
+Recurrence is informative only when actor identity and execution role remain explicit. The largest actor--anchor groups differ
+in identity resolution, matched-cluster count, withdrawal scale, and price-path composition. \Cref{tab:top_actor_results}
+therefore reports the three largest groups in each instrument by matched-cluster count rather than collapsing them into one
+actor score. An actor is either an original client code or, only when that code is missing, a firm identifier. W/E maximum is
+the largest matched withdrawal-to-execution ratio within the group; FPM$+$ and REV$+$ are the shares of matched clusters with
+positive mid-price favorable movement and reversion.
+
 \InputIfFileExists{generated/spoofing_actor_table.tex}{}{%
     \fbox{\parbox{0.9\textwidth}{Run \texttt{scripts/generate\_spoofing\_paper\_tables.py} to generate the actor table.}}%
 }
 \FloatBarrier
 
-\Cref{tab:top_actor_results} reports the three largest actor--anchor groups in each instrument by matched-cluster count. An
-actor is either an original client code or, only when that code is missing, a firm identifier. The identity and anchor
-columns keep these dimensions explicit. W/E maximum is the largest matched withdrawal-to-execution ratio within the group;
-FPM$+$ and REV$+$ are the shares of matched clusters with positive mid-price favorable movement and reversion. Because firm
-fallback can combine several clients, a firm-level count has coarser attribution than a client-level count and should not be
+The dispersion of FPM$+$ and REV$+$ across these groups shows why recurrence and price response must remain separate. A group
+can contain many matched withdrawals without exhibiting the same reversion pattern as another group. Because firm fallback
+can combine several clients, a firm-level count has coarser attribution than a client-level count and should not be
 interpreted as a single-account history.
 
 The primary empirical object is the participant-level association between execution and rapid opposite-side withdrawal.
@@ -1229,19 +1271,29 @@ with legitimate liquidity provision. Neither a scalar score nor a dashboard revi
 \section{Discussion and Conclusion}
 \label{sec:discussion_conclusion}
 
-Across these three samples, the reconstruction identifies rapid same-actor withdrawal episodes after both passive and
-aggressive executions, together with their associated price paths. These outcomes describe the stated reconstruction and
-thresholds; they neither estimate spoofing prevalence nor establish that any retained sequence was manipulative.
+The main empirical finding is that rapid same-actor withdrawal is broader than the complete spoofing-compatible sequence.
+Matched episodes occur after both passive and aggressive executions in all three samples. Only a subset also exhibits the
+required withdrawal size, favorable pre-execution movement, and post-cancellation reversion. This gap is scientifically
+important because it prevents a high cancellation rate or a large withdrawal from standing in for the full mechanism.
 
-Several limitations constrain interpretation. The depth kernels are calibrated on the same full samples to which they are
-applied, so their displayed-price associations are descriptive rather than out-of-sample evidence. The analysis does not
-include a counterfactual statistical test, and repeated events from the same actors or trading periods need not be
-independent. Right-censored reversion outcomes fail the event gate, and the reported results do not test sensitivity to the
-$100$-millisecond child-execution clustering threshold. Firm fallback loses within-firm client resolution and can pool several
-accounts, so recurrence at that level is not directly comparable with recurrence under a client code. Aggressive execution
-is an execution-role observation, not evidence about the intent of the surrounding resting orders; ordinary liquidity taking
-remains an alternative explanation. The three instrument samples also cover different periods and actor compositions, which
-rules out causal cross-instrument comparisons.
+The mathematical construction makes the separation explicit. The quantities $U^{i}_{c,n}$, $R^{i}_{c,n}$, and
+$A^{i}_{c,n}$ describe what liquidity disappeared and how its scale compares with the execution and candidate profile. The
+quantities $\operatorname{FPM}^{i}_{c}$ and $\operatorname{REV}^{i}_{c}$ describe the associated price path. Requiring both
+types of evidence produces the strict gate, but the conjunction remains a descriptive compatibility rule. It neither
+estimates spoofing prevalence nor establishes that any retained sequence was manipulative.
+
+The strongest limitation is the absence of a counterfactual comparison. The analysis does not test whether withdrawal is
+more likely after the focal actor's execution than after an otherwise comparable non-event, and repeated observations from
+the same actors or trading periods need not be independent. The depth kernels are also calibrated on the same full samples
+to which they are applied, so their displayed-price associations are descriptive rather than out-of-sample evidence.
+Right-censored reversion outcomes fail the event gate, and the reported results do not test sensitivity to the
+$100$-millisecond child-execution clustering threshold.
+
+Identity and sampling impose further limits. Firm fallback loses within-firm client resolution and can pool several
+accounts, so firm-level recurrence is not directly comparable with recurrence under a client code. Aggressive execution is
+an execution-role observation, not evidence about the intent of the surrounding resting orders; ordinary liquidity taking
+remains an alternative explanation. The three instrument samples cover different periods and actor compositions, which rules
+out causal cross-instrument comparisons.
 
 The contribution is therefore an auditable surveillance workflow rather than an enforcement classifier. It preserves raw
 message provenance, separates withdrawal from price-response evidence, and exposes the gate conditions used for triage.

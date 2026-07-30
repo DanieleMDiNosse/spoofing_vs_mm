@@ -185,19 +185,26 @@ Its validation issue counts were:
 
 The active exploratory spoofing pipeline follows the manuscript's multilevel top-n DWI/MSCI/MCPS formulation, not the older
 single-imbalance SCI/CPS draft. The implemented schema is intentionally clean: legacy `imbalance`, `weighted_*_fraction_topN`,
-and `candidate_fake_*` aliases are not emitted. Downstream analysis should use the current DWI/MSCI/MCPS and
-`candidate_deceptive_*` column names directly.
+and `candidate_fake_*` aliases are not emitted. Schema v2 names the common contrast `MSCI_resting_profile`, the separate
+withdrawal-evidence scale `withdrawal_profile_scale_event`, and the actor aggregate `MCPS_resting_profile`. The shorter
+`MSCI`, `WMSCI_event`, and `MCPS` names remain compatibility aliases only. Downstream analysis should prefer the canonical
+v2 and `candidate_deceptive_*` column names.
 
 Current model objects:
 
-- top-n agent-specific visible-depth vectors by client;
-- per-level relative client depth, `client_visible_qty_at_level / market_visible_qty_at_level`;
+- top-n actor-specific visible-depth vectors keyed by the canonical namespaced `actor_key`;
+- per-level relative actor depth, `actor_visible_qty_at_level / market_visible_qty_at_level`;
 - shifted same-side tick distance, so level 1 has positive distance;
 - normalized depth kernel with `kappa` and `lambda_`;
 - state-level `L_bid_topN`, `L_ask_topN`, and `DWI`;
-- event-level side collapses after passive small executions;
-- event-level `MSCI`, the bounded arithmetic mean of normalized SCI, opposite-side collapse, and positive side-collapse asymmetry;
-- client-level `MCPS`, the fraction of executions whose MSCI exceeds a chosen `gamma` threshold.
+- event-level side collapses after small executions within a configured execution-anchor branch, computed as exact
+  piecewise ratios: zero when valid pre-window liquidity is zero, otherwise
+  `max(L_pre - L_post, 0) / L_pre`, with invalid inputs kept missing;
+- event-level `MSCI_resting_profile`, the signed contrast `SCI / 2 + C_opposite - C_same`, with theoretical range `[-1, 2]`;
+- event-level `withdrawal_profile_scale_event`, kept separate from the resting-profile contrast, plus branch-specific
+  `WMSCI_passive` and `WMSCI_aggressive` products whose non-applicable branch is null rather than zero;
+- actor-level `MCPS_resting_profile`, the fraction of executions whose resting-profile MSCI exceeds a chosen `gamma`
+  threshold, stratified by `execution_anchor_mode`.
 - candidate deceptive orders are restricted to a configurable pre-execution age window, currently 600 seconds by default,
   so long-lived resting liquidity is not attributed to a later spoofing episode.
 
@@ -207,6 +214,18 @@ for the main spoofing-event interpretation.
 
 These scores are surveillance cues, not labels or proof of manipulative intent. High-MSCI or high-MCPS cases require
 episode-level review.
+
+### Identity and execution-anchor extension status
+
+The operational code now resolves `NMSC_ORIGINALCLIENTIDSHORTCODE` first and falls back to a namespaced `firm:<FIRMID>` actor only when the original-client identifier is unavailable. It records `actor_id`, `identity_level`, `identity_source`, and `identity_fallback_flag` beside `actor_key`. Client and firm keys are not pooled across levels. Firm fallback therefore represents a coarser member-firm aggregate and is not client-level attribution; events missing both identifiers remain unattributed.
+
+Passive and aggressive fills are separate execution-anchor populations. Role assignment requires exactly one corresponding role flag. Aggressive fills additionally require positive finite `LASTSHARES` and `LASTTRADEDPX`; the detector does not substitute `event_price` for aggressive trade price. Execution clusters, candidate cancellations, event metrics, MCPS, rankings, dashboards, dossiers, and audits preserve both canonical actor identity and execution anchor. Metadata separately report configured and observed anchor modes, including a genuinely empty observed set.
+
+Production-readiness thresholds are also anchor-specific. The checked-in passive threshold is retained, while the aggressive
+threshold is explicitly null; threshold-dependent aggressive alerts remain inapplicable until separately calibrated. The
+calibration helper rejects pooled passive/aggressive inputs unless `execution_anchor_mode` is an explicit stratum.
+
+The checked-in operational configuration enables both anchors, while programmatic use without explicit configuration retains the historical passive-only baseline. The actor/anchor extension is implemented and regression-tested, but it has not yet been validated by a new isolated real-data rerun or by independent confirmation of the ETL role-bit provenance. Existing manuscript results therefore remain the earlier passive/client baseline. The aggressive branch must be reported as a separate experimental surveillance extension until those checks and scientific review are complete; `paper/spoofing.tex` and generated empirical tables are intentionally unchanged at this stage.
 
 ## Recommended next implementation step
 
