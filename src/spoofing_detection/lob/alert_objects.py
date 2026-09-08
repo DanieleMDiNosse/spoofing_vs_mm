@@ -4,6 +4,10 @@ import polars as pl
 
 ALERT_SCHEMA = {
     "client_id": pl.Utf8,
+    "episode_count": pl.UInt32,
+    "matched_episode_count": pl.UInt32,
+    "matched_episode_share": pl.Float64,
+    "strict_episode_count": pl.UInt32,
     "event_count": pl.UInt32,
     "matched_event_count": pl.UInt32,
     "matched_event_share": pl.Float64,
@@ -71,13 +75,24 @@ def build_client_session_alerts(
         for canonical, legacy in canonical_aliases.items()
     )
     joined = prepared_risk.join(legitimacy_features, on="client_id", how="left")
+    repeat_support = (
+        pl.coalesce("matched_episode_count", "matched_event_count")
+        if "matched_episode_count" in joined.columns else pl.col("matched_event_count")
+    )
+    episode_aware = "episode_count" in joined.columns and "matched_episode_share" in joined.columns
+    event_support = pl.coalesce("episode_count", "event_count") if episode_aware else pl.col("event_count")
+    share_support = (
+        pl.coalesce("matched_episode_share", "matched_event_share")
+        if episode_aware
+        else pl.col("matched_event_share")
+    )
     alerts = (
         joined
         .filter(
             pl.col("msci_threshold_applicable").fill_null(False)
-            & (pl.col("event_count") >= min_events)
-            & (pl.col("matched_event_count").fill_null(0) >= min_events)
-            & (pl.col("matched_event_share").fill_null(0.0) >= min_mcps)
+            & (event_support.fill_null(0) >= min_events)
+            & (repeat_support.fill_null(0) >= min_events)
+            & (share_support.fill_null(0.0) >= min_mcps)
             & (pl.col("max_withdrawal_profile_scale_event").fill_null(0.0) > 0.0)
         )
         .with_columns(pl.lit("human_review").alias("recommended_action"))
@@ -104,6 +119,8 @@ def build_client_session_alerts(
 
 
 ACTOR_ALERT_SCHEMA = {
+    "partition_id": pl.String,
+    "event_date": pl.Date,
     "actor_key": pl.Utf8,
     "actor_id": pl.Utf8,
     "identity_level": pl.Utf8,
@@ -143,8 +160,9 @@ def build_actor_session_alerts(
         raise ValueError(f"missing actor risk feature columns: {missing}")
 
     rows: list[dict[str, object]] = []
+    day_keys = [k for k in ("partition_id", "event_date") if k in risk_features.columns]
     for risk_group in risk_features.partition_by(
-        ["actor_key", "execution_anchor_mode"], maintain_order=True
+        [*day_keys, "actor_key", "execution_anchor_mode"], maintain_order=True
     ):
         identity: dict[str, object] = {}
         for column in identity_columns:
@@ -158,12 +176,19 @@ def build_actor_session_alerts(
 
         actor_key = identity["actor_key"]
         anchor_mode = identity["execution_anchor_mode"]
+        day_identity = {k: risk_group[k][0] for k in day_keys}
+        identity.update(partition_id=day_identity.get("partition_id"), event_date=day_identity.get("event_date"))
         legacy_risk = risk_group.with_columns(pl.col("actor_key").alias("client_id"))
         if {"actor_key", "execution_anchor_mode"}.issubset(legitimacy_features.columns):
             legacy_legitimacy = legitimacy_features.filter(
                 (pl.col("actor_key") == actor_key)
                 & (pl.col("execution_anchor_mode") == anchor_mode)
             ).with_columns(pl.col("actor_key").alias("client_id"))
+            for day_key in day_keys:
+                if day_key not in legacy_legitimacy.columns:
+                    legacy_legitimacy = pl.DataFrame(schema={"client_id": pl.Utf8})
+                    break
+                legacy_legitimacy = legacy_legitimacy.filter(pl.col(day_key).eq_missing(day_identity[day_key]))
         else:
             legacy_legitimacy = pl.DataFrame(schema={"client_id": pl.Utf8})
         legacy_alert = build_client_session_alerts(

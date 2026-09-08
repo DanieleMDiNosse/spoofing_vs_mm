@@ -15,13 +15,14 @@ from typing import Any, Mapping, Sequence
 DASHBOARD_SCHEMA_VERSION = "consob_alert_comparison_dashboard_v2"
 _ALLOWED_SOURCE_KINDS = frozenset({"primary_pdf"})
 _ALLOWED_ACTOR_IDENTITY_MODES = frozenset({"client_then_firm"})
-_ALLOWED_EXECUTION_ANCHOR_MODES = frozenset({"passive", "aggressive"})
+_ALLOWED_EXECUTION_ANCHOR_MODES = frozenset({"passive", "aggressive", "mixed"})
 _ALLOWED_OUTPUT_SCHEMA_VERSIONS = frozenset({"actor_execution_anchor_v2"})
 _ALLOWED_EXECUTION_SIDES = frozenset({"ask", "bid"})
 _ALLOWED_IDENTITY_NAMESPACES = frozenset({"client_original", "firm"})
 _DETECTOR_EVENT_FIELDS = frozenset(
     {
         "event_alias",
+        "analytical_unit",
         "cluster_start",
         "cluster_end",
         "execution_anchor_mode",
@@ -140,10 +141,10 @@ def _finite_number(value: Any, *, context: str, positive: bool) -> float:
 
 def _validate_detector_events(row: Mapping[str, Any], *, context: str) -> None:
     events = _rows(row.get("detector_events"), context=f"{context}.detector_events")
-    recovered = _numeric_count(row, "recovered_execution_clusters", context=context)
-    if len(events) != recovered:
+    episode_count = _numeric_count(row, "candidate_posture_episodes", context=context)
+    if len(events) != episode_count:
         raise ValueError(
-            f"{context}.detector_events must match recovered_execution_clusters"
+            f"{context}.detector_events must match candidate_posture_episodes"
         )
 
     alert_start = _parsed_timestamp(row.get("start"), context=f"{context}.start")
@@ -169,6 +170,8 @@ def _validate_detector_events(row: Mapping[str, Any], *, context: str) -> None:
         if alias in aliases:
             raise ValueError(f"{context}.detector_events contains duplicate event aliases")
         aliases.add(alias)
+        if event.get("analytical_unit") != "candidate_posture_episode":
+            raise ValueError(f"{event_context}.analytical_unit is invalid")
 
         cluster_start = _parsed_timestamp(
             event.get("cluster_start"), context=f"{event_context}.cluster_start"
@@ -216,14 +219,14 @@ def _validate_detector_events(row: Mapping[str, Any], *, context: str) -> None:
             raise ValueError(f"{event_context} strict detection has unsatisfied gates")
 
     if matched_count != _numeric_count(
-        row, "clusters_with_matched_withdrawal", context=context
+        row, "episodes_with_matched_withdrawal", context=context
     ):
         raise ValueError(f"{context}.detector_events withdrawal count does not reconcile")
     if strict_count != _numeric_count(
-        row, "clusters_with_strict_detection", context=context
+        row, "episodes_with_strict_detection", context=context
     ):
         raise ValueError(f"{context}.detector_events strict count does not reconcile")
-    expected_anchor_counts = row.get("recovered_execution_clusters_by_anchor")
+    expected_anchor_counts = row.get("candidate_posture_episodes_by_anchor")
     observed_anchor_counts = {key: value for key, value in anchor_counts.items() if value}
     if expected_anchor_counts != observed_anchor_counts:
         raise ValueError(f"{context}.detector_events anchor counts do not reconcile")
@@ -248,9 +251,13 @@ def _observed_union_counts(
             raise ValueError(f"{context} requires string start and end timestamps")
         raw_events = _numeric_count(row, "raw_actor_rows_in_period", context=context)
         executions = _numeric_count(row, "recovered_execution_clusters", context=context)
-        withdrawals = _numeric_count(row, "clusters_with_matched_withdrawal", context=context)
-        strict = _numeric_count(row, "clusters_with_strict_detection", context=context)
-        if strict > withdrawals or withdrawals > executions:
+        cluster_withdrawals = _numeric_count(
+            row, "clusters_with_matched_withdrawal", context=context
+        )
+        episodes = _numeric_count(row, "candidate_posture_episodes", context=context)
+        withdrawals = _numeric_count(row, "episodes_with_matched_withdrawal", context=context)
+        strict = _numeric_count(row, "episodes_with_strict_detection", context=context)
+        if cluster_withdrawals > executions or strict > withdrawals or withdrawals > episodes:
             raise ValueError(f"{context} has inconsistent detector-stage counts")
         if not isinstance(row.get("identity_granularity_aligned"), bool):
             raise ValueError(f"{context}.identity_granularity_aligned must be boolean")
@@ -547,9 +554,9 @@ def _anchor_label(by_anchor: Any) -> str:
 
 
 def _outcome(row: Mapping[str, Any]) -> tuple[str, str]:
-    strict = _numeric_count(row, "clusters_with_strict_detection", context="window")
-    withdrawal = _numeric_count(row, "clusters_with_matched_withdrawal", context="window")
-    execution = _numeric_count(row, "recovered_execution_clusters", context="window")
+    strict = _numeric_count(row, "episodes_with_strict_detection", context="window")
+    withdrawal = _numeric_count(row, "episodes_with_matched_withdrawal", context="window")
+    execution = _numeric_count(row, "candidate_posture_episodes", context="window")
     if strict > 0:
         return "strict", "Sequenza stretta"
     if withdrawal > 0:
@@ -567,17 +574,18 @@ def _badge(value: bool, *, yes: str = "Sì", no: str = "No") -> str:
 
 def _render_detector_events(events: Sequence[Mapping[str, Any]]) -> str:
     if not events:
-        return '<span class="muted">Nessun cluster recuperato</span>'
+        return '<span class="muted">Nessun episodio candidato recuperato</span>'
     cards: list[str] = []
     for event in events:
         anchor = {
             "passive": "ancora passiva",
             "aggressive": "ancora aggressiva",
+            "mixed": "ancore passive e aggressive",
         }.get(str(event["execution_anchor_mode"]), "ancora non disponibile")
         gates = (
             ("ritiro rapido", event["gate_rapid_matched_withdrawal"]),
-            ("fill piccolo/ritiro", event["gate_small_fill_relative_to_withdrawal"]),
-            ("movimento pre-fill", event["gate_favorable_pre_fill_move"]),
+            ("esecuzione episodio/ritiro", event["gate_small_fill_relative_to_withdrawal"]),
+            ("movimento post-pubblicazione", event["gate_favorable_pre_fill_move"]),
             ("reversione post-cancel", event["gate_cancel_anchored_reversion"]),
         )
         gate_text = " · ".join(
@@ -681,8 +689,8 @@ def build_dashboard(
             matched_clusters = _numeric_count(
                 row, "clusters_with_matched_withdrawal", context="window"
             )
-            strict_clusters = _numeric_count(
-                row, "clusters_with_strict_detection", context="window"
+            strict_episodes = _numeric_count(
+                row, "episodes_with_strict_detection", context="window"
             )
             identity_aligned = row.get("identity_granularity_aligned") is True
             window_rows.append(
@@ -696,7 +704,7 @@ def build_dashboard(
                 f"{_badge(identity_aligned, yes='Allineata', no='Non allineata')}</td>"
                 f"<td>{_format_number(recovered_clusters)}<br><span class=\"muted\">{escape(_anchor_label(row.get('recovered_execution_clusters_by_anchor')))}</span></td>"
                 f"<td>{_badge(matched_clusters > 0)}<br><span class=\"muted\">{_format_number(matched_clusters)} cluster</span></td>"
-                f"<td>{_badge(strict_clusters > 0)}<br><span class=\"muted\">{_format_number(strict_clusters)} cluster</span></td>"
+                f"<td>{_badge(strict_episodes > 0)}<br><span class=\"muted\">{_format_number(strict_episodes)} episodi</span></td>"
                 f'<td><span class="outcome {outcome_key}">{escape(outcome_label)}</span></td>'
                 "</tr>"
             )
@@ -758,10 +766,10 @@ def build_dashboard(
                 row, "date_level_recovered_execution_clusters", context="date row"
             )
             daily_withdrawals = _numeric_count(
-                row, "date_level_clusters_with_matched_withdrawal", context="date row"
+                row, "date_level_episodes_with_matched_withdrawal", context="date row"
             )
             daily_strict = _numeric_count(
-                row, "date_level_clusters_with_strict_detection", context="date row"
+                row, "date_level_episodes_with_strict_detection", context="date row"
             )
             date_cards.append(
                 '<article class="date-card">'
@@ -769,8 +777,8 @@ def build_dashboard(
                 f"<h3>{_format_date(row.get('start'))}</h3></div>"
                 f'<div class="date-stat"><strong>{_format_number(daily_clusters)}</strong><span>cluster nella giornata</span></div>'
                 f'<div class="date-stat"><strong>{escape(_anchor_label(row.get("date_level_recovered_execution_clusters_by_anchor")))}</strong><span>per ancora</span></div>'
-                f'<div class="date-stat"><strong>{_format_number(daily_withdrawals)}</strong><span>con ritiro attribuito</span></div>'
-                f'<div class="date-stat"><strong>{_format_number(daily_strict)}</strong><span>sequenze strette</span></div>'
+                f'<div class="date-stat"><strong>{_format_number(daily_withdrawals)}</strong><span>episodi con ritiro attribuito</span></div>'
+                f'<div class="date-stat"><strong>{_format_number(daily_strict)}</strong><span>episodi stretti</span></div>'
                 '<p class="date-note">La fonte non fornisce un orario: questi valori descrivono la giornata, ma non misurano il richiamo dell’evento specifico.</p>'
                 "</article>"
             )

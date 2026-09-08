@@ -22,6 +22,9 @@ from spoofing_detection.lob.actor_identity import (
 )
 from spoofing_detection.lob.client_identity_audit import audit_missing_client_trading_capacity
 from spoofing_detection.lob.depth_kernel_calibration import load_empirical_kernel_weights
+from spoofing_detection.lob.episode_artifacts import (
+    episode_frames, episode_metadata, scientific_source_hashes, write_episode_artifacts,
+)
 from spoofing_detection.lob.enums import normalize_enum_code
 from spoofing_detection.lob.spoofing_metrics import (
     MSCI_DEFINITION,
@@ -557,7 +560,8 @@ def _write_summary_report(
     lines = [
         "# Multilevel top-n spoofing surveillance metrics",
         "",
-        "This report follows the active manuscript model. The scores are surveillance cues, not labels and not proof of intent.",
+        "This run uses the versioned episode implementation; historical manuscript tables have not been regenerated. These are surveillance cues, not proof of intent.",
+        "Primary joint results: candidate_episodes.parquet, episode_anchor_summary.parquet and actor_day_episode_summary.parquet. Cluster flags below are diagnostics, not independent episodes.",
         "",
         "## How to read this report",
         "",
@@ -701,7 +705,12 @@ def main(argv: list[str] | None = None) -> None:
     _write_parquet(result.rejected_executions, paths["rejected_executions"])
     _write_parquet(mcps_scores, paths["actor_mcps_scores"])
 
+    episode_paths = write_episode_artifacts(result.episode_result, args.output_dir)
+    paths.update(episode_paths)
     metadata: dict[str, Any] = {
+        **episode_metadata(),
+        "scientific_source_hashes": scientific_source_hashes(),
+        "generator_sha256": _sha256(Path(__file__)),
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "input": str(args.input),
         "quote_panel": str(args.quote_panel) if args.quote_panel is not None else None,
@@ -720,7 +729,8 @@ def main(argv: list[str] | None = None) -> None:
         "withdrawal_window_seconds": args.withdrawal_window_seconds,
         "reversion_horizon_seconds": args.reversion_horizon_seconds,
         "execution_cluster_max_gap_ms": args.execution_cluster_max_gap_ms,
-        "analytical_unit": "execution_cluster",
+        "analytical_unit": "candidate_posture_episode",
+        "diagnostic_unit": "execution_cluster",
         "raw_audit_unit": "child_fill_message",
         "max_deceptive_order_age_seconds": args.max_deceptive_order_age_seconds,
         "msci_definition": MSCI_DEFINITION,
@@ -771,10 +781,14 @@ def main(argv: list[str] | None = None) -> None:
         "event_metrics_include_unattributable_rows": True,
         "actor_scores_exclude_unattributable_rows": True,
         "market_orders_included": "aggressive" in args.execution_anchor_modes,
-        "event_selection": "selected_execution_anchor_clusters",
-        "behavioral_gate": (
+        "event_selection": "one_representative_row_per_spoofing_compatible_candidate_posture_episode",
+        "cluster_diagnostic_gate": (
             "rapid_attributed_cancel AND fill_qty_lt_withdrawn_qty AND favorable_pre_fill_mid_move AND "
             "positive_cancel_anchored_mid_reversion"
+        ),
+        "episode_behavioral_gate": (
+            "unique_attributed_withdrawal AND total_episode_execution_qty_lt_unique_withdrawn_qty AND "
+            "complete_positive_placement_anchored_favorable_move AND complete_positive_cancel_reversion"
         ),
         **_population_metadata(),
         "max_rows": args.max_rows,
@@ -808,14 +822,20 @@ def main(argv: list[str] | None = None) -> None:
                 ["execution_anchor_mode", "identity_level"],
                 flag_column="has_matched_deceptive_cancel_window",
             ),
-            "strict_sequence_by_anchor_and_identity": _grouped_counts(
+            "cluster_diagnostic_sequence_by_anchor_and_identity": _grouped_counts(
                 result.execution_metrics,
                 ["execution_anchor_mode", "identity_level"],
                 flag_column="spoofing_compatible_sequence",
             ),
+            "episode_strict_detection_by_representative_anchor_and_identity": _grouped_counts(
+                result.execution_metrics,
+                ["execution_anchor_mode", "identity_level"],
+                flag_column="episode_strict_detection",
+            ),
             "rows_missing_client_and_firm_identity": _missing_actor_identity_rows(raw_events_for_compute),
         },
         "row_counts": {
+            **{name: frame.height for name, frame in episode_frames(result.episode_result).items()},
             "input_rows_for_compute": raw_events_for_compute.height,
             "state_time_series": result.state_time_series.height,
             "execution_metrics": result.execution_metrics.height,

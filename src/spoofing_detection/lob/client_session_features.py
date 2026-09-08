@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from datetime import datetime, timezone
 
 import polars as pl
 
@@ -210,6 +211,12 @@ def compute_client_session_features(
 
 
 ACTOR_SESSION_FEATURE_SCHEMA = {
+    "partition_id": pl.String,
+    "event_date": pl.Date,
+    "episode_count": pl.UInt32,
+    "matched_episode_count": pl.UInt32,
+    "matched_episode_share": pl.Float64,
+    "strict_episode_count": pl.UInt32,
     "actor_key": pl.Utf8,
     "actor_id": pl.Utf8,
     "identity_level": pl.Utf8,
@@ -258,8 +265,20 @@ def compute_actor_session_features(
     executions = filter_attributable_actor_rows(executions)
     if executions.is_empty():
         return empty_actor_session_features()
+    if "partition_id" not in executions.columns:
+        executions = executions.with_columns(pl.lit("__legacy_unspecified__").alias("partition_id"))
+    if "event_date" not in executions.columns:
+        def event_day(value):
+            if value is None:
+                return None
+            ts = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+            if ts.tzinfo is not None:
+                ts = ts.astimezone(timezone.utc)
+            return ts.date()
+        dates = [event_day(v) for v in executions["event_ts"]] if "event_ts" in executions.columns else [None] * executions.height
+        executions = executions.with_columns(pl.Series("event_date", dates, dtype=pl.Date))
     if "execution_cluster_id" in executions.columns:
-        duplicate_keys = executions.select("execution_cluster_id", "execution_anchor_mode")
+        duplicate_keys = executions.select("partition_id", "event_date", "execution_cluster_id", "execution_anchor_mode")
         if duplicate_keys.is_duplicated().any():
             raise ValueError(
                 "execution_metrics must contain at most one row per "
@@ -280,7 +299,7 @@ def compute_actor_session_features(
             )
 
     rows: list[dict[str, object]] = []
-    for group in executions.partition_by(["actor_key", "execution_anchor_mode"], maintain_order=True):
+    for group in executions.partition_by(["partition_id", "event_date", "actor_key", "execution_anchor_mode"], maintain_order=True):
         identity: dict[str, object] = {}
         for column in identity_columns:
             values = group.get_column(column).drop_nulls().unique().to_list()
@@ -303,6 +322,32 @@ def compute_actor_session_features(
         )
         metric_row = metrics.row(0, named=True)
         metric_row.pop("client_id", None)
+        metric_row.update(
+            partition_id=group["partition_id"][0],
+            event_date=group["event_date"][0],
+            episode_count=None,
+            matched_episode_count=None,
+            matched_episode_share=None,
+            strict_episode_count=None,
+        )
+        if "episode_id" in group.columns:
+            episode_rows = group.filter(pl.col("episode_id").is_not_null())
+            metric_row["episode_count"] = episode_rows["episode_id"].n_unique()
+            for output, flag in (("matched_episode_count", "episode_has_matched_withdrawal"),
+                                 ("strict_episode_count", "spoofing_compatible_episode")):
+                if flag not in group.columns:
+                    raise ValueError(f"episode-aware executions missing {flag}")
+                episode_flags = episode_rows.select("episode_id", flag).unique()
+                if episode_flags["episode_id"].is_duplicated().any():
+                    raise ValueError(f"{flag} must be constant within each episode")
+                if episode_flags[flag].null_count():
+                    raise ValueError(f"episode-aware executions contain null {flag}")
+                metric_row[output] = episode_flags.filter(pl.col(flag))["episode_id"].n_unique()
+            metric_row["matched_episode_share"] = (
+                metric_row["matched_episode_count"] / metric_row["episode_count"]
+                if metric_row["episode_count"]
+                else None
+            )
         rows.append({**identity, **metric_row})
 
     return pl.DataFrame(rows, schema=ACTOR_SESSION_FEATURE_SCHEMA).sort(

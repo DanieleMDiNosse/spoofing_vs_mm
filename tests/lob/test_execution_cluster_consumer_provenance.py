@@ -38,6 +38,10 @@ def test_dashboard_uses_member_relation_for_noncontiguous_child_fills():
                 "child_fill_count": 2,
                 "withdrawal_profile_scale_event": 1.0,
                 "has_matched_deceptive_cancel_window": True,
+                "episode_id": "EP-noncontiguous",
+                "episode_has_matched_withdrawal": True,
+                "episode_strict_detection": False,
+                "is_episode_representative": True,
                 "execution_anchor_mode": "passive",
             }
         ]

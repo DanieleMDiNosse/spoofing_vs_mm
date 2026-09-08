@@ -17,6 +17,7 @@ from spoofing_detection.lob.actor_identity import (
     same_actor,
 )
 from spoofing_detection.lob.behavioral_gate import attach_spoofing_compatible_sequence_gate
+from spoofing_detection.lob.candidate_episodes import EpisodeResult, build_candidate_episodes
 from spoofing_detection.lob.config import LOBConfig
 from spoofing_detection.lob.execution_clusters import (
     classify_execution_anchor,
@@ -249,6 +250,7 @@ class ExploratoryMetricsResult:
     execution_cluster_members: pl.DataFrame
     execution_cancel_candidates: pl.DataFrame
     spoofing_compatible_events: pl.DataFrame
+    episode_result: EpisodeResult | None = None
 
 
 def infer_tick_size_from_best_quotes(panel: pl.DataFrame) -> float:
@@ -859,6 +861,8 @@ def _candidate_deceptive_order_summary(candidate_rows: list[dict[str, Any]]) -> 
             "candidate_deceptive_max_relative_depth_pre": 0.0,
             "candidate_deceptive_min_age_seconds_pre": None,
             "candidate_deceptive_first_seen_sort_index_min": None,
+            "candidate_deceptive_first_seen_sort_index_max": None,
+            "candidate_deceptive_placement_observed": False,
             "candidate_deceptive_order_ids_pre": "",
         }
 
@@ -908,6 +912,12 @@ def _candidate_deceptive_order_summary(candidate_rows: list[dict[str, Any]]) -> 
             if row["deceptive_order_first_seen_sort_index"] is not None
         ),
         "candidate_deceptive_order_ids_pre": ";".join(str(row["deceptive_order_id"]) for row in candidate_rows),
+        "candidate_deceptive_first_seen_sort_index_max": max(
+            int(row["deceptive_order_first_seen_sort_index"]) for row in candidate_rows
+        ),
+        "candidate_deceptive_placement_observed": all(
+            row.get("deceptive_order_placement_observed", True) for row in candidate_rows
+        ),
     }
 
 
@@ -1061,6 +1071,10 @@ def _stream_metric_inputs(
                 max_deceptive_order_age_seconds=max_deceptive_order_age_seconds,
                 empirical_kernel_weights=empirical_kernel_weights,
             )
+            for candidate in candidates:
+                first_index = int(candidate["deceptive_order_first_seen_sort_index"])
+                origin = events[first_index - 1]
+                candidate["deceptive_order_placement_observed"] = origin["event_class"] == "new_order"
             execution.update(_candidate_deceptive_order_summary(candidates))
             execution_rows.append(execution)
             candidate_deceptive_rows.extend(candidates)
@@ -1310,6 +1324,19 @@ def _state_group_cache(
     return cache
 
 
+def _states_on_day(values: list[dict[str, Any]], timestamp: datetime) -> list[dict[str, Any]]:
+    """Restrict even malformed multi-day partitions without repeated scans."""
+    if not values:
+        return []
+    by_day = values[0].get("_day_groups")
+    if by_day is None:
+        by_day = defaultdict(list)
+        for item in values:
+            by_day[item["_ts"].date()].append(item)
+        values[0]["_day_groups"] = by_day
+    return by_day.get(timestamp.date(), [])
+
+
 def _lookup_pre_state(values: list[dict[str, Any]], event_ts: datetime, sort_index: int | None) -> dict[str, Any] | None:
     if not values:
         return None
@@ -1449,19 +1476,26 @@ def attach_sci_window_metrics(
         post_target = None
         if event_ts is not None and cluster_end_ts is not None:
             post_target = cluster_end_ts + window
-            values = grouped_states.get((row.get("partition_id"), row.get("actor_key")), [])
+            values = _states_on_day(
+                grouped_states.get((row.get("partition_id"), row.get("actor_key")), []), event_ts
+            )
+            placement_index = row.get("candidate_deceptive_first_seen_sort_index_max")
+            # Legacy direct-call inputs may contain only the earliest placement.
+            if "candidate_deceptive_first_seen_sort_index_max" not in row:
+                placement_index = row.get("candidate_deceptive_first_seen_sort_index_min")
             posture_state = _lookup_state_at_or_after_index(
-                values,
-                int(row["candidate_deceptive_first_seen_sort_index_min"])
-                if row.get("candidate_deceptive_first_seen_sort_index_min") is not None
-                else None,
+                values, int(placement_index) if placement_index is not None else None,
             )
+            if (not row.get("candidate_deceptive_placement_observed", True)
+                or posture_state is None or placement_index is None or sort_index is None
+                or posture_state.get("sort_index") != int(placement_index)
+                or int(placement_index) >= int(sort_index)
+                or posture_state["_ts"] > event_ts):
+                posture_state = None
             pre_state = _lookup_pre_state(values, event_ts, int(sort_index) if sort_index is not None else None)
-            post_state = _lookup_post_state(
-                values,
-                post_target,
-                int(last_sort_index) if last_sort_index is not None else None,
-            )
+            if (post_target.date() == event_ts.date()
+                and _has_post_target_coverage(values, post_target, last_sort_index)):
+                post_state = _lookup_post_state(values, post_target, last_sort_index)
         pre_dwi = pre_state.get("DWI") if pre_state is not None else None
         post_dwi = post_state.get("DWI") if post_state is not None else None
         sci = abs(float(pre_dwi) - float(post_dwi)) if pre_dwi is not None and post_dwi is not None else None
@@ -1676,6 +1710,7 @@ def _build_execution_cancel_candidates(
                     cancel_ts is None
                     or cancel_sort_index <= cluster_last_sort_index
                     or not (cluster_end_ts <= cancel_ts <= end)
+                    or cancel_ts.date() != cluster_end_ts.date()
                 ):
                     continue
                 cancel_visible_qty = max(float(cancel.get("visible_qty_pre_cancel") or 0.0), 0.0)
@@ -1798,9 +1833,11 @@ def attach_cancel_anchored_reversion(
             continue
 
         target_ts = cancel_ts + timedelta(seconds=reversion_horizon_seconds)
-        values = grouped_states.get((candidate.get("partition_id"), candidate.get("actor_key")), [])
+        values = _states_on_day(
+            grouped_states.get((candidate.get("partition_id"), candidate.get("actor_key")), []), cancel_ts
+        )
         pre_state = _lookup_pre_state(values, cancel_ts, int(cancel_sort_index))
-        has_target_coverage = _has_post_target_coverage(
+        has_target_coverage = target_ts.date() == cancel_ts.date() and _has_post_target_coverage(
             values,
             target_ts,
             int(cancel_sort_index),
@@ -1920,6 +1957,9 @@ def _attach_direct_cancellation_window(
                 for cancel in candidates
                 if (cancel_ts := _parse_ts(cancel.get("event_ts"))) is not None
                 and event_ts < cancel_ts <= end
+                and cancel_ts.date() == event_ts.date()
+                and cancel.get("sort_index") is not None
+                and int(cancel["sort_index"]) > int(row.get("cluster_last_sort_index") or row.get("sort_index") or 0)
             ]
         matched = assigned_by_cluster.get(str(row.get("execution_cluster_id")), [])
         order_ids = ";".join(str(cancel["ORDERID"]) for cancel in matches)
@@ -2190,6 +2230,61 @@ def compute_exploratory_metrics(
         reversion_horizon_seconds=reversion_horizon_seconds,
     )
     execution_df, spoofing_compatible_events = attach_spoofing_compatible_sequence_gate(execution_df)
+    episode_result = build_candidate_episodes(execution_df, candidate_df, cancel_candidate_df)
+    # Cluster flags are diagnostics; episode outcomes are the joint primary unit.
+    membership = episode_result.members.select("partition_id", "execution_cluster_id", "episode_id")
+    execution_df = execution_df.join(membership, on=["partition_id", "execution_cluster_id"], how="left")
+    outcomes = episode_result.episodes.select(
+        "episode_id",
+        "spoofing_compatible_episode",
+        "cluster_count",
+        "mixed_anchor",
+        "episode_start_ts",
+        "episode_end_ts",
+        "total_execution_quantity",
+        "execution_vwap",
+        "withdrawn_quantity",
+        "withdrawal_to_execution_ratio",
+        "favorable_mid_move",
+        "post_cancel_mid_reversion",
+        "price_path_observed",
+        "gate_joint_smallness",
+        (pl.col("unique_withdrawal_count") > 0).alias("episode_has_matched_withdrawal"),
+    ).rename(
+        {
+            "cluster_count": "episode_cluster_count",
+            "mixed_anchor": "episode_mixed_anchor",
+            "episode_start_ts": "episode_start_ts",
+            "episode_end_ts": "episode_end_ts",
+            "total_execution_quantity": "episode_total_execution_quantity",
+            "execution_vwap": "episode_execution_vwap",
+            "withdrawn_quantity": "episode_withdrawn_quantity",
+            "withdrawal_to_execution_ratio": "episode_withdrawal_to_execution_ratio",
+            "favorable_mid_move": "episode_favorable_mid_move",
+            "post_cancel_mid_reversion": "episode_post_cancel_mid_reversion",
+            "price_path_observed": "episode_price_path_observed",
+            "gate_joint_smallness": "episode_gate_joint_smallness",
+        }
+    )
+    execution_df = execution_df.join(outcomes, on="episode_id", how="left")
+    representatives = (
+        membership.sort(["episode_id", "execution_cluster_id"])
+        .group_by("episode_id", maintain_order=True)
+        .first()
+        .select("episode_id", pl.col("execution_cluster_id").alias("episode_representative_cluster_id"))
+    )
+    execution_df = execution_df.join(representatives, on="episode_id", how="left").with_columns(
+        (
+            pl.col("episode_id").is_not_null()
+            & (pl.col("execution_cluster_id") == pl.col("episode_representative_cluster_id"))
+        ).alias("is_episode_representative")
+    ).with_columns(
+        (
+            pl.col("spoofing_compatible_episode").fill_null(False)
+            & pl.col("is_episode_representative")
+        ).alias("episode_strict_detection")
+    )
+    spoofing_compatible_events = execution_df.filter(pl.col("episode_strict_detection"))
     return ExploratoryMetricsResult(
         state_time_series=state_df,
         execution_metrics=execution_df,
@@ -2199,4 +2294,5 @@ def compute_exploratory_metrics(
         execution_cluster_members=member_df,
         execution_cancel_candidates=cancel_candidate_df,
         spoofing_compatible_events=spoofing_compatible_events,
+        episode_result=episode_result,
     )

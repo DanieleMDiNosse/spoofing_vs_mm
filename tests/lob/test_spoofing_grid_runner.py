@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
+from spoofing_detection.lob.candidate_episodes import build_candidate_episodes
+
 
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "spoofing_detection_parameters.json"
 
@@ -195,16 +197,21 @@ def test_grid_metadata_declares_gate_and_analytical_populations():
     module = load_grid_module()
 
     assert module._analysis_metadata() == {
-        "analytical_unit": "execution_cluster",
+        "analytical_unit": "candidate_posture_episode",
+        "diagnostic_unit": "execution_cluster",
         "raw_audit_unit": "child_fill_message",
-        "event_selection": "selected_execution_anchor_clusters",
-        "behavioral_gate": (
+        "event_selection": "one_representative_row_per_spoofing_compatible_candidate_posture_episode",
+        "cluster_diagnostic_gate": (
             "rapid_attributed_cancel AND fill_qty_lt_withdrawn_qty AND favorable_pre_fill_mid_move AND "
             "positive_cancel_anchored_mid_reversion"
         ),
-        "analytical_event_population": "all_selected_execution_anchor_clusters",
+        "episode_behavioral_gate": (
+            "unique_attributed_withdrawal AND total_episode_execution_qty_lt_unique_withdrawn_qty AND "
+            "complete_positive_placement_anchored_favorable_move AND complete_positive_cancel_reversion"
+        ),
+        "analytical_event_population": "candidate_posture_episodes",
         "mcps_population": "all_attributable_actor_execution_clusters_stratified_by_anchor",
-        "review_event_selection": "canonically_assigned_matched_withdrawal_clusters_only",
+        "review_event_selection": "one_representative_row_per_episode_with_unique_matched_withdrawal",
     }
 
 
@@ -250,24 +257,31 @@ def test_grid_runner_reuse_rejects_stale_input_hash(tmp_path: Path, monkeypatch)
     metadata_path = tmp_path / "metadata.json"
     expected = {
         "input_sha256": "current",
-        "kappa": 1.0,
-        "lambda_": 0.5,
+        "analysis_semantics_version": module.ANALYSIS_SEMANTICS_VERSION,
     }
+    paths = module._depth_output_paths(tmp_path, 3)
+    for name, path in paths.items():
+        if name != "dashboard":
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"cache fixture")
+    hashes = {"per_depth_artifact_hashes": {"3": {
+        name: module._sha256(path) for name, path in paths.items() if name != "dashboard"
+    }}}
     metadata_path.write_text(
-        json.dumps({**expected, "input_sha256": "stale", "depth_grid": [3]})
+        json.dumps({**expected, **hashes, "input_sha256": "stale", "depth_grid": [3]})
     )
     monkeypatch.setattr(module, "_depth_outputs_complete", lambda paths: True)
 
     assert not module._can_reuse_depth_outputs(
-        {},
+        paths,
         metadata_path=metadata_path,
         expected_metadata=expected,
         top_n=3,
     )
 
-    metadata_path.write_text(json.dumps({**expected, "depth_grid": [3]}))
+    metadata_path.write_text(json.dumps({**expected, **hashes, "depth_grid": [3]}))
     assert module._can_reuse_depth_outputs(
-        {},
+        paths,
         metadata_path=metadata_path,
         expected_metadata=expected,
         top_n=3,
@@ -315,6 +329,7 @@ def test_grid_runner_main_versions_actor_anchor_artifacts_and_audits(tmp_path: P
     ).write_parquet(input_path)
     empty = pl.DataFrame()
     result = SimpleNamespace(
+        episode_result=build_candidate_episodes(empty, empty, empty),
         state_time_series=pl.DataFrame({"actor_key": ["client_original:C1", "firm:F1"]}),
         execution_metrics=pl.DataFrame(
             {
@@ -322,6 +337,7 @@ def test_grid_runner_main_versions_actor_anchor_artifacts_and_audits(tmp_path: P
                 "identity_level": ["client_original", "firm"],
                 "has_matched_deceptive_cancel_window": [True, True],
                 "spoofing_compatible_sequence": [True, False],
+                "episode_strict_detection": [True, False],
             }
         ),
         candidate_deceptive_orders=empty,
@@ -394,7 +410,10 @@ def test_grid_runner_main_versions_actor_anchor_artifacts_and_audits(tmp_path: P
     assert metadata["actor_execution_audit"]["rejected_executions_by_reason"] == [
         {"reject_reason": "missing_actor_identity", "rows": 1}
     ]
-    assert metadata["actor_execution_audit"]["strict_sequence_by_anchor_and_identity"] == [
+    assert metadata["actor_execution_audit"]["cluster_diagnostic_sequence_by_anchor_and_identity"] == [
+        {"execution_anchor_mode": "passive", "identity_level": "client_original", "rows": 1}
+    ]
+    assert metadata["actor_execution_audit"]["episode_strict_detection_by_representative_anchor_and_identity"] == [
         {"execution_anchor_mode": "passive", "identity_level": "client_original", "rows": 1}
     ]
     assert metadata["actor_execution_audit"]["matched_withdrawal_by_anchor_and_identity"] == [

@@ -225,6 +225,18 @@ def test_audit_separates_subject_all_actor_union_and_date_only_recall(tmp_path):
             "gate_favorable_pre_fill_move": [False, True, True],
             "gate_cancel_anchored_reversion": [False, True, True],
             "spoofing_compatible_sequence": [False, True, True],
+            "episode_id": ["ep1", "ep2", "ep3"],
+            "episode_start_ts": [t0, t0.replace(second=1), t0.replace(second=1)],
+            "episode_end_ts": [t0, t0.replace(second=1), t0.replace(second=1)],
+            "episode_total_execution_quantity": [10.0, 5.0, 7.0],
+            "episode_execution_vwap": [100.0, 100.1, 100.2],
+            "episode_mixed_anchor": [False, False, False],
+            "episode_has_matched_withdrawal": [True, True, True],
+            "episode_gate_joint_smallness": [True, True, True],
+            "episode_price_path_observed": [True, True, True],
+            "episode_favorable_mid_move": [-0.1, 0.1, 0.1],
+            "episode_post_cancel_mid_reversion": [-0.1, 0.1, 0.1],
+            "spoofing_compatible_episode": [False, True, True],
         }
     ).write_parquet(metrics_path / "execution_metrics.parquet")
     pl.DataFrame(
@@ -281,6 +293,7 @@ def test_audit_separates_subject_all_actor_union_and_date_only_recall(tmp_path):
     assert len(detector_events) == 2
     assert detector_events[0] == {
         "event_alias": detector_events[0]["event_alias"],
+        "analytical_unit": "candidate_posture_episode",
         "cluster_start": "2024-06-13T10:00:00",
         "cluster_end": "2024-06-13T10:00:00",
         "execution_anchor_mode": "passive",
@@ -346,21 +359,45 @@ def test_audit_separates_subject_all_actor_union_and_date_only_recall(tmp_path):
     assert date_only["union_timed_periods"] == 0
     assert date_only["union_periods_with_recovered_execution"] == 0
 
+    metrics_file = paths.metrics / "execution_metrics.parquet"
+    invalid_metrics = pl.read_parquet(metrics_file).with_columns(
+        pl.when(pl.col("spoofing_compatible_episode"))
+        .then(pl.lit(None, dtype=pl.String))
+        .otherwise(pl.col("episode_id"))
+        .alias("episode_id")
+    )
+    invalid_metrics.write_parquet(metrics_file)
+    with pytest.raises(ValueError, match="non-null episode_id"):
+        module._audit_dataset(
+            "TEST",
+            [
+                module.ExternalAlert(
+                    "TEST",
+                    "F1",
+                    t0.replace(hour=0),
+                    t0.replace(hour=0),
+                    date_level=True,
+                )
+            ],
+            paths,
+        )
 
-@pytest.mark.parametrize(
-    ("field", "value", "message"),
-    [
-        ("has_matched_deceptive_cancel_window", None, "must be boolean"),
-        ("execution_side", None, "must be a non-empty string"),
-        ("execution_quantity", float("nan"), "must be positive and finite"),
-    ],
-)
-def test_detector_event_details_rejects_missing_or_invalid_scientific_values(
-    field: str, value: object, message: str
-) -> None:
-    metric = {
+
+def _valid_episode_metric() -> dict[str, object]:
+    return {
         "actor_key": "client_original:101",
         "execution_cluster_id": "cluster-1",
+        "episode_id": "episode-1",
+        "episode_start_ts": datetime(2024, 6, 13, 10, 0, 0),
+        "episode_end_ts": datetime(2024, 6, 13, 10, 0, 1),
+        "episode_total_execution_quantity": 10.0,
+        "episode_execution_vwap": 100.0,
+        "episode_mixed_anchor": False,
+        "episode_has_matched_withdrawal": True,
+        "episode_gate_joint_smallness": True,
+        "episode_price_path_observed": True,
+        "episode_favorable_mid_move": 0.1,
+        "episode_post_cancel_mid_reversion": 0.1,
         "cluster_start_ts": datetime(2024, 6, 13, 10, 0, 0),
         "cluster_end_ts": datetime(2024, 6, 13, 10, 0, 1),
         "execution_anchor_mode": "aggressive",
@@ -373,7 +410,43 @@ def test_detector_event_details_rejects_missing_or_invalid_scientific_values(
         "gate_favorable_pre_fill_move": True,
         "gate_cancel_anchored_reversion": True,
         "spoofing_compatible_sequence": True,
+        "spoofing_compatible_episode": True,
     }
+
+
+def test_detector_event_details_emit_one_record_per_episode() -> None:
+    first = _valid_episode_metric()
+    clusters = [
+        {**first, "execution_cluster_id": f"cluster-{index}"}
+        for index in range(100)
+    ]
+
+    details = module._detector_event_details(pl.DataFrame(clusters), b"test-key")
+
+    assert len(details) == 1
+    assert details[0]["analytical_unit"] == "candidate_posture_episode"
+
+
+def test_episode_metrics_reject_strict_row_without_episode_id() -> None:
+    metric = _valid_episode_metric()
+    metric["episode_id"] = None
+
+    with pytest.raises(ValueError, match="non-null episode_id"):
+        module._episode_metrics(pl.DataFrame([metric]))
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("episode_has_matched_withdrawal", None, "must be boolean"),
+        ("execution_side", None, "must be a non-empty string"),
+        ("episode_total_execution_quantity", float("nan"), "must be positive and finite"),
+    ],
+)
+def test_detector_event_details_rejects_missing_or_invalid_scientific_values(
+    field: str, value: object, message: str
+) -> None:
+    metric = _valid_episode_metric()
     metric[field] = value
 
     with pytest.raises(ValueError, match=message):

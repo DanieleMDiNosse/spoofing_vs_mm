@@ -46,13 +46,17 @@ def _window(
         "recovered_child_fill_rows": 4,
         "recovered_execution_clusters": 1,
         "recovered_execution_clusters_by_anchor": {anchor: 1},
+        "candidate_posture_episodes": 1,
+        "candidate_posture_episodes_by_anchor": {anchor: 1},
         "clusters_with_matched_withdrawal": matched_withdrawal,
-        "clusters_with_strict_detection": strict,
+        "episodes_with_matched_withdrawal": matched_withdrawal,
+        "episodes_with_strict_detection": strict,
         "detector_events": [
             {
                 "event_alias": "detector_event_" + (
                     "a" if instrument == "FERRARI" else "b"
                 ) * 12,
+                "analytical_unit": "candidate_posture_episode",
                 "cluster_start": "2024-04-23T14:41:03.125000",
                 "cluster_end": "2024-04-23T14:41:03.250000",
                 "execution_anchor_mode": anchor,
@@ -197,7 +201,13 @@ def _report() -> dict[str, Any]:
                             "passive": 27,
                         },
                         "date_level_clusters_with_matched_withdrawal": 1,
-                        "date_level_clusters_with_strict_detection": 0,
+                        "date_level_candidate_posture_episodes": 2,
+                        "date_level_candidate_posture_episodes_by_anchor": {
+                            "aggressive": 1,
+                            "passive": 1,
+                        },
+                        "date_level_episodes_with_matched_withdrawal": 1,
+                        "date_level_episodes_with_strict_detection": 0,
                     }
                 ],
                 "metrics_provenance": {
@@ -249,7 +259,7 @@ def test_validate_report_rejects_detector_event_count_mismatch():
     report = _report()
     report["datasets"]["FERRARI"]["source_period_results"][0]["detector_events"] = []
 
-    with pytest.raises(ValueError, match="detector_events.*recovered_execution_clusters"):
+    with pytest.raises(ValueError, match="detector_events.*candidate_posture_episodes"):
         _dashboard.build_dashboard(report)
 
 

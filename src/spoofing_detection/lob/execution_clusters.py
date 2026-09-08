@@ -228,6 +228,8 @@ def can_extend_execution_cluster(
         return False
     if not _same_actor(cluster, details.actor) or not _compatible_sweep(cluster, details):
         return False
+    if details.timestamp.date() != cluster.start_ts.date():
+        return False
     gap_ms = (details.timestamp - cluster.end_ts).total_seconds() * 1_000.0
     return 0 <= gap_ms <= max_gap_ms
 
@@ -318,8 +320,17 @@ def finalize_execution_cluster(cluster: PendingExecutionCluster, *, gap_ms: int)
     price_level_count = len(set(execution_prices))
     passive = cluster.execution_anchor_mode == "passive"
     aggressive = cluster.execution_anchor_mode == "aggressive"
+    smallness = {}
+    for scope in ("market", "actor"):
+        denominator = _finite_positive(cluster.first_metric_row.get(f"same_level_{scope}_visible_qty_pre"))
+        # Fixed first-fill queue benchmark; replenishment can make this exceed 1.
+        smallness[f"smallness_fraction_{scope}_level"] = (
+            cluster.fill_qty / denominator if passive and denominator is not None else None
+        )
     cluster_row = {
         **cluster.first_metric_row,
+        **smallness,
+        "smallness_definition": "cluster_quantity_over_first_fill_pre_queue_v1",
         "execution_cluster_id": cluster_id,
         "partition_id": cluster.partition_id,
         "actor_key": cluster.actor.actor_key,
@@ -364,10 +375,10 @@ def finalize_execution_cluster(cluster: PendingExecutionCluster, *, gap_ms: int)
             cluster.first_metric_row.get("same_level_actor_visible_qty_pre") if passive else None
         ),
         "passive_smallness_fraction_market_level": (
-            cluster.first_metric_row.get("smallness_fraction_market_level") if passive else None
+            smallness["smallness_fraction_market_level"]
         ),
         "passive_smallness_fraction_actor_level": (
-            cluster.first_metric_row.get("smallness_fraction_actor_level") if passive else None
+            smallness["smallness_fraction_actor_level"]
         ),
         "aggressive_execution_quantity": cluster.fill_qty if aggressive else None,
         "aggressive_execution_vwap": vwap if aggressive else None,

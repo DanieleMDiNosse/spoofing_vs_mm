@@ -475,59 +475,82 @@ def _required_positive_finite_float(value: Any, *, field: str) -> float:
     return result
 
 
+def _episode_metrics(metrics: pl.DataFrame) -> pl.DataFrame:
+    if metrics.filter(
+        pl.col("spoofing_compatible_episode").fill_null(False) & pl.col("episode_id").is_null()
+    ).height:
+        raise ValueError("strict detector episode must have a non-null episode_id")
+    return (
+        metrics.filter(pl.col("episode_id").is_not_null())
+        .with_columns(
+            pl.when(pl.col("episode_mixed_anchor").fill_null(False))
+            .then(pl.lit("mixed"))
+            .otherwise(pl.col("execution_anchor_mode"))
+            .alias("episode_anchor_mode")
+        )
+        .sort(
+        ["cluster_start_ts", "cluster_end_ts", "execution_anchor_mode", "execution_cluster_id"]
+        )
+        .unique(subset="episode_id", keep="first", maintain_order=True)
+    )
+
+
 def _detector_event_details(metrics: pl.DataFrame, alias_key: bytes) -> list[dict[str, Any]]:
     details: list[dict[str, Any]] = []
-    for metric in metrics.sort(
-        ["cluster_start_ts", "cluster_end_ts", "execution_anchor_mode", "execution_cluster_id"]
-    ).to_dicts():
+    ordered = _episode_metrics(metrics)
+    for metric in ordered.to_dicts():
         actor_key = _required_nonempty_string(metric["actor_key"], field="actor_key")
-        cluster_id = _required_nonempty_string(
-            metric["execution_cluster_id"], field="execution_cluster_id"
+        episode_id = _required_nonempty_string(
+            metric["episode_id"], field="episode_id"
         )
         details.append(
             {
-                "event_alias": _detector_event_alias(actor_key, cluster_id, alias_key),
+                "event_alias": _detector_event_alias(actor_key, episode_id, alias_key),
+                "analytical_unit": "candidate_posture_episode",
                 "cluster_start": _required_timestamp(
-                    metric["cluster_start_ts"], field="cluster_start_ts"
+                    metric["episode_start_ts"], field="episode_start_ts"
                 ),
                 "cluster_end": _required_timestamp(
-                    metric["cluster_end_ts"], field="cluster_end_ts"
+                    metric["episode_end_ts"], field="episode_end_ts"
                 ),
                 "execution_anchor_mode": _required_nonempty_string(
-                    metric["execution_anchor_mode"], field="execution_anchor_mode"
+                    metric["episode_anchor_mode"], field="episode_anchor_mode"
                 ),
                 "execution_side": _required_nonempty_string(
                     metric["execution_side"], field="execution_side"
                 ),
                 "execution_quantity": _required_positive_finite_float(
-                    metric["execution_quantity"], field="execution_quantity"
+                    metric["episode_total_execution_quantity"],
+                    field="episode_total_execution_quantity",
                 ),
                 "execution_vwap": _required_positive_finite_float(
-                    metric["execution_vwap"], field="execution_vwap"
+                    metric["episode_execution_vwap"], field="episode_execution_vwap"
                 ),
                 "has_matched_withdrawal": _required_bool(
-                    metric["has_matched_deceptive_cancel_window"],
-                    field="has_matched_deceptive_cancel_window",
+                    metric["episode_has_matched_withdrawal"],
+                    field="episode_has_matched_withdrawal",
                 ),
                 "gate_rapid_matched_withdrawal": _required_bool(
-                    metric["gate_rapid_matched_withdrawal"],
-                    field="gate_rapid_matched_withdrawal",
+                    metric["episode_has_matched_withdrawal"],
+                    field="episode_has_matched_withdrawal",
                 ),
                 "gate_small_fill_relative_to_withdrawal": _required_bool(
-                    metric["gate_small_fill_relative_to_withdrawal"],
-                    field="gate_small_fill_relative_to_withdrawal",
+                    metric["episode_gate_joint_smallness"],
+                    field="episode_gate_joint_smallness",
                 ),
                 "gate_favorable_pre_fill_move": _required_bool(
-                    metric["gate_favorable_pre_fill_move"],
-                    field="gate_favorable_pre_fill_move",
+                    metric["episode_price_path_observed"]
+                    and metric["episode_favorable_mid_move"] > 0,
+                    field="episode_favorable_mid_move_positive",
                 ),
                 "gate_cancel_anchored_reversion": _required_bool(
-                    metric["gate_cancel_anchored_reversion"],
-                    field="gate_cancel_anchored_reversion",
+                    metric["episode_price_path_observed"]
+                    and metric["episode_post_cancel_mid_reversion"] > 0,
+                    field="episode_post_cancel_mid_reversion_positive",
                 ),
                 "strict_detection": _required_bool(
-                    metric["spoofing_compatible_sequence"],
-                    field="spoofing_compatible_sequence",
+                    metric["spoofing_compatible_episode"],
+                    field="spoofing_compatible_episode",
                 ),
             }
         )
@@ -574,10 +597,18 @@ def _audit_scope(
         resolution,
         external_actor_id,
     )
+    all_episodes = _episode_metrics(all_metrics)
+    actor_episodes = _episode_metrics(actor_metrics)
     all_matched = all_metrics.filter(pl.col("has_matched_deceptive_cancel_window").fill_null(False))
     matched = actor_metrics.filter(pl.col("has_matched_deceptive_cancel_window").fill_null(False))
-    all_strict = all_metrics.filter(pl.col("spoofing_compatible_sequence").fill_null(False))
-    strict = actor_metrics.filter(pl.col("spoofing_compatible_sequence").fill_null(False))
+    all_matched_episodes = all_episodes.filter(
+        pl.col("episode_has_matched_withdrawal").fill_null(False)
+    )
+    matched_episodes = actor_episodes.filter(
+        pl.col("episode_has_matched_withdrawal").fill_null(False)
+    )
+    all_strict = all_episodes.filter(pl.col("spoofing_compatible_episode").fill_null(False))
+    strict = actor_episodes.filter(pl.col("spoofing_compatible_episode").fill_null(False))
     all_rejected = _filter_alerts(rejected, "event_ts", alerts)
     actor_rejected = _subject_rows(all_rejected, resolution, external_actor_id)
     detector_actor_keys = (
@@ -607,15 +638,22 @@ def _audit_scope(
         "recovered_execution_clusters_by_anchor": _counts_by(
             actor_metrics, "execution_anchor_mode"
         ),
+        "candidate_posture_episodes": actor_episodes.height,
+        "candidate_posture_episodes_by_anchor": _counts_by(
+            actor_episodes, "episode_anchor_mode"
+        ),
         "clusters_with_matched_withdrawal": matched.height,
-        "clusters_with_strict_detection": strict.height,
+        "episodes_with_matched_withdrawal": matched_episodes.height,
+        "episodes_with_strict_detection": strict.height,
         "rejected_execution_rows": actor_rejected.height,
         "rejected_execution_rows_by_anchor": _counts_by(actor_rejected, "execution_anchor_mode"),
         "rejected_execution_rows_by_reason": _counts_by(actor_rejected, "reject_reason"),
         "all_actor_recovered_child_fill_rows": all_members.height,
         "all_actor_recovered_execution_clusters": all_metrics.height,
+        "all_actor_candidate_posture_episodes": all_episodes.height,
         "all_actor_clusters_with_matched_withdrawal": all_matched.height,
-        "all_actor_clusters_with_strict_detection": all_strict.height,
+        "all_actor_episodes_with_matched_withdrawal": all_matched_episodes.height,
+        "all_actor_episodes_with_strict_detection": all_strict.height,
         "all_actor_rejected_execution_rows": all_rejected.height,
         "all_actor_rejected_execution_rows_by_reason": _counts_by(
             all_rejected, "reject_reason"
@@ -639,7 +677,7 @@ def _detector_outcome(row: dict[str, Any], *, date_level: bool) -> str:
         return "no_recovered_execution_cluster"
     if row["clusters_with_matched_withdrawal"] == 0:
         return "no_matched_withdrawal"
-    if row["clusters_with_strict_detection"] == 0:
+    if row["episodes_with_strict_detection"] == 0:
         return "strict_behavioral_gates_not_satisfied"
     return "strict_detection"
 
@@ -698,7 +736,18 @@ def _audit_dataset(
         "gate_rapid_matched_withdrawal",
         "gate_small_fill_relative_to_withdrawal",
         "has_matched_deceptive_cancel_window",
-        "spoofing_compatible_sequence",
+        "episode_id",
+        "episode_start_ts",
+        "episode_end_ts",
+        "episode_total_execution_quantity",
+        "episode_execution_vwap",
+        "episode_mixed_anchor",
+        "episode_has_matched_withdrawal",
+        "episode_gate_joint_smallness",
+        "episode_price_path_observed",
+        "episode_favorable_mid_move",
+        "episode_post_cancel_mid_reversion",
+        "spoofing_compatible_episode",
     }
     required_rejected = {"actor_key", "event_ts", "execution_anchor_mode", "reject_reason"}
     if missing := sorted(required_member - set(members.columns)):
@@ -757,15 +806,20 @@ def _audit_dataset(
                 "recovered_child_fill_rows_by_anchor",
                 "recovered_execution_clusters",
                 "recovered_execution_clusters_by_anchor",
+                "candidate_posture_episodes",
+                "candidate_posture_episodes_by_anchor",
                 "clusters_with_matched_withdrawal",
-                "clusters_with_strict_detection",
+                "episodes_with_matched_withdrawal",
+                "episodes_with_strict_detection",
                 "rejected_execution_rows",
                 "rejected_execution_rows_by_anchor",
                 "rejected_execution_rows_by_reason",
                 "all_actor_recovered_child_fill_rows",
                 "all_actor_recovered_execution_clusters",
+                "all_actor_candidate_posture_episodes",
                 "all_actor_clusters_with_matched_withdrawal",
-                "all_actor_clusters_with_strict_detection",
+                "all_actor_episodes_with_matched_withdrawal",
+                "all_actor_episodes_with_strict_detection",
                 "all_actor_rejected_execution_rows",
                 "all_actor_rejected_execution_rows_by_reason",
             ):
@@ -827,11 +881,11 @@ def _audit_dataset(
                 union_row["clusters_with_matched_withdrawal"] > 0
             )
             totals["union_periods_with_strict_subject_scope_detection"] += int(
-                union_row["clusters_with_strict_detection"] > 0
+                union_row["episodes_with_strict_detection"] > 0
             )
             totals["identity_aligned_union_periods_with_strict_detection"] += int(
                 union_row["identity_granularity_aligned"]
-                and union_row["clusters_with_strict_detection"] > 0
+                and union_row["episodes_with_strict_detection"] > 0
             )
 
     return {
@@ -853,14 +907,14 @@ def _audit_dataset(
             row["clusters_with_matched_withdrawal"] > 0 for row in union_rows
         ),
         "union_periods_with_strict_subject_scope_detection": sum(
-            row["clusters_with_strict_detection"] > 0 for row in union_rows
+            row["episodes_with_strict_detection"] > 0 for row in union_rows
         ),
         "identity_aligned_union_timed_periods": sum(
             row["identity_granularity_aligned"] for row in union_rows
         ),
         "identity_aligned_union_periods_with_strict_detection": sum(
             row["identity_granularity_aligned"]
-            and row["clusters_with_strict_detection"] > 0
+            and row["episodes_with_strict_detection"] > 0
             for row in union_rows
         ),
         "identity_unaligned_union_timed_periods": sum(
@@ -868,7 +922,7 @@ def _audit_dataset(
         ),
         "identity_unaligned_union_periods_with_strict_subject_scope_detection": sum(
             not row["identity_granularity_aligned"]
-            and row["clusters_with_strict_detection"] > 0
+            and row["episodes_with_strict_detection"] > 0
             for row in union_rows
         ),
         "per_pseudonymized_actor": dict(sorted(actor_totals.items())),

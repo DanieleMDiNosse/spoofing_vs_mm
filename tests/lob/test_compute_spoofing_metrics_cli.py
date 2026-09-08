@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
+from spoofing_detection.lob.candidate_episodes import build_candidate_episodes
+
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "compute_spoofing_metrics.py"
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "spoofing_detection_parameters.json"
@@ -413,6 +415,7 @@ def test_main_versions_actor_anchor_artifacts_and_audit_metadata(tmp_path: Path,
         }
     )
     result = SimpleNamespace(
+        episode_result=build_candidate_episodes(empty, empty, empty),
         state_time_series=pl.DataFrame({"actor_key": ["client_original:C1", "firm:F1"]}),
         execution_metrics=executions,
         candidate_deceptive_orders=empty,

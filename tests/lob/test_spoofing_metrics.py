@@ -871,6 +871,11 @@ def test_attach_sci_window_metrics_accepts_post_event_state_at_cluster_last_sort
         }
     )
 
+    # Coverage after the target is necessary to carry index 10 forward.
+    states = pl.concat([states, states.tail(1).with_columns(
+        pl.lit(11, dtype=pl.Int64).alias("sort_index"),
+        pl.lit(datetime(2024, 1, 1, 12, 0, 12)).alias("event_ts"),
+    )])
     out = attach_sci_window_metrics(executions, states, window_seconds=1.0)
 
     assert out.item(0, "has_post_window_state") is True
@@ -1081,6 +1086,11 @@ def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
         ]
     )
 
+    # The original fixture stopped before the requested observation horizon.
+    df = pl.concat([df, pl.DataFrame([raw_event(
+        7, 1, "BFUTURE", 1, 99.8, 5, 5, "C1",
+        bookout="2024-01-02 09:30:07.000000",
+    )])], how="diagonal_relaxed")
     result = compute_exploratory_metrics(
         df,
         top_n=2,

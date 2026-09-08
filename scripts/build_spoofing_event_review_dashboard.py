@@ -377,7 +377,13 @@ def _prepare_review_events(
 ) -> list[dict[str, Any]]:
     if execution_metrics.is_empty():
         return []
-    required = {"has_matched_deceptive_cancel_window", "execution_anchor_mode"}
+    required = {
+        "episode_id",
+        "episode_has_matched_withdrawal",
+        "episode_strict_detection",
+        "is_episode_representative",
+        "execution_anchor_mode",
+    }
     missing = sorted(required - set(execution_metrics.columns))
     if missing:
         raise ValueError(f"execution metrics missing required columns: {missing}")
@@ -392,7 +398,10 @@ def _prepare_review_events(
         "aggressive",
     }:
         raise ValueError("execution_anchor_mode must be passive or aggressive for every row")
-    matched = execution_metrics.filter(pl.col("has_matched_deceptive_cancel_window"))
+    matched = execution_metrics.filter(
+        pl.col("is_episode_representative")
+        & pl.col("episode_has_matched_withdrawal")
+    )
     sort_key = "cluster_first_sort_index" if "execution_cluster_id" in matched.columns and "cluster_first_sort_index" in matched.columns else "sort_index"
     ranking_column = next(
         (
@@ -422,22 +431,43 @@ def _prepare_review_events(
     out = []
     for row in matched.iter_rows(named=True):
         actor_key, actor_id, identity_level = _review_actor_fields(row)
-        candidate_ids = _split_ids(row.get("candidate_deceptive_order_ids_pre"))
-        matched_ids = _split_ids(row.get("matched_deceptive_cancel_order_ids_window"))
+        episode_id = str(row["episode_id"])
+        episode_rows = execution_metrics.filter(pl.col("episode_id") == episode_id)
+        candidate_sources = (
+            episode_rows["candidate_deceptive_order_ids_pre"].to_list()
+            if "candidate_deceptive_order_ids_pre" in episode_rows.columns
+            else []
+        )
+        matched_sources = (
+            episode_rows["matched_deceptive_cancel_order_ids_window"].to_list()
+            if "matched_deceptive_cancel_order_ids_window" in episode_rows.columns
+            else []
+        )
+        candidate_ids = {
+            value
+            for raw_ids in candidate_sources
+            for value in _split_ids(raw_ids)
+        }
+        matched_ids = {
+            value
+            for raw_ids in matched_sources
+            for value in _split_ids(raw_ids)
+        }
         sort_index = row.get("cluster_first_sort_index", row.get("sort_index"))
         if sort_index is None:
             raise ValueError("matched execution cluster is missing cluster_first_sort_index")
         cluster_id = row.get("execution_cluster_id")
-        review_id = str(cluster_id) if cluster_id is not None else f"S{int(sort_index)}"
+        review_id = episode_id
         child_indexes = {
             int(value)
             for value in str(row.get("child_fill_sort_indices") or "").split(";")
             if value.isdigit()
         }
         if cluster_id is not None and cluster_members is not None and not cluster_members.is_empty():
+            episode_cluster_ids = episode_rows["execution_cluster_id"].cast(pl.String).to_list()
             child_indexes = set(
                 cluster_members.filter(
-                    pl.col("execution_cluster_id").cast(pl.String) == str(cluster_id)
+                    pl.col("execution_cluster_id").cast(pl.String).is_in(episode_cluster_ids)
                 )["child_sort_index"].cast(pl.Int64).to_list()
             )
         if cluster_id is not None and not child_indexes:
@@ -472,8 +502,9 @@ def _review_population_summary(
     visible_review_events: pl.DataFrame,
 ) -> dict[str, int]:
     required = {
-        "has_matched_deceptive_cancel_window",
-        "spoofing_compatible_sequence",
+        "episode_id",
+        "episode_has_matched_withdrawal",
+        "episode_strict_detection",
     }
     missing = sorted(required - set(execution_metrics.columns))
     if missing:
@@ -484,15 +515,17 @@ def _review_population_summary(
 
     return {
         "reconstructed_clusters": execution_metrics.height,
+        "reconstructed_episodes": execution_metrics.get_column("episode_id").drop_nulls().n_unique(),
         "review_candidates": int(
-            execution_metrics.get_column("has_matched_deceptive_cancel_window").fill_null(False).sum()
+            execution_metrics.filter(pl.col("episode_has_matched_withdrawal"))
+            .get_column("episode_id").n_unique()
         ),
         "compatible_sequences": int(
-            execution_metrics.get_column("spoofing_compatible_sequence").fill_null(False).sum()
+            execution_metrics.get_column("episode_strict_detection").fill_null(False).sum()
         ),
         "displayed_candidates": visible_review_events.height,
         "displayed_compatible_sequences": int(
-            visible_review_events.get_column("spoofing_compatible_sequence").fill_null(False).sum()
+            visible_review_events.get_column("episode_strict_detection").fill_null(False).sum()
         ),
     }
 

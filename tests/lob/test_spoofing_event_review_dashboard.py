@@ -688,6 +688,10 @@ def test_prepare_review_events_ranks_by_canonical_withdrawal_scale():
         {
             "sort_index": [1, 2, 3],
             "has_matched_deceptive_cancel_window": [True, True, True],
+            "episode_id": ["EP1", "EP2", "EP3"],
+            "episode_has_matched_withdrawal": [True, True, True],
+            "episode_strict_detection": [False, True, False],
+            "is_episode_representative": [True, True, True],
             "WMSCI_event": [1.0, 10.0, 5.0],
             "MSCI_resting_profile": [1.8, 0.2, 0.9],
             "MSCI": [-99.0, -99.0, -99.0],
@@ -697,7 +701,7 @@ def test_prepare_review_events_ranks_by_canonical_withdrawal_scale():
 
     review_events = _review._prepare_review_events(metrics, max_events=None)
 
-    assert [row["review_event_id"] for row in review_events] == ["S2", "S3", "S1"]
+    assert [row["review_event_id"] for row in review_events] == ["EP2", "EP3", "EP1"]
 
 
 def test_prepare_review_events_rejects_missing_wmsci_ranking_metric():
@@ -705,6 +709,10 @@ def test_prepare_review_events_rejects_missing_wmsci_ranking_metric():
         {
             "sort_index": [1],
             "has_matched_deceptive_cancel_window": [True],
+            "episode_id": ["EP1"],
+            "episode_has_matched_withdrawal": [True],
+            "episode_strict_detection": [False],
+            "is_episode_representative": [True],
             "MSCI_resting_profile": [1.8],
             "execution_anchor_mode": ["passive"],
         }
@@ -761,14 +769,16 @@ def test_dashboard_opens_with_one_plain_language_wmsci_msci_guide_and_example(tm
 def test_review_population_summary_distinguishes_all_clusters_candidates_and_complete_sequences():
     execution_metrics = pl.DataFrame(
         {
-            "has_matched_deceptive_cancel_window": [True, True, False, False],
-            "spoofing_compatible_sequence": [True, False, False, False],
+            "episode_id": ["EP1", "EP1", "EP2", None],
+            "episode_has_matched_withdrawal": [True, True, False, False],
+            "episode_strict_detection": [True, False, False, False],
         }
     )
     visible_review_events = pl.DataFrame(
         {
-            "has_matched_deceptive_cancel_window": [True],
-            "spoofing_compatible_sequence": [True],
+            "episode_id": ["EP1"],
+            "episode_has_matched_withdrawal": [True],
+            "episode_strict_detection": [True],
         }
     )
 
@@ -777,7 +787,8 @@ def test_review_population_summary_distinguishes_all_clusters_candidates_and_com
         visible_review_events,
     ) == {
         "reconstructed_clusters": 4,
-        "review_candidates": 2,
+        "reconstructed_episodes": 2,
+        "review_candidates": 1,
         "compatible_sequences": 1,
         "displayed_candidates": 1,
         "displayed_compatible_sequences": 1,
@@ -1042,7 +1053,8 @@ def test_parse_args_supports_key_event_queue_snapshots(tmp_path):
 
 def test_cluster_review_ids_and_dashboard_show_raw_child_fills_and_refresh_timestamp(tmp_path):
     cluster_id = "EC000000010-000000011"
-    metrics = pl.DataFrame([{"execution_cluster_id": cluster_id, "cluster_first_sort_index": 10, "cluster_last_sort_index": 11, "child_fill_count": 2, "fill_qty": 30.0, "withdrawal_profile_scale_event": 1.0, "has_matched_deceptive_cancel_window": True, "execution_anchor_mode": "passive"}])
+    episode_id = "EP-example"
+    metrics = pl.DataFrame([{"episode_id": episode_id, "episode_has_matched_withdrawal": True, "episode_strict_detection": False, "is_episode_representative": True, "execution_cluster_id": cluster_id, "cluster_first_sort_index": 10, "cluster_last_sort_index": 11, "child_fill_count": 2, "fill_qty": 30.0, "withdrawal_profile_scale_event": 1.0, "has_matched_deceptive_cancel_window": True, "execution_anchor_mode": "passive"}])
     review_events = _review._prepare_review_events(
         metrics,
         None,
@@ -1053,7 +1065,7 @@ def test_cluster_review_ids_and_dashboard_show_raw_child_fills_and_refresh_times
             ]
         ),
     )
-    assert review_events[0]["review_event_id"] == cluster_id
+    assert review_events[0]["review_event_id"] == episode_id
     assert review_events[0]["sort_index"] == 10
     path = tmp_path / "dashboard.html"
     events, event_log, queue = _minimal_dashboard_frames()

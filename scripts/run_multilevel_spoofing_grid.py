@@ -18,6 +18,10 @@ if str(SRC_DIR) not in sys.path:
 
 from spoofing_detection.lob.client_identity_audit import audit_missing_client_trading_capacity
 from spoofing_detection.lob.depth_kernel_calibration import load_empirical_kernel_weights
+from spoofing_detection.lob.episode_artifacts import (
+    ANALYSIS_SEMANTICS_VERSION, EPISODE_ARTIFACTS, episode_metadata,
+    scientific_source_hashes, write_episode_artifacts,
+)
 from spoofing_detection.lob.spoofing_metric_plots import write_spoofing_metric_dashboard
 from spoofing_detection.lob.spoofing_metrics import (
     MSCI_DEFINITION,
@@ -79,16 +83,21 @@ FIRM_FALLBACK_SEMANTICS = "aggregate only when client_original_id is missing"
 
 def _analysis_metadata() -> dict[str, str]:
     return {
-        "analytical_unit": "execution_cluster",
+        "analytical_unit": "candidate_posture_episode",
+        "diagnostic_unit": "execution_cluster",
         "raw_audit_unit": "child_fill_message",
-        "event_selection": "selected_execution_anchor_clusters",
-        "behavioral_gate": (
+        "event_selection": "one_representative_row_per_spoofing_compatible_candidate_posture_episode",
+        "cluster_diagnostic_gate": (
             "rapid_attributed_cancel AND fill_qty_lt_withdrawn_qty AND favorable_pre_fill_mid_move AND "
             "positive_cancel_anchored_mid_reversion"
         ),
-        "analytical_event_population": "all_selected_execution_anchor_clusters",
+        "episode_behavioral_gate": (
+            "unique_attributed_withdrawal AND total_episode_execution_qty_lt_unique_withdrawn_qty AND "
+            "complete_positive_placement_anchored_favorable_move AND complete_positive_cancel_reversion"
+        ),
+        "analytical_event_population": "candidate_posture_episodes",
         "mcps_population": "all_attributable_actor_execution_clusters_stratified_by_anchor",
-        "review_event_selection": "canonically_assigned_matched_withdrawal_clusters_only",
+        "review_event_selection": "one_representative_row_per_episode_with_unique_matched_withdrawal",
     }
 
 
@@ -161,6 +170,7 @@ def _observed_execution_anchor_modes(executions: pl.DataFrame) -> set[str]:
 def _depth_output_paths(root: Path, top_n: int) -> dict[str, Path]:
     depth_dir = root / f"topn_{top_n}"
     return {
+        **{name: depth_dir / f"{name}.parquet" for name in EPISODE_ARTIFACTS},
         "state_time_series": depth_dir / "actor_metric_time_series.parquet",
         "execution_metrics": depth_dir / "execution_metrics.parquet",
         "candidate_deceptive_orders": depth_dir / "candidate_deceptive_orders.parquet",
@@ -180,6 +190,7 @@ def _write_parquet(df: pl.DataFrame, path: Path) -> None:
 
 def _depth_outputs_complete(paths: dict[str, Path]) -> bool:
     required = (
+        *EPISODE_ARTIFACTS,
         "state_time_series",
         "execution_metrics",
         "candidate_deceptive_orders",
@@ -214,6 +225,11 @@ def _can_reuse_depth_outputs(
     try:
         metadata = json.loads(metadata_path.read_text())
     except (OSError, json.JSONDecodeError):
+        return False
+    if metadata.get("analysis_semantics_version") != ANALYSIS_SEMANTICS_VERSION:
+        return False
+    hashes = metadata.get("per_depth_artifact_hashes", {}).get(str(top_n), {})
+    if not hashes or any(hashes.get(name) != _sha256(path) for name, path in paths.items() if name != "dashboard"):
         return False
     return top_n in metadata.get("depth_grid", []) and all(
         metadata.get(key) == value for key, value in expected_metadata.items()
@@ -416,10 +432,15 @@ def _actor_execution_audit(
             ["execution_anchor_mode", "identity_level"],
             flag_column="has_matched_deceptive_cancel_window",
         ),
-        "strict_sequence_by_anchor_and_identity": _grouped_counts(
+        "cluster_diagnostic_sequence_by_anchor_and_identity": _grouped_counts(
             execution_metrics,
             ["execution_anchor_mode", "identity_level"],
             flag_column="spoofing_compatible_sequence",
+        ),
+        "episode_strict_detection_by_representative_anchor_and_identity": _grouped_counts(
+            execution_metrics,
+            ["execution_anchor_mode", "identity_level"],
+            flag_column="episode_strict_detection",
         ),
         "rows_missing_client_and_firm_identity": rows_missing_client_and_firm_identity,
     }
@@ -508,6 +529,9 @@ def main(argv: list[str] | None = None) -> None:
     client_audit = audit_missing_client_trading_capacity(raw_events_for_compute)
     empirical_kernel_weights = load_empirical_kernel_weights(args.empirical_depth_kernel)
     expected_metadata: dict[str, Any] = {
+        **episode_metadata(),
+        "scientific_source_hashes": scientific_source_hashes(),
+        "generator_sha256": _sha256(Path(__file__)),
         **spoofing_config_provenance(args.config, section="grid"),
         "input": str(args.input.resolve()),
         "input_sha256": _sha256(args.input),
@@ -577,6 +601,7 @@ def main(argv: list[str] | None = None) -> None:
             empirical_kernel_weights=empirical_kernel_weights,
         )
         scores = compute_mcps_scores(result.execution_metrics, gamma_grid=gamma_grid)
+        write_episode_artifacts(result.episode_result, args.output_dir / f"topn_{top_n}")
         _write_parquet(result.state_time_series, paths["state_time_series"])
         _write_parquet(result.execution_metrics, paths["execution_metrics"])
         _write_parquet(result.candidate_deceptive_orders, paths["candidate_deceptive_orders"])
@@ -637,6 +662,10 @@ def main(argv: list[str] | None = None) -> None:
         if observed_execution_anchor_modes
         else [],
         "per_depth_counts": per_depth_counts,
+        "per_depth_artifact_hashes": {
+            str(depth): {name: _sha256(path) for name, path in _depth_output_paths(args.output_dir, depth).items() if name != "dashboard"}
+            for depth in depth_grid
+        },
         "combined_actor_mcps_scores": str(combined_path),
         "command": sys.argv,
     }
