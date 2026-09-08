@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SPOOFING_CONFIG_PATH = REPO_ROOT / "configs" / "spoofing_detection_parameters.json"
@@ -77,7 +79,7 @@ def parse_msci_threshold_by_anchor(value: Any) -> dict[str, float | None]:
 
 
 def _normalise_config_key(key: str) -> str:
-    return "lambda_" if key == "lambda" else key
+    return key
 
 
 def _normalise_config_value(key: str, value: Any) -> Any:
@@ -92,39 +94,118 @@ def load_spoofing_config_defaults(
     section: str,
     allowed_keys: Iterable[str],
 ) -> dict[str, Any]:
-    """Load CLI defaults for one spoofing pipeline section from JSON config.
+    """Load all scientific parameters for one spoofing pipeline section.
 
     The config file is intentionally JSON-only so the repository does not need a
     new dependency. Adjacent documentation keys prefixed with ``_comment_`` are
-    ignored. A top-level ``shared`` section is applied before the named section.
-    CLI flags still override these defaults in each script.
+    ignored. The requested named section must exist and supply every allowed
+    key: cross-section inheritance and silent hard-coded fallbacks are
+    deliberately disabled.
     """
 
     path = config_path or DEFAULT_SPOOFING_CONFIG_PATH
     if not path.exists():
-        return {}
+        raise FileNotFoundError(
+            f"spoofing configuration file not found: {path}. "
+            "Scientific parameters must be supplied by one JSON configuration file."
+        )
 
     payload = json.loads(path.read_text())
     if not isinstance(payload, dict):
         raise ValueError(f"spoofing config must be a JSON object: {path}")
 
+    raw_section = payload.get(section)
+    if raw_section is None:
+        raise ValueError(f"missing required section `{section}` in spoofing config: {path}")
+    if not isinstance(raw_section, Mapping):
+        raise ValueError(f"spoofing config section `{section}` must be an object: {path}")
+
     allowed = set(allowed_keys)
     defaults: dict[str, Any] = {}
-    for section_name in ("shared", section):
-        raw_section = payload.get(section_name, {})
-        if raw_section is None:
+    for raw_key, value in raw_section.items():
+        if _is_comment_key(raw_key):
             continue
-        if not isinstance(raw_section, Mapping):
-            raise ValueError(f"spoofing config section `{section_name}` must be an object: {path}")
-        for raw_key, value in raw_section.items():
-            if _is_comment_key(raw_key):
-                continue
-            key = _normalise_config_key(str(raw_key))
-            if key not in allowed:
-                allowed_text = ", ".join(sorted(allowed))
-                raise ValueError(
-                    f"unknown key `{raw_key}` in spoofing config section `{section_name}`; "
-                    f"allowed keys: {allowed_text}"
-                )
-            defaults[key] = _normalise_config_value(key, value)
+        key = _normalise_config_key(str(raw_key))
+        if key not in allowed:
+            allowed_text = ", ".join(sorted(allowed))
+            raise ValueError(
+                f"unknown key `{raw_key}` in spoofing config section `{section}`; "
+                f"allowed keys: {allowed_text}"
+            )
+        defaults[key] = _normalise_config_value(key, value)
+
+    missing = sorted(allowed - set(defaults))
+    if missing:
+        raise ValueError(
+            f"missing required keys in spoofing config section `{section}`: {missing}. "
+            "Hard-coded scientific defaults are disabled."
+        )
     return defaults
+
+
+def assert_config_parameters_match(
+    *,
+    config_path: Path,
+    section: str,
+    allowed_keys: Iterable[str],
+    effective_parameters: Mapping[str, Any],
+    normalizers: Mapping[str, Callable[[Any], Any]] | None = None,
+) -> None:
+    """Prevent JSON provenance from being attached to mismatched effective values."""
+
+    configured = load_spoofing_config_defaults(
+        config_path=config_path,
+        section=section,
+        allowed_keys=allowed_keys,
+    )
+    normalizers = normalizers or {}
+    mismatched: list[str] = []
+    for key, configured_value in configured.items():
+        normalizer = normalizers.get(key, lambda value: value)
+        if key not in effective_parameters or normalizer(configured_value) != normalizer(
+            effective_parameters[key]
+        ):
+            mismatched.append(key)
+    if mismatched:
+        raise ValueError(
+            f"effective parameters do not match JSON config section `{section}`: "
+            f"{', '.join(sorted(mismatched))}"
+        )
+
+
+def reject_parameter_overrides(
+    parser: Any,
+    argv: Sequence[str] | None,
+    *,
+    parameter_options: Iterable[str],
+) -> None:
+    """Reject CLI options whose values must come from the JSON configuration."""
+
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    explicit = sorted(
+        option
+        for option in set(parameter_options)
+        if any(token == option or token.startswith(f"{option}=") for token in tokens)
+    )
+    if explicit:
+        parser.error(
+            "scientific parameter overrides are disabled; edit the selected JSON config "
+            f"instead: {', '.join(explicit)}"
+        )
+
+
+def spoofing_config_provenance(
+    config_path: Path | None,
+    *,
+    section: str,
+) -> dict[str, str]:
+    """Return auditable provenance for the authoritative JSON parameter source."""
+
+    path = (config_path or DEFAULT_SPOOFING_CONFIG_PATH).resolve()
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return {
+        "parameter_source": "json_config_only",
+        "config_section": section,
+        "config": str(path),
+        "config_sha256": digest,
+    }

@@ -3,6 +3,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from .actor_identity import (
+    is_zero_client_original_identity_sentinel,
+    normalize_client_original_identity_value,
+)
 from .config import LOBConfig
 from .enums import (
     EVENT_CLASS_BY_CODE,
@@ -103,9 +107,15 @@ def normalize_event(row: dict[str, Any], *, sort_index: int, config: LOBConfig) 
     trading_capacity_label = get_first(row, "ORDER_TRADINGCAPACITY (*) (Tooltip)")
 
     firm_id = to_str_or_none(get_first(row, "FIRMID"))
-    client_original_id = to_str_or_none(get_first(row, "NMSC_ORIGINALCLIENTIDSHORTCODE"))
+    raw_client_original_id = get_first(row, "NMSC_ORIGINALCLIENTIDSHORTCODE")
+    client_original_id = normalize_client_original_identity_value(raw_client_original_id)
+    zero_client_original_id_sentinel = is_zero_client_original_identity_sentinel(
+        raw_client_original_id
+    )
 
     flags: list[str] = []
+    if zero_client_original_id_sentinel:
+        flags.append("zero_client_original_id_sentinel")
     if client_original_id is None:
         flags.append("missing_client_original_id")
     if firm_id is None:

@@ -111,8 +111,6 @@ MCPS_SCORE_SCHEMA: dict[str, pl.DataType] = {
     "identity_fallback_flag": pl.Boolean,
     "execution_anchor_mode": pl.String,
     "top_n": pl.Int64,
-    "kappa": pl.Float64,
-    "lambda_": pl.Float64,
     "gamma": pl.Float64,
     "executions": pl.Int64,
     "finite_msci_executions": pl.Int64,
@@ -147,8 +145,6 @@ def _state_metric_empty_schema(*, top_n: int, include_level_columns: bool) -> di
         "has_active_top_n_profile": pl.Boolean,
         "top_n": pl.Int64,
         "tick_size": pl.Float64,
-        "kappa": pl.Float64,
-        "lambda_": pl.Float64,
         "market_best_bid": pl.Float64,
         "market_best_ask": pl.Float64,
         "market_mid": pl.Float64,
@@ -221,6 +217,8 @@ EXECUTION_CANCEL_CANDIDATE_SCHEMA: dict[str, pl.DataType] = {
     "cluster_last_sort_index": pl.Int64,
     "cancel_event_ts": pl.Datetime("us"),
     "cancel_visible_qty": pl.Float64,
+    "candidate_visible_qty_pre": pl.Float64,
+    "attributed_cancel_visible_qty": pl.Float64,
     "ORDERID": pl.String,
     "event_ts": pl.Datetime("us"),
     "visible_qty_pre_cancel": pl.Float64,
@@ -330,17 +328,33 @@ def shifted_depth_distance_ticks(side: str, price: float, best_price: float, tic
     return _distance_ticks(side, price, best_price, tick_size) + 1.0
 
 
-def depth_kernel_weights(distances: list[float], *, kappa: float, lambda_: float) -> list[float]:
-    """Normalized depth kernel from the top-n DWI/MSCI paper formulation."""
-    if kappa <= 0:
-        raise ValueError("kappa must be positive")
-    if lambda_ <= 0:
-        raise ValueError("lambda_ must be positive")
-    raw = [math.exp(-lambda_ * d) * (1.0 - math.exp(-kappa * d)) for d in distances]
-    total = sum(raw)
-    if total <= 0:
-        return [0.0 for _ in distances]
-    return [value / total for value in raw]
+def _validate_empirical_kernel_weights(
+    empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None,
+    *,
+    top_n: int,
+) -> None:
+    if empirical_kernel_weights is None:
+        raise ValueError("empirical depth kernel weights are required")
+    missing_sides = {"bid", "ask"} - set(empirical_kernel_weights)
+    if missing_sides:
+        raise ValueError(
+            "empirical depth kernel must provide bid and ask weights; "
+            f"missing: {', '.join(sorted(missing_sides))}"
+        )
+    required_ranks = set(range(1, top_n + 1))
+    for side in ("bid", "ask"):
+        side_weights = empirical_kernel_weights[side]
+        missing_ranks = sorted(required_ranks - set(side_weights))
+        if missing_ranks:
+            raise ValueError(
+                f"empirical depth kernel for side {side!r} is missing ranks: "
+                f"{', '.join(map(str, missing_ranks))}"
+            )
+        values = [float(side_weights[rank]) for rank in range(1, top_n + 1)]
+        if any(not math.isfinite(value) or value < 0 for value in values):
+            raise ValueError("empirical depth kernel weights must be finite and non-negative")
+        if sum(values) <= 0:
+            raise ValueError(f"empirical depth kernel has no positive weights for side {side!r}")
 
 
 def _side_depth_metadata(
@@ -348,20 +362,19 @@ def _side_depth_metadata(
     *,
     side: str,
     tick_size: float,
-    kappa: float,
-    lambda_: float,
-    empirical_weights_by_rank: Mapping[int, float] | None = None,
+    empirical_weights_by_rank: Mapping[int, float],
 ) -> dict[float, dict[str, float]]:
     if not levels:
         return {}
     best_price = levels[0][0]
     distances = [shifted_depth_distance_ticks(side, price, best_price, tick_size) for price, _ in levels]
-    if empirical_weights_by_rank is None:
-        weights = depth_kernel_weights(distances, kappa=kappa, lambda_=lambda_)
-    else:
-        weights = [float(empirical_weights_by_rank.get(rank, 0.0)) for rank in range(1, len(levels) + 1)]
-        total = sum(weights)
-        weights = [value / total for value in weights] if total > 0 else [0.0 for _ in weights]
+    weights = [float(empirical_weights_by_rank.get(rank, 0.0)) for rank in range(1, len(levels) + 1)]
+    if any(not math.isfinite(value) or value < 0 for value in weights):
+        raise ValueError("empirical depth kernel weights must be finite and non-negative")
+    total = sum(weights)
+    if total <= 0:
+        raise ValueError(f"empirical depth kernel has no positive weights for side {side!r}")
+    weights = [value / total for value in weights]
     return {
         price: {
             "delta_ticks": _distance_ticks(side, price, best_price, tick_size),
@@ -377,8 +390,6 @@ def compute_actor_top_n_exposures(
     *,
     top_n: int,
     tick_size: float,
-    kappa: float,
-    lambda_: float,
     partition_id: str | None,
     sort_index: int,
     event_ts: datetime | None,
@@ -391,10 +402,8 @@ def compute_actor_top_n_exposures(
         raise ValueError("top_n must be positive")
     if tick_size <= 0:
         raise ValueError("tick_size must be positive")
-    if kappa <= 0:
-        raise ValueError("kappa must be positive")
-    if lambda_ <= 0:
-        raise ValueError("lambda_ must be positive")
+    _validate_empirical_kernel_weights(empirical_kernel_weights, top_n=top_n)
+    assert empirical_kernel_weights is not None
 
     levels = {
         "bid": _market_levels(active_orders, side="bid", top_n=top_n),
@@ -420,9 +429,7 @@ def compute_actor_top_n_exposures(
             side_levels,
             side=side,
             tick_size=tick_size,
-            kappa=kappa,
-            lambda_=lambda_,
-            empirical_weights_by_rank=empirical_kernel_weights.get(side) if empirical_kernel_weights is not None else None,
+            empirical_weights_by_rank=empirical_kernel_weights[side],
         )
         for side, side_levels in levels.items()
     }
@@ -464,8 +471,6 @@ def compute_actor_top_n_exposures(
             "has_active_top_n_profile": actor_key in profile_actor_keys,
             "top_n": top_n,
             "tick_size": tick_size,
-            "kappa": kappa,
-            "lambda_": lambda_,
             "market_best_bid": best_bid,
             "market_best_ask": best_ask,
             "market_mid": market_mid,
@@ -550,8 +555,6 @@ def compute_client_top_n_exposures(
     *,
     top_n: int,
     tick_size: float,
-    kappa: float,
-    lambda_: float,
     partition_id: str | None,
     sort_index: int,
     event_ts: datetime | None,
@@ -577,8 +580,6 @@ def compute_client_top_n_exposures(
         active_orders,
         top_n=top_n,
         tick_size=tick_size,
-        kappa=kappa,
-        lambda_=lambda_,
         partition_id=partition_id,
         sort_index=sort_index,
         event_ts=event_ts,
@@ -762,12 +763,12 @@ def _candidate_deceptive_order_rows(
     *,
     top_n: int,
     tick_size: float,
-    kappa: float,
-    lambda_: float,
     order_first_seen_ts: Mapping[str, datetime | None],
     max_deceptive_order_age_seconds: float = 600.0,
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
 ) -> list[dict[str, Any]]:
+    if empirical_kernel_weights is None:
+        raise ValueError("empirical depth kernel weights are required")
     deceptive_side = execution["deceptive_side"]
     levels = _market_levels(active_orders, side=deceptive_side, top_n=top_n)
     if not levels:
@@ -778,9 +779,7 @@ def _candidate_deceptive_order_rows(
         levels,
         side=deceptive_side,
         tick_size=tick_size,
-        kappa=kappa,
-        lambda_=lambda_,
-        empirical_weights_by_rank=empirical_kernel_weights.get(deceptive_side) if empirical_kernel_weights is not None else None,
+        empirical_weights_by_rank=empirical_kernel_weights[deceptive_side],
     )
 
     rows: list[dict[str, Any]] = []
@@ -827,8 +826,6 @@ def _candidate_deceptive_order_rows(
                 "execution_side": execution["execution_side"],
                 "deceptive_side": deceptive_side,
                 "top_n": top_n,
-                "kappa": kappa,
-                "lambda_": lambda_,
                 "deceptive_order_id": order.order_id,
                 "deceptive_order_price": price,
                 "deceptive_order_level": rank,
@@ -984,8 +981,6 @@ def _stream_metric_inputs(
     *,
     top_n: int,
     tick_size: float,
-    kappa: float,
-    lambda_: float,
     execution_cluster_max_gap_ms: int = 100,
     max_rows: int | None = None,
     include_level_columns: bool = True,
@@ -1056,14 +1051,12 @@ def _stream_metric_inputs(
             allowed_anchor_modes=execution_anchor_modes,
         )
         if execution is not None:
-            execution.update({"top_n": top_n, "kappa": kappa, "lambda_": lambda_})
+            execution.update({"top_n": top_n})
             candidates = _candidate_deceptive_order_rows(
                 execution,
                 active_orders,
                 top_n=top_n,
                 tick_size=tick_size,
-                kappa=kappa,
-                lambda_=lambda_,
                 order_first_seen_ts=order_first_seen_ts,
                 max_deceptive_order_age_seconds=max_deceptive_order_age_seconds,
                 empirical_kernel_weights=empirical_kernel_weights,
@@ -1123,8 +1116,6 @@ def _stream_metric_inputs(
             active_orders,
             top_n=top_n,
             tick_size=tick_size,
-            kappa=kappa,
-            lambda_=lambda_,
             partition_id=partition_id,
             sort_index=event["sort_index"],
             event_ts=event_ts,
@@ -1198,8 +1189,6 @@ def compute_actor_metric_time_series(
     *,
     top_n: int,
     tick_size: float,
-    kappa: float,
-    lambda_: float = 1.0,
     max_rows: int | None = None,
     include_level_columns: bool = True,
     state_actor_keys: set[str] | None = None,
@@ -1210,8 +1199,6 @@ def compute_actor_metric_time_series(
         raw_events,
         top_n=top_n,
         tick_size=tick_size,
-        kappa=kappa,
-        lambda_=lambda_,
         max_rows=max_rows,
         include_level_columns=include_level_columns,
         state_actor_keys=state_actor_keys,
@@ -1226,8 +1213,6 @@ def compute_client_metric_time_series(
     *,
     top_n: int,
     tick_size: float,
-    kappa: float,
-    lambda_: float = 1.0,
     max_rows: int | None = None,
     include_level_columns: bool = True,
     state_client_ids: set[str] | None = None,
@@ -1238,8 +1223,6 @@ def compute_client_metric_time_series(
         raw_events,
         top_n=top_n,
         tick_size=tick_size,
-        kappa=kappa,
-        lambda_=lambda_,
         max_rows=max_rows,
         include_level_columns=include_level_columns,
         state_actor_keys=(
@@ -1627,6 +1610,7 @@ def _coerce_execution_cancel_candidate_schema(frame: pl.DataFrame) -> pl.DataFra
 def _build_execution_cancel_candidates(
     executions: pl.DataFrame,
     cancellations: pl.DataFrame,
+    candidate_orders: pl.DataFrame | None = None,
     *,
     window_seconds: float,
 ) -> pl.DataFrame:
@@ -1642,6 +1626,18 @@ def _build_execution_cancel_candidates(
                 str(cancel.get("ORDERID")),
             )
         ].append(cancel)
+
+    candidate_qty_by_cluster_order = (
+        {
+            (str(row["execution_cluster_id"]), str(row["deceptive_order_id"])): max(
+                float(row["deceptive_order_visible_qty_pre"] or 0.0),
+                0.0,
+            )
+            for row in candidate_orders.iter_rows(named=True)
+        }
+        if candidate_orders is not None
+        else {}
+    )
 
     links: list[dict[str, Any]] = []
     window = timedelta(seconds=window_seconds)
@@ -1682,6 +1678,15 @@ def _build_execution_cancel_candidates(
                     or not (cluster_end_ts <= cancel_ts <= end)
                 ):
                     continue
+                cancel_visible_qty = max(float(cancel.get("visible_qty_pre_cancel") or 0.0), 0.0)
+                candidate_visible_qty = candidate_qty_by_cluster_order.get(
+                    (str(execution.get("execution_cluster_id")), order_id)
+                )
+                attributed_cancel_visible_qty = (
+                    min(cancel_visible_qty, candidate_visible_qty)
+                    if candidate_visible_qty is not None
+                    else cancel_visible_qty
+                )
                 cluster_first_sort_index = execution.get("cluster_first_sort_index")
                 if cluster_first_sort_index is None:
                     cluster_first_sort_index = execution.get("sort_index")
@@ -1703,10 +1708,12 @@ def _build_execution_cancel_candidates(
                         "cluster_first_sort_index": int(cluster_first_sort_index),
                         "cluster_last_sort_index": cluster_last_sort_index,
                         "cancel_event_ts": cancel_ts,
-                        "cancel_visible_qty": float(cancel.get("visible_qty_pre_cancel") or 0.0),
+                        "cancel_visible_qty": cancel_visible_qty,
+                        "candidate_visible_qty_pre": candidate_visible_qty,
+                        "attributed_cancel_visible_qty": attributed_cancel_visible_qty,
                         "ORDERID": order_id,
                         "event_ts": cancel_ts,
-                        "visible_qty_pre_cancel": float(cancel.get("visible_qty_pre_cancel") or 0.0),
+                        "visible_qty_pre_cancel": cancel_visible_qty,
                     }
                 )
     if not links:
@@ -1728,6 +1735,15 @@ def _weighted_finite_mean(values: list[tuple[float | None, float]]) -> float | N
         return None
     total_weight = sum(weight for _, weight in finite)
     return sum(value * weight for value, weight in finite) / total_weight
+
+
+def _attributed_cancel_qty(candidate: dict[str, Any]) -> float:
+    value = candidate.get("attributed_cancel_visible_qty")
+    if value is None:
+        value = candidate.get("cancel_visible_qty")
+    if value is None:
+        value = candidate.get("visible_qty_pre_cancel")
+    return max(float(value or 0.0), 0.0)
 
 
 def attach_cancel_anchored_reversion(
@@ -1796,11 +1812,7 @@ def attach_cancel_anchored_reversion(
         )
         direction = _execution_price_direction(candidate.get("execution_side"))
         delay_seconds = max((cancel_ts - cluster_end_ts).total_seconds(), 0.0)
-        cancel_qty = float(
-            candidate.get("cancel_visible_qty")
-            or candidate.get("visible_qty_pre_cancel")
-            or 0.0
-        )
+        cancel_qty = _attributed_cancel_qty(candidate)
         weight = cancel_qty * math.exp(-delay_seconds / withdrawal_decay_seconds)
         mid_pre = pre_state.get("market_mid") if pre_state is not None else None
         mid_post = post_state.get("market_mid") if post_state is not None else None
@@ -1913,7 +1925,7 @@ def _attach_direct_cancellation_window(
         order_ids = ";".join(str(cancel["ORDERID"]) for cancel in matches)
         total_qty = sum(float(cancel["visible_qty_pre_cancel"] or 0.0) for cancel in matches)
         matched_order_ids = ";".join(str(cancel["ORDERID"]) for cancel in matched)
-        matched_qty = sum(float(cancel["visible_qty_pre_cancel"] or 0.0) for cancel in matched)
+        matched_qty = sum(_attributed_cancel_qty(cancel) for cancel in matched)
         candidate_qty = float(row.get("candidate_deceptive_visible_qty_pre") or 0.0)
         execution_quantity = float(row.get("execution_quantity") or row.get("fill_qty") or 0.0)
         anchor_mode = row.get("execution_anchor_mode")
@@ -1927,9 +1939,8 @@ def _attach_direct_cancellation_window(
                     continue
                 delay = max((cancel_ts - event_ts).total_seconds(), 0.0)
                 matched_delays.append(delay)
-                weighted_withdrawal_qty += float(cancel["visible_qty_pre_cancel"] or 0.0) * math.exp(
-                    -delay / withdrawal_decay_seconds
-                )
+                withdrawal_qty = _attributed_cancel_qty(cancel)
+                weighted_withdrawal_qty += withdrawal_qty * math.exp(-delay / withdrawal_decay_seconds)
         withdrawal_profile_scale = _finite_wmsci(
             candidate_qty=candidate_qty,
             weighted_withdrawal_qty=weighted_withdrawal_qty,
@@ -2043,8 +2054,6 @@ def compute_mcps_scores(execution_metrics: pl.DataFrame, *, gamma_grid: list[flo
             "identity_fallback_flag",
             "execution_anchor_mode",
             "top_n",
-            "kappa",
-            "lambda_",
         )
         if col in execution_metrics.columns
     ]
@@ -2125,9 +2134,7 @@ def compute_exploratory_metrics(
     *,
     top_n: int,
     tick_size: float,
-    kappa: float,
     window_seconds: float,
-    lambda_: float = 1.0,
     withdrawal_window_seconds: float = 2.0,
     reversion_horizon_seconds: float = 2.0,
     max_rows: int | None = None,
@@ -2150,8 +2157,6 @@ def compute_exploratory_metrics(
         raw_events,
         top_n=top_n,
         tick_size=tick_size,
-        kappa=kappa,
-        lambda_=lambda_,
         max_rows=max_rows,
         include_level_columns=include_level_columns,
         max_deceptive_order_age_seconds=max_deceptive_order_age_seconds,
@@ -2169,6 +2174,7 @@ def compute_exploratory_metrics(
     cancel_candidate_df = _build_execution_cancel_candidates(
         execution_df,
         cancel_df,
+        candidate_df,
         window_seconds=withdrawal_window_seconds,
     )
     execution_df = _attach_direct_cancellation_window(

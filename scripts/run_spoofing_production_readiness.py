@@ -23,15 +23,17 @@ from spoofing_detection.lob.client_session_features import (
 from spoofing_detection.lob.legitimacy_features import compute_actor_legitimacy_features
 from spoofing_detection.lob.spoofing_config import (
     DEFAULT_SPOOFING_CONFIG_PATH,
+    assert_config_parameters_match,
     load_spoofing_config_defaults,
     parse_execution_anchor_modes,
     parse_msci_threshold_by_anchor,
+    reject_parameter_overrides,
+    spoofing_config_provenance,
     validate_actor_identity_mode,
 )
 
 
 _CONFIGURABLE_DEFAULT_KEYS = {
-    "msci_threshold",
     "msci_threshold_by_anchor",
     "min_events",
     "min_mcps",
@@ -39,10 +41,14 @@ _CONFIGURABLE_DEFAULT_KEYS = {
     "execution_anchor_modes",
 }
 
-
-def _option_is_explicit(argv: list[str] | None, option: str) -> bool:
-    tokens = sys.argv[1:] if argv is None else argv
-    return any(token == option or token.startswith(f"{option}=") for token in tokens)
+_CONFIG_PARAMETER_OPTIONS = {
+    "--msci-threshold",
+    "--msci-threshold-by-anchor",
+    "--min-events",
+    "--min-mcps",
+    "--actor-identity-mode",
+    "--execution-anchor-modes",
+}
 
 
 def _market_observation(
@@ -72,9 +78,33 @@ def run_pipeline(
     min_mcps: float,
     actor_identity_mode: str = "client_then_firm",
     execution_anchor_modes: tuple[str, ...] = ("passive",),
+    config_path: Path | None = None,
 ) -> dict[str, Path]:
     actor_identity_mode = validate_actor_identity_mode(actor_identity_mode)
     execution_anchor_modes = parse_execution_anchor_modes(execution_anchor_modes)
+    effective_thresholds = (
+        parse_msci_threshold_by_anchor(msci_threshold)
+        if isinstance(msci_threshold, Mapping)
+        else {anchor: float(msci_threshold) for anchor in execution_anchor_modes}
+    )
+    if config_path is not None:
+        assert_config_parameters_match(
+            config_path=config_path,
+            section="production_readiness",
+            allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
+            effective_parameters={
+                "msci_threshold_by_anchor": effective_thresholds,
+                "min_events": min_events,
+                "min_mcps": min_mcps,
+                "actor_identity_mode": actor_identity_mode,
+                "execution_anchor_modes": execution_anchor_modes,
+            },
+            normalizers={
+                "msci_threshold_by_anchor": parse_msci_threshold_by_anchor,
+                "actor_identity_mode": validate_actor_identity_mode,
+                "execution_anchor_modes": parse_execution_anchor_modes,
+            },
+        )
     executions = pl.read_parquet(execution_metrics_path)
     observed_anchor_values = (
         executions["execution_anchor_mode"].drop_nulls().unique().to_list()
@@ -107,6 +137,11 @@ def run_pipeline(
         json.dumps(
             {
                 "created_at_utc": datetime.now(timezone.utc).isoformat(),
+                **(
+                    spoofing_config_provenance(config_path, section="production_readiness")
+                    if config_path is not None
+                    else {"parameter_source": "programmatic"}
+                ),
                 "output_schema_version": "actor_execution_anchor_v2",
                 "actor_identity_mode": actor_identity_mode,
                 "execution_anchor_modes": list(execution_anchor_modes),
@@ -141,42 +176,51 @@ def run_pipeline(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     config_parser.add_argument("--config", type=Path, default=DEFAULT_SPOOFING_CONFIG_PATH)
     config_args, _ = config_parser.parse_known_args(argv)
-    config_defaults = load_spoofing_config_defaults(
-        config_path=config_args.config,
-        section="production_readiness",
-        allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
-    )
+    try:
+        config_defaults = load_spoofing_config_defaults(
+            config_path=config_args.config,
+            section="production_readiness",
+            allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
+        )
+    except (OSError, ValueError) as exc:
+        config_parser.error(str(exc))
 
-    parser = argparse.ArgumentParser(description="Run production-readiness spoofing surveillance layer.")
+    parser = argparse.ArgumentParser(
+        description="Run production-readiness spoofing surveillance layer.",
+        allow_abbrev=False,
+    )
     parser.add_argument(
         "--config",
         type=Path,
         default=config_args.config,
-        help="JSON config file containing spoofing parameter defaults",
+        help="Authoritative JSON file containing all production-readiness parameters",
     )
     parser.add_argument("--execution-metrics", type=Path, required=True)
     parser.add_argument("--event-log", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--msci-threshold", type=float, default=0.1)
+    parser.add_argument("--msci-threshold", type=float)
     parser.add_argument(
         "--msci-threshold-by-anchor",
         type=parse_msci_threshold_by_anchor,
-        default=None,
         help='JSON object, e.g. {"passive": 0.1, "aggressive": null}',
     )
-    parser.add_argument("--min-events", type=int, default=3, help="minimum repeated matched-withdrawal events required")
+    parser.add_argument("--min-events", type=int, help="minimum repeated matched-withdrawal events required")
     parser.add_argument(
         "--min-mcps",
         type=float,
-        default=0.0,
         help="optional minimum matched-event share floor; 0 disables the share floor",
     )
-    parser.add_argument("--actor-identity-mode", choices=("client_then_firm",), default="client_then_firm")
-    parser.add_argument("--execution-anchor-modes", default="passive")
+    parser.add_argument("--actor-identity-mode", choices=("client_then_firm",))
+    parser.add_argument("--execution-anchor-modes")
     parser.set_defaults(**config_defaults)
+    reject_parameter_overrides(
+        parser,
+        argv,
+        parameter_options=_CONFIG_PARAMETER_OPTIONS,
+    )
     args = parser.parse_args(argv)
     try:
         args.actor_identity_mode = validate_actor_identity_mode(args.actor_identity_mode)
@@ -185,15 +229,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             args.msci_threshold_by_anchor = parse_msci_threshold_by_anchor(
                 args.msci_threshold_by_anchor
             )
-        if (
-            _option_is_explicit(argv, "--msci-threshold")
-            and not _option_is_explicit(argv, "--msci-threshold-by-anchor")
-            and args.msci_threshold_by_anchor is not None
-        ):
-            args.msci_threshold_by_anchor = {
-                **args.msci_threshold_by_anchor,
-                "passive": args.msci_threshold,
-            }
     except ValueError as exc:
         parser.error(str(exc))
     return args
@@ -214,6 +249,7 @@ def main(argv: list[str] | None = None) -> None:
         min_mcps=args.min_mcps,
         actor_identity_mode=args.actor_identity_mode,
         execution_anchor_modes=args.execution_anchor_modes,
+        config_path=args.config,
     )
     print(outputs["alerts"])
 

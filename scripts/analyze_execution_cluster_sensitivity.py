@@ -11,6 +11,28 @@ from pathlib import Path
 
 import polars as pl
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from spoofing_detection.lob.spoofing_config import (
+    DEFAULT_SPOOFING_CONFIG_PATH,
+    load_spoofing_config_defaults,
+    reject_parameter_overrides,
+    spoofing_config_provenance,
+)
+
+
+_CONFIGURABLE_DEFAULT_KEYS = {"gap_ms"}
+_CONFIG_PARAMETER_OPTIONS = {
+    "--gap-ms",
+    "--empirical-kernel",
+    "--tick-size",
+    "--compact-state",
+    "--no-compact-state",
+}
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -97,7 +119,88 @@ def summarize_output(instrument: str, gap_ms: int, output_dir: Path) -> dict[str
     }
 
 
-def build_command(args: argparse.Namespace, *, gap_ms: int, output_dir: Path) -> list[str]:
+def _write_effective_config(source: Path, *, gap_ms: int, destination: Path) -> None:
+    payload = json.loads(source.read_text())
+    metrics = payload.get("metrics")
+    if not isinstance(metrics, dict):
+        raise ValueError("configuration section 'metrics' must be a JSON object")
+    metrics["execution_cluster_max_gap_ms"] = gap_ms
+    destination.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def _without_comment_keys(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _without_comment_keys(item)
+            for key, item in value.items()
+            if not str(key).startswith("_comment_")
+        }
+    if isinstance(value, list):
+        return [_without_comment_keys(item) for item in value]
+    return value
+
+
+def _effective_metrics(config_path: Path) -> dict[str, object]:
+    payload = json.loads(config_path.read_text())
+    metrics = payload.get("metrics")
+    if not isinstance(metrics, dict):
+        raise ValueError("configuration section 'metrics' must be a JSON object")
+    return {
+        str(key): _without_comment_keys(value)
+        for key, value in metrics.items()
+        if not str(key).startswith("_comment_")
+    }
+
+
+def _can_reuse_output(
+    output_dir: Path,
+    *,
+    effective_config: Path,
+    gap_ms: int,
+    input_sha256: str,
+    quote_panel_sha256: str | None,
+    empirical_depth_kernel_sha256: str | None,
+) -> bool:
+    required_artifacts = {
+        "execution_metrics": output_dir / "execution_metrics.parquet",
+        "execution_cluster_members": output_dir / "execution_cluster_members.parquet",
+        "execution_cancel_candidates": output_dir / "execution_cancel_candidates.parquet",
+    }
+    metadata_path = output_dir / "metadata.json"
+    if not metadata_path.exists() or any(not path.exists() for path in required_artifacts.values()):
+        return False
+    try:
+        metadata = json.loads(metadata_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    expected = {
+        "parameter_source": "json_config_only",
+        "config_section": "metrics",
+        "config_sha256": _sha256(effective_config),
+        "execution_cluster_max_gap_ms": gap_ms,
+    }
+    expected_input_hashes = {
+        "raw_events_sha256": input_sha256,
+        "quote_panel_sha256": quote_panel_sha256,
+        "empirical_depth_kernel_sha256": empirical_depth_kernel_sha256,
+    }
+    input_hashes = metadata.get("input_hashes")
+    artifact_hashes = metadata.get("artifact_hashes")
+    return (
+        all(metadata.get(key) == value for key, value in expected.items())
+        and isinstance(input_hashes, dict)
+        and all(input_hashes.get(key) == value for key, value in expected_input_hashes.items())
+        and isinstance(artifact_hashes, dict)
+        and all(artifact_hashes.get(key) == _sha256(path) for key, path in required_artifacts.items())
+    )
+
+
+def build_command(
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    effective_config: Path,
+) -> list[str]:
     command = [
         args.python,
         str(args.compute_script),
@@ -106,32 +209,45 @@ def build_command(args: argparse.Namespace, *, gap_ms: int, output_dir: Path) ->
         "--output-dir",
         str(output_dir),
         "--config",
-        str(args.config),
-        "--execution-cluster-max-gap-ms",
-        str(gap_ms),
+        str(effective_config),
     ]
-    if args.empirical_kernel is not None:
-        command.extend(["--empirical-depth-kernel", str(args.empirical_kernel)])
-    if args.tick_size is not None:
-        command.extend(["--tick-size", str(args.tick_size)])
-    if args.compact_state:
-        command.append("--compact-state")
+    if args.quote_panel is not None:
+        command.extend(["--quote-panel", str(args.quote_panel)])
     return command
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Rerun cluster-aware spoofing metrics across inter-fill-gap thresholds.")
+    config_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    config_parser.add_argument("--config", type=Path, default=DEFAULT_SPOOFING_CONFIG_PATH)
+    config_args, _ = config_parser.parse_known_args(argv)
+    try:
+        config_defaults = load_spoofing_config_defaults(
+            config_path=config_args.config,
+            section="cluster_sensitivity",
+            allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
+        )
+    except (OSError, ValueError) as exc:
+        config_parser.error(str(exc))
+
+    parser = argparse.ArgumentParser(
+        description="Rerun cluster-aware spoofing metrics across inter-fill-gap thresholds.",
+        allow_abbrev=False,
+    )
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--instrument", required=True)
     parser.add_argument("--output-root", type=Path, required=True)
-    parser.add_argument("--config", type=Path, default=Path("configs/spoofing_detection_parameters.json"))
-    parser.add_argument("--empirical-kernel", type=Path)
-    parser.add_argument("--tick-size", type=float)
-    parser.add_argument("--gap-ms", type=int, nargs="+", default=[25, 50, 100, 250])
+    parser.add_argument("--quote-panel", type=Path)
+    parser.add_argument("--config", type=Path, default=config_args.config)
+    parser.add_argument("--gap-ms", type=int, nargs="+")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--compute-script", type=Path, default=Path("scripts/compute_spoofing_metrics.py"))
-    parser.add_argument("--compact-state", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--reuse-existing", action="store_true")
+    parser.set_defaults(**config_defaults)
+    reject_parameter_overrides(
+        parser,
+        argv,
+        parameter_options=_CONFIG_PARAMETER_OPTIONS,
+    )
     args = parser.parse_args(argv)
     if any(gap < 0 for gap in args.gap_ms):
         parser.error("--gap-ms values must be non-negative")
@@ -142,17 +258,50 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    source_metrics = _effective_metrics(args.config)
+    if source_metrics.get("tick_size") is None and args.quote_panel is None:
+        raise ValueError("--quote-panel is required when metrics.tick_size is null")
+    input_sha256 = _sha256(args.input)
+    quote_panel_sha256 = _sha256(args.quote_panel) if args.quote_panel is not None else None
+    kernel_path = source_metrics.get("empirical_depth_kernel")
+    empirical_depth_kernel_sha256 = _sha256(Path(str(kernel_path))) if kernel_path is not None else None
     args.output_root.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
     commands: list[list[str]] = []
+    effective_configs: list[dict[str, object]] = []
     for gap_ms in sorted(args.gap_ms):
         output_dir = args.output_root / f"{args.instrument}_cluster_gap_{gap_ms}ms"
-        command = build_command(args, gap_ms=gap_ms, output_dir=output_dir)
+        effective_config = args.output_root / f"effective_config_gap_{gap_ms}ms.json"
+        _write_effective_config(args.config, gap_ms=gap_ms, destination=effective_config)
+        command = build_command(
+            args,
+            output_dir=output_dir,
+            effective_config=effective_config,
+        )
+        reuse_output = args.reuse_existing and _can_reuse_output(
+            output_dir,
+            effective_config=effective_config,
+            gap_ms=gap_ms,
+            input_sha256=input_sha256,
+            quote_panel_sha256=quote_panel_sha256,
+            empirical_depth_kernel_sha256=empirical_depth_kernel_sha256,
+        )
         commands.append(command)
-        required = output_dir / "execution_cancel_candidates.parquet"
-        if not (args.reuse_existing and required.exists()):
+        effective_configs.append(
+            {
+                "execution_cluster_max_gap_ms": gap_ms,
+                "path": str(effective_config),
+                "sha256": _sha256(effective_config),
+                "effective_metrics": _effective_metrics(effective_config),
+                "reused_output": reuse_output,
+            }
+        )
+        if not reuse_output:
             if output_dir.exists() and any(output_dir.iterdir()):
-                raise FileExistsError(f"refusing to overwrite non-empty output directory: {output_dir}")
+                raise FileExistsError(
+                    "refusing to reuse or overwrite non-empty output directory without "
+                    f"matching strict-config provenance: {output_dir}"
+                )
             subprocess.run(command, check=True)
         rows.append(summarize_output(args.instrument, gap_ms, output_dir))
 
@@ -163,13 +312,15 @@ def main(argv: list[str] | None = None) -> None:
     summary.write_parquet(args.output_root / "cluster_sensitivity.parquet")
     metadata = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        **spoofing_config_provenance(args.config, section="cluster_sensitivity"),
         "analytical_unit": "execution_cluster",
         "input": str(args.input),
-        "input_sha256": _sha256(args.input),
-        "config": str(args.config),
-        "config_sha256": _sha256(args.config),
-        "empirical_kernel": str(args.empirical_kernel) if args.empirical_kernel else None,
-        "empirical_kernel_sha256": _sha256(args.empirical_kernel) if args.empirical_kernel else None,
+        "input_sha256": input_sha256,
+        "quote_panel": str(args.quote_panel) if args.quote_panel is not None else None,
+        "quote_panel_sha256": quote_panel_sha256,
+        "empirical_depth_kernel_sha256": empirical_depth_kernel_sha256,
+        "gap_ms": sorted(args.gap_ms),
+        "effective_configs": effective_configs,
         "commands": commands,
     }
     (args.output_root / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True))

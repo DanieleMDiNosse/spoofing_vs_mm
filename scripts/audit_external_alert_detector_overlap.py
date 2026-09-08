@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import math
 import re
 import secrets
 import subprocess
@@ -22,7 +23,10 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from spoofing_detection.lob.normalize import to_str_or_none  # noqa: E402
+from spoofing_detection.lob.actor_identity import (  # noqa: E402
+    normalize_client_original_identity_value,
+    normalize_identity_value,
+)
 
 MONTH = {
     "JAN": 1,
@@ -165,9 +169,19 @@ def _safe_metrics_provenance(metadata_path: Path) -> dict[str, Any]:
     return provenance
 
 
+def _pseudonym(value: str, alias_key: bytes, *, prefix: str) -> str:
+    digest = hmac.new(alias_key, value.encode(), hashlib.sha256).hexdigest()
+    return prefix + digest[:12]
+
+
 def _alias(actor_id: str, alias_key: bytes) -> str:
-    digest = hmac.new(alias_key, actor_id.encode(), hashlib.sha256).hexdigest()
-    return "actor_" + digest[:12]
+    return _pseudonym(actor_id, alias_key, prefix="actor_")
+
+
+def _detector_event_alias(actor_key: str, cluster_id: str, alias_key: bytes) -> str:
+    return _pseudonym(
+        f"{actor_key}\x1f{cluster_id}", alias_key, prefix="detector_event_"
+    )
 
 
 def _parse_interval(day: int, month: int, year: int, value: str) -> datetime:
@@ -264,7 +278,14 @@ def _normalized_text(column: str) -> pl.Expr:
 
 
 def _normalized_identity(column: str) -> pl.Expr:
-    return pl.col(column).map_elements(to_str_or_none, return_dtype=pl.String)
+    return pl.col(column).map_elements(normalize_identity_value, return_dtype=pl.String)
+
+
+def _normalized_client_identity(column: str) -> pl.Expr:
+    return pl.col(column).map_elements(
+        normalize_client_original_identity_value,
+        return_dtype=pl.String,
+    )
 
 
 def _valid_identity(text: pl.Expr) -> pl.Expr:
@@ -306,7 +327,7 @@ def _with_canonical_fields(raw: pl.DataFrame) -> pl.DataFrame:
     if missing:
         raise ValueError(f"raw input is missing required audit columns: {', '.join(missing)}")
 
-    client = _normalized_identity("NMSC_ORIGINALCLIENTIDSHORTCODE")
+    client = _normalized_client_identity("NMSC_ORIGINALCLIENTIDSHORTCODE")
     firm = _normalized_identity("FIRMID")
     actor_key = (
         pl.when(_valid_identity(client))
@@ -388,7 +409,7 @@ def _with_source_identities(
     if missing:
         raise ValueError(f"artifact is missing source identity columns: {', '.join(missing)}")
     return frame.with_columns(
-        _normalized_identity(client_column).alias(SOURCE_CLIENT_ID),
+        _normalized_client_identity(client_column).alias(SOURCE_CLIENT_ID),
         _normalized_identity(firm_column).alias(SOURCE_FIRM_ID),
     )
 
@@ -427,6 +448,92 @@ def _counts_by(frame: pl.DataFrame, column: str) -> dict[str, int]:
     }
 
 
+def _required_timestamp(value: Any, *, field: str) -> str:
+    if not isinstance(value, datetime):
+        raise ValueError(f"detector event {field} must be a timestamp")
+    return value.isoformat()
+
+
+def _required_nonempty_string(value: Any, *, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"detector event {field} must be a non-empty string")
+    return value
+
+
+def _required_bool(value: Any, *, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"detector event {field} must be boolean")
+    return value
+
+
+def _required_positive_finite_float(value: Any, *, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"detector event {field} must be positive and finite")
+    result = float(value)
+    if not math.isfinite(result) or result <= 0:
+        raise ValueError(f"detector event {field} must be positive and finite")
+    return result
+
+
+def _detector_event_details(metrics: pl.DataFrame, alias_key: bytes) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+    for metric in metrics.sort(
+        ["cluster_start_ts", "cluster_end_ts", "execution_anchor_mode", "execution_cluster_id"]
+    ).to_dicts():
+        actor_key = _required_nonempty_string(metric["actor_key"], field="actor_key")
+        cluster_id = _required_nonempty_string(
+            metric["execution_cluster_id"], field="execution_cluster_id"
+        )
+        details.append(
+            {
+                "event_alias": _detector_event_alias(actor_key, cluster_id, alias_key),
+                "cluster_start": _required_timestamp(
+                    metric["cluster_start_ts"], field="cluster_start_ts"
+                ),
+                "cluster_end": _required_timestamp(
+                    metric["cluster_end_ts"], field="cluster_end_ts"
+                ),
+                "execution_anchor_mode": _required_nonempty_string(
+                    metric["execution_anchor_mode"], field="execution_anchor_mode"
+                ),
+                "execution_side": _required_nonempty_string(
+                    metric["execution_side"], field="execution_side"
+                ),
+                "execution_quantity": _required_positive_finite_float(
+                    metric["execution_quantity"], field="execution_quantity"
+                ),
+                "execution_vwap": _required_positive_finite_float(
+                    metric["execution_vwap"], field="execution_vwap"
+                ),
+                "has_matched_withdrawal": _required_bool(
+                    metric["has_matched_deceptive_cancel_window"],
+                    field="has_matched_deceptive_cancel_window",
+                ),
+                "gate_rapid_matched_withdrawal": _required_bool(
+                    metric["gate_rapid_matched_withdrawal"],
+                    field="gate_rapid_matched_withdrawal",
+                ),
+                "gate_small_fill_relative_to_withdrawal": _required_bool(
+                    metric["gate_small_fill_relative_to_withdrawal"],
+                    field="gate_small_fill_relative_to_withdrawal",
+                ),
+                "gate_favorable_pre_fill_move": _required_bool(
+                    metric["gate_favorable_pre_fill_move"],
+                    field="gate_favorable_pre_fill_move",
+                ),
+                "gate_cancel_anchored_reversion": _required_bool(
+                    metric["gate_cancel_anchored_reversion"],
+                    field="gate_cancel_anchored_reversion",
+                ),
+                "strict_detection": _required_bool(
+                    metric["spoofing_compatible_sequence"],
+                    field="spoofing_compatible_sequence",
+                ),
+            }
+        )
+    return details
+
+
 def _merge_timed_alerts(alerts: list[ExternalAlert]) -> list[ExternalAlert]:
     if any(alert.date_level for alert in alerts):
         raise ValueError("date-level alerts cannot be merged as timed windows")
@@ -454,6 +561,8 @@ def _audit_scope(
     members: pl.DataFrame,
     metrics: pl.DataFrame,
     rejected: pl.DataFrame,
+    *,
+    detector_event_alias_key: bytes | None = None,
 ) -> dict[str, Any]:
     all_raw = _filter_alerts(raw, "_event_ts", alerts)
     actor_raw = _subject_rows(all_raw, resolution, external_actor_id)
@@ -485,7 +594,7 @@ def _audit_scope(
     )
     actor_roles = _role_counts(actor_raw)
     all_roles = _role_counts(all_raw)
-    return {
+    result = {
         "raw_actor_rows_in_period": actor_raw.height,
         "detector_actor_key_count_in_period": len(detector_actor_keys),
         "identity_granularity_aligned": resolution.identity_granularity_aligned,
@@ -512,6 +621,11 @@ def _audit_scope(
             all_rejected, "reject_reason"
         ),
     }
+    if detector_event_alias_key is not None:
+        result["detector_events"] = _detector_event_details(
+            actor_metrics, detector_event_alias_key
+        )
+    return result
 
 
 def _detector_outcome(row: dict[str, Any], *, date_level: bool) -> str:
@@ -572,8 +686,17 @@ def _audit_dataset(
     required_member = {"actor_key", "execution_cluster_id", "execution_anchor_mode", "child_event_ts"}
     required_metric = {
         "actor_key",
+        "cluster_end_ts",
+        "cluster_start_ts",
         "execution_cluster_id",
         "execution_anchor_mode",
+        "execution_quantity",
+        "execution_side",
+        "execution_vwap",
+        "gate_cancel_anchored_reversion",
+        "gate_favorable_pre_fill_move",
+        "gate_rapid_matched_withdrawal",
+        "gate_small_fill_relative_to_withdrawal",
         "has_matched_deceptive_cancel_window",
         "spoofing_compatible_sequence",
     }
@@ -622,10 +745,12 @@ def _audit_dataset(
                 members,
                 metrics,
                 rejected,
+                detector_event_alias_key=None if alert.date_level else alias_key,
             ),
         }
         row.update(_detector_outcomes(row, date_level=alert.date_level))
         if alert.date_level:
+            row["detector_events"] = None
             for key in (
                 "detector_actor_key_count_in_period",
                 "recovered_child_fill_rows",
@@ -772,7 +897,7 @@ def main(argv: list[str] | None = None) -> None:
         ),
         "recall_unit": (
             "identity-aligned unioned timed external-alert window with at least one strict "
-            "detector cluster"
+            "detector execution"
         ),
         "timestamp_precedence": ["TRADETIME", "BOOKOUTTIME", "BOOKIN", "SEQUENCETIME"],
         "identifier_policy": (
@@ -801,7 +926,7 @@ def main(argv: list[str] | None = None) -> None:
             "External alert labels establish source-provided periods, not manipulative intent independently re-adjudicated here.",
             "RISANAMENTO is coverage-only at date level because the source provides no intraday interval; it is excluded from event-level recall numerators and denominators.",
             "Subject-scope overlap matches raw client/firm provenance. Exact-actor recall is identifiable only when the external identity and detector actor key have aligned granularity.",
-            "Strict subject-scope detection requires matched provenance, a recovered execution cluster, matched withdrawal, and all configured behavioral gates.",
+            "Strict subject-scope detection requires matched provenance, a recovered execution, matched withdrawal, and all configured behavioral gates.",
             "source_period_results preserves every source window; union_timed_results contains one row per merged interval and is the sole basis of timed overlap and recall totals.",
             "Embedded metrics provenance is restricted to allowlisted hashes, enum-valued modes, and row counts; upstream paths and commands are omitted.",
             *(

@@ -10,6 +10,7 @@ import pytest
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "compute_spoofing_metrics.py"
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "spoofing_detection_parameters.json"
 
 
 def load_module():
@@ -18,6 +19,24 @@ def load_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def write_config(tmp_path: Path, **metrics_overrides: object) -> Path:
+    payload = json.loads(CONFIG_PATH.read_text())
+    kernel_path = tmp_path / "empirical_depth_kernel.csv"
+    if not kernel_path.exists():
+        pl.DataFrame(
+            {
+                "side": ["bid", "ask"],
+                "rank": [1, 1],
+                "kernel_weight": [1.0, 1.0],
+            }
+        ).write_csv(kernel_path)
+    metrics_overrides.setdefault("empirical_depth_kernel", str(kernel_path))
+    payload["metrics"].update(metrics_overrides)
+    config_path = tmp_path / "spoofing_parameters.json"
+    config_path.write_text(json.dumps(payload))
+    return config_path
 
 
 def test_infer_state_client_ids_from_passive_limit_fills_only():
@@ -49,6 +68,21 @@ def test_infer_state_client_ids_normalizes_string_enum_codes():
     )
 
     assert module._infer_state_client_ids(raw, mode="passive-fill-clients") == {"C1", "C2"}
+
+
+def test_infer_state_client_ids_excludes_zero_client_sentinel():
+    module = load_module()
+    raw = pl.DataFrame(
+        {
+            "ORDEREVENTTYPE (*)": [3, 3],
+            "PASSIVEORDER": ["Y", "Y"],
+            "AGGRESSIVEORDER": ["N", "N"],
+            "ORDERTYPE (*)": [2, 2],
+            "NMSC_ORIGINALCLIENTIDSHORTCODE": [0.0, 123.0],
+        }
+    )
+
+    assert module._infer_state_client_ids(raw, mode="passive-fill-clients") == {"123"}
 
 
 def test_infer_state_actor_keys_from_selected_execution_fills():
@@ -99,7 +133,7 @@ def test_infer_state_actor_keys_normalizes_string_event_codes():
     ) == {"client_original:C1", "firm:F2"}
 
 
-def test_parse_args_supports_compact_memory_options(tmp_path: Path):
+def test_parse_args_loads_compact_memory_options_from_config(tmp_path: Path):
     module = load_module()
 
     args = module.parse_args(
@@ -110,9 +144,6 @@ def test_parse_args_supports_compact_memory_options(tmp_path: Path):
             str(tmp_path / "quotes.parquet"),
             "--output-dir",
             str(tmp_path / "out"),
-            "--state-client-mode",
-            "execution-actors",
-            "--compact-state",
         ]
     )
 
@@ -138,13 +169,11 @@ def test_repository_config_defaults_to_execution_actor_compact_dual_state(tmp_pa
     assert args.execution_anchor_modes == ("passive", "aggressive")
 
 
-def test_parse_args_uses_signed_msci_gamma_grid_without_config(tmp_path: Path):
+def test_parse_args_uses_signed_msci_gamma_grid_from_config(tmp_path: Path):
     module = load_module()
 
     args = module.parse_args(
         [
-            "--config",
-            str(tmp_path / "missing.json"),
             "--input",
             str(tmp_path / "input.parquet"),
             "--output-dir",
@@ -152,44 +181,37 @@ def test_parse_args_uses_signed_msci_gamma_grid_without_config(tmp_path: Path):
         ]
     )
 
-    assert args.gamma_grid == "0,0.1,0.25,0.5,1.0,1.5"
+    assert args.gamma_grid == "0.0,0.1,0.25,0.5,1.0,1.5"
     assert args.actor_identity_mode == "client_then_firm"
-    assert args.execution_anchor_modes == ("passive",)
+    assert args.execution_anchor_modes == ("passive", "aggressive")
 
 
 def test_parse_args_validates_and_canonicalizes_execution_anchor_modes(tmp_path: Path):
     module = load_module()
+    config_path = write_config(tmp_path, execution_anchor_modes=["aggressive", "passive"])
     common = [
         "--config",
-        str(tmp_path / "missing.json"),
+        str(config_path),
         "--input",
         str(tmp_path / "input.parquet"),
         "--output-dir",
         str(tmp_path / "out"),
     ]
 
-    args = module.parse_args(
-        [
-            *common,
-            "--actor-identity-mode",
-            "client_then_firm",
-            "--execution-anchor-modes",
-            "aggressive,passive",
-        ]
-    )
+    args = module.parse_args(common)
 
     assert args.actor_identity_mode == "client_then_firm"
     assert args.execution_anchor_modes == ("passive", "aggressive")
 
-    for invalid in ("", "passive,unknown", "passive,passive"):
+    for invalid in ([], ["passive", "unknown"], ["passive", "passive"]):
+        invalid_config = write_config(tmp_path, execution_anchor_modes=invalid)
         with pytest.raises(SystemExit):
-            module.parse_args([*common, "--execution-anchor-modes", invalid])
+            module.parse_args(["--config", str(invalid_config), *common[2:]])
 
 
 def test_parse_args_rejects_invalid_actor_identity_mode_from_config(tmp_path: Path):
     module = load_module()
-    config_path = tmp_path / "spoofing_parameters.json"
-    config_path.write_text(json.dumps({"metrics": {"actor_identity_mode": "invalid_mode"}}))
+    config_path = write_config(tmp_path, actor_identity_mode="invalid_mode")
 
     with pytest.raises(SystemExit):
         module.parse_args(
@@ -203,7 +225,7 @@ def test_parse_args_rejects_invalid_actor_identity_mode_from_config(tmp_path: Pa
             ]
         )
 
-    config_path.write_text(json.dumps({"metrics": {"execution_anchor_modes": {"passive": True}}}))
+    config_path = write_config(tmp_path, execution_anchor_modes={"passive": True})
     with pytest.raises(SystemExit):
         module.parse_args(
             [
@@ -216,7 +238,7 @@ def test_parse_args_rejects_invalid_actor_identity_mode_from_config(tmp_path: Pa
             ]
         )
 
-    config_path.write_text(json.dumps({"metrics": {"state_client_mode": "invalid-mode"}}))
+    config_path = write_config(tmp_path, state_client_mode="invalid-mode")
     with pytest.raises(SystemExit):
         module.parse_args(
             [
@@ -230,30 +252,23 @@ def test_parse_args_rejects_invalid_actor_identity_mode_from_config(tmp_path: Pa
         )
 
 
-def test_parse_args_loads_spoofing_metric_parameters_from_config_with_cli_overrides(tmp_path: Path):
+def test_parse_args_loads_spoofing_metric_parameters_only_from_config(tmp_path: Path):
     module = load_module()
-    config_path = tmp_path / "spoofing_parameters.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "metrics": {
-                    "top_n": 5,
-                    "kappa": 2.0,
-                    "lambda": 0.5,
-                    "window_seconds": 30.0,
-                    "withdrawal_window_seconds": 2.0,
-                    "reversion_horizon_seconds": 3.0,
-                    "execution_cluster_max_gap_ms": 250,
-                    "max_deceptive_order_age_seconds": 120.0,
-                    "gamma_grid": [0.001, 0.01],
-                    "state_client_mode": "passive-fill-clients",
-                    "compact_state": True,
-                    "empirical_depth_kernel": str(tmp_path / "kernel.parquet"),
-                    "actor_identity_mode": "client_then_firm",
-                    "execution_anchor_modes": ["aggressive", "passive"],
-                }
-            }
-        )
+    config_path = write_config(
+        tmp_path,
+        top_n=5,
+
+        window_seconds=30.0,
+        withdrawal_window_seconds=2.0,
+        reversion_horizon_seconds=3.0,
+        execution_cluster_max_gap_ms=250,
+        max_deceptive_order_age_seconds=120.0,
+        gamma_grid=[0.001, 0.01],
+        state_client_mode="passive-fill-clients",
+        compact_state=True,
+        empirical_depth_kernel=str(tmp_path / "kernel.parquet"),
+        actor_identity_mode="client_then_firm",
+        execution_anchor_modes=["aggressive", "passive"],
     )
 
     args = module.parse_args(
@@ -266,15 +281,13 @@ def test_parse_args_loads_spoofing_metric_parameters_from_config_with_cli_overri
             str(tmp_path / "quotes.parquet"),
             "--output-dir",
             str(tmp_path / "out"),
-            "--top-n",
-            "7",
         ]
     )
 
     assert args.config == config_path
-    assert args.top_n == 7
-    assert args.kappa == 2.0
-    assert args.lambda_ == 0.5
+    assert args.top_n == 5
+    assert not hasattr(args, "kappa")
+    assert not hasattr(args, "lambda_")
     assert args.window_seconds == 30.0
     assert args.withdrawal_window_seconds == 2.0
     assert args.reversion_horizon_seconds == 3.0
@@ -288,53 +301,39 @@ def test_parse_args_loads_spoofing_metric_parameters_from_config_with_cli_overri
     assert args.actor_identity_mode == "client_then_firm"
     assert args.execution_anchor_modes == ("passive", "aggressive")
 
-    cli_kernel = tmp_path / "cli_kernel.parquet"
-    cli_args = module.parse_args(
-        [
-            "--input",
-            str(tmp_path / "input.parquet"),
-            "--quote-panel",
-            str(tmp_path / "quotes.parquet"),
-            "--output-dir",
-            str(tmp_path / "out"),
-            "--empirical-depth-kernel",
-            str(cli_kernel),
-        ]
-    )
-    assert cli_args.empirical_depth_kernel == cli_kernel
-
-    override_args = module.parse_args(
-        [
-            "--config",
-            str(config_path),
-            "--input",
-            str(tmp_path / "input.parquet"),
-            "--quote-panel",
-            str(tmp_path / "quotes.parquet"),
-            "--output-dir",
-            str(tmp_path / "out"),
-            "--no-compact-state",
-        ]
-    )
-    assert override_args.compact_state is False
+    with pytest.raises(SystemExit):
+        module.parse_args(
+            [
+                "--config",
+                str(config_path),
+                "--input",
+                str(tmp_path / "input.parquet"),
+                "--output-dir",
+                str(tmp_path / "out"),
+                "--top-n",
+                "7",
+            ]
+        )
 
 
 def test_parse_args_validates_execution_cluster_gap(tmp_path: Path):
     module = load_module()
+    config_path = write_config(tmp_path, tick_size=0.01, execution_cluster_max_gap_ms=50)
     common = [
+        "--config",
+        str(config_path),
         "--input",
         str(tmp_path / "input.parquet"),
         "--output-dir",
         str(tmp_path / "out"),
-        "--tick-size",
-        "0.01",
     ]
 
-    args = module.parse_args([*common, "--execution-cluster-max-gap-ms", "50"])
+    args = module.parse_args(common)
     assert args.execution_cluster_max_gap_ms == 50
 
+    invalid_config = write_config(tmp_path, tick_size=0.01, execution_cluster_max_gap_ms=-1)
     with pytest.raises(SystemExit):
-        module.parse_args([*common, "--execution-cluster-max-gap-ms", "-1"])
+        module.parse_args(["--config", str(invalid_config), *common[2:]])
 
 
 def test_parse_args_rejects_removed_epsilon_option(tmp_path: Path):
@@ -343,7 +342,7 @@ def test_parse_args_rejects_removed_epsilon_option(tmp_path: Path):
         module.parse_args(
             [
                 "--config",
-                str(tmp_path / "missing.json"),
+                str(CONFIG_PATH),
                 "--input",
                 str(tmp_path / "input.parquet"),
                 "--output-dir",
@@ -385,11 +384,17 @@ def test_main_versions_actor_anchor_artifacts_and_audit_metadata(tmp_path: Path,
             "NMSC_ORIGINALCLIENTIDSHORTCODE": [None, None],
             "FIRMID": [None, "F1"],
             "ORDER_TRADINGCAPACITY (*)": [1, 1],
+            "ORDEREVENTTYPE (*)": [3, 3],
+            "PASSIVEORDER": ["Y", "N"],
+            "AGGRESSIVEORDER": ["N", "Y"],
         },
         schema={
             "NMSC_ORIGINALCLIENTIDSHORTCODE": pl.String,
             "FIRMID": pl.String,
             "ORDER_TRADINGCAPACITY (*)": pl.Int64,
+            "ORDEREVENTTYPE (*)": pl.Int64,
+            "PASSIVEORDER": pl.String,
+            "AGGRESSIVEORDER": pl.String,
         },
     ).write_parquet(input_path)
 
@@ -431,15 +436,11 @@ def test_main_versions_actor_anchor_artifacts_and_audit_metadata(tmp_path: Path,
     module.main(
         [
             "--config",
-            str(tmp_path / "missing.json"),
+            str(write_config(tmp_path, tick_size=0.01)),
             "--input",
             str(input_path),
             "--output-dir",
             str(output_dir),
-            "--tick-size",
-            "0.01",
-            "--execution-anchor-modes",
-            "aggressive,passive",
         ]
     )
 

@@ -1,37 +1,67 @@
 {
   "actor_identity_mode": "client_then_firm",
   "analytical_unit": "execution_cluster",
-  "created_at_utc": "2026-07-29T15:50:12.023629+00:00",
+  "created_at_utc": "2026-08-24T10:22:36.425578+00:00",
   "execution_anchor_modes": [
     "passive",
     "aggressive"
   ],
+  "external_alert_audit": {
+    "audit_path": "outputs/consob_alert_comparison/20260821_zero_client_sentinel_firm_fallback/external_alert_detector_overlap_audit.json",
+    "audit_sha256": "71a31e15dd31d3b8d4507dbdfa2892cd7758a07b16a3ea03e767987260eb957b",
+    "overall_counts": {
+      "identity_aligned_union_periods_with_strict_detection": 0,
+      "identity_aligned_union_timed_periods": 4,
+      "identity_unaligned_union_periods_with_strict_subject_scope_detection": 4,
+      "identity_unaligned_union_timed_periods": 30,
+      "source_date_only_periods": 1,
+      "source_external_periods": 37,
+      "source_periods_with_raw_subject_event": 37,
+      "source_timed_periods": 36,
+      "union_periods_with_matched_withdrawal": 30,
+      "union_periods_with_raw_subject_event": 34,
+      "union_periods_with_recovered_execution": 34,
+      "union_periods_with_strict_subject_scope_detection": 4,
+      "union_timed_periods": 34
+    },
+    "primary_source": {
+      "local_path_disclosed": false,
+      "sha256": "ab317fe461949012ade51577b5b5c6ff3eac0277e095982cde131efb3bb95f9b",
+      "source_kind": "primary_pdf"
+    },
+    "public_summary": {
+      "path": "paper/generated/external_alert_audit_summary.json",
+      "sha256": "fc985b32c5d37e62ef6284084805ad5c5963e338abd1328b1c08b34d180b4440"
+    },
+    "recall_unit": "identity-aligned unioned timed external-alert window with at least one strict detector execution",
+    "verification_tier": "external_subject_temporal_coverage_execution_recovery_and_strict_detector_overlap"
+  },
   "firm_fallback_semantics": "aggregate only when client_original_id is missing",
   "generator": "scripts/generate_spoofing_paper_tables.py",
   "runs": {
     "FERRARI": {
       "input_hashes": {
-        "execution_cancel_candidates": "324b27ed8755034ffb3aea6fc2bbfe83fcbd26b4ab4c6c70e46977559c7d88e4",
-        "execution_metrics": "6ecdbc8ffb629a80ab9c228d1936e3956f5d8b4c94f4396f094d3ed6f1615b4d",
-        "run_metadata": "71c93ff9bebaeb3fe8f5c7d41b1d3be2f36220d3a3f31393776549ace048deda"
+        "execution_cancel_candidates": "f4875c4143b0d7d43dea234106ec801383019bdede0086b5fb811b4fb2fc6e88",
+        "execution_metrics": "df9e9192ce6fdba13a20be15f5ceb7ebc1b1556a7368874f47c50c249319beae",
+        "run_metadata": "93bef61f53e33108acebf191ef712441ec5930bf5bab3c6c68683d54ea434cc2"
       },
-      "run_dir": "/dev/shm/spoofing_detection/20260728_173801_actor_execution_anchor_v2_dashboard_refresh/FERRARI_top10_h10_age90_actor_execution_anchor_v2"
+      "run_dir": "outputs/spoofing_metrics/20260821_170856_zero_client_sentinel_firm_fallback/FERRARI_top10_h10_age90_zero_client_firm_fallback"
     },
     "NEXI": {
       "input_hashes": {
-        "execution_cancel_candidates": "62f858291d814d953b9a95173e83d13ba2ab0a2f9e616699970e9c590b2ef3e5",
-        "execution_metrics": "d30db45c676f7d861b6e7cd3671190b3dd3a96bf111fca820902e542b0a50635",
-        "run_metadata": "953a32d5de88211f59e624a7eb70bbb7cb2abfb364cd385cb046e56943736629"
+        "execution_cancel_candidates": "9c93fbaf977ba9550ada1f201569e16d0f6bcbce019c2129b2d680a7b424edd8",
+        "execution_metrics": "2575fc76d981ca6d7550690eb4ce8f87d4c71c3a344250f8671ecad2f12c794c",
+        "run_metadata": "3050966c44fec23f30ca1960826031151e913e57fd27d7b090c333f62e7d77f8"
       },
-      "run_dir": "/dev/shm/spoofing_detection/20260728_173801_actor_execution_anchor_v2_dashboard_refresh/NEXI_top10_h10_age90_actor_execution_anchor_v2"
+      "run_dir": "outputs/spoofing_metrics/20260821_170856_zero_client_sentinel_firm_fallback/NEXI_top10_h10_age90_zero_client_firm_fallback"
     },
     "RISANAMENTO": {
       "input_hashes": {
-        "execution_cancel_candidates": "4e48cee8a54c735690bf31c169ff3838012f6f0e00cfcf593445696d5b7ef899",
-        "execution_metrics": "ecd0de56c1ad53fc169eb8262d095fa79c1b46dd84e777bd904469fbd74048d3",
-        "run_metadata": "2da53f94c3e1818e4075e1f5189aeae9e08c377e503589376f923e8bb82d8a8a"
+        "execution_cancel_candidates": "f44d2222b10fb1b752826a82d5422b0e979e76024d080f11e77c5eb5ae6ac614",
+        "execution_metrics": "4d0094f394f07394efae04031a5801586fa2cf5ef11dcd8fe39e44e402a52b5d",
+        "run_metadata": "ded283af52a11028c1903e93d47fbbfeaea14291956e3b1ad869d8ae91150267"
       },
-      "run_dir": "/dev/shm/spoofing_detection/20260728_173801_actor_execution_anchor_v2_dashboard_refresh/RISANAMENTO_top10_h10_age90_actor_execution_anchor_v2"
+      "run_dir": "outputs/spoofing_metrics/20260821_170856_zero_client_sentinel_firm_fallback/RISANAMENTO_top10_h10_age90_zero_client_firm_fallback"
     }
   }
 }

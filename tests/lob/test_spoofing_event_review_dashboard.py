@@ -13,10 +13,19 @@ from spoofing_detection.lob.models import ActiveOrder
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "build_spoofing_event_review_dashboard.py"
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "spoofing_detection_parameters.json"
 _spec = importlib.util.spec_from_file_location("build_spoofing_event_review_dashboard", SCRIPT_PATH)
 assert _spec is not None and _spec.loader is not None
 _review = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_review)
+
+
+def write_event_review_config(tmp_path: Path, **overrides: object) -> Path:
+    payload = json.loads(CONFIG_PATH.read_text())
+    payload["event_review"].update(overrides)
+    config_path = tmp_path / "spoofing_parameters.json"
+    config_path.write_text(json.dumps(payload))
+    return config_path
 
 
 def test_metric_metadata_accepts_signed_msci_provenance(tmp_path: Path):
@@ -234,19 +243,13 @@ def test_actor_queue_dict_reports_actor_percent_volume_and_priority():
     assert payload["client_original:client_2"]["priority"] == 2
 
 
-def test_parse_args_loads_event_review_parameters_from_config_with_cli_overrides(tmp_path: Path):
-    config_path = tmp_path / "spoofing_parameters.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "event_review": {
-                    "top_n": 10,
-                    "pre_window_seconds": 30.0,
-                    "post_window_seconds": 35.0,
-                    "queue_snapshot_mode": "key-events",
-                }
-            }
-        )
+def test_parse_args_loads_event_review_parameters_only_from_config(tmp_path: Path):
+    config_path = write_event_review_config(
+        tmp_path,
+        top_n=10,
+        pre_window_seconds=30.0,
+        post_window_seconds=35.0,
+        queue_snapshot_mode="key-events",
     )
 
     args = _review.parse_args(
@@ -261,13 +264,11 @@ def test_parse_args_loads_event_review_parameters_from_config_with_cli_overrides
             str(tmp_path / "candidate_deceptive_orders.parquet"),
             "--output-dir",
             str(tmp_path / "event_review"),
-            "--top-n",
-            "12",
         ]
     )
 
     assert args.config == config_path
-    assert args.top_n == 12
+    assert args.top_n == 10
     assert args.pre_window_seconds == 30.0
     assert args.post_window_seconds == 35.0
     assert args.queue_snapshot_mode == "key-events"
@@ -527,8 +528,8 @@ def test_dashboard_displays_trading_capacity_in_selector_summary_and_event_table
     assert "Dealing on own account" in html
     assert "Matched principal" in html
     assert "Any other capacity" in html
-    assert "signed contrast" in html
-    assert "same-side collapse dominates" in html
+    assert "contrasto con segno" in html
+    assert "riduzione sullo stesso lato prevale" in html
     assert "0–1 arithmetic mean" not in html
 
 
@@ -730,8 +731,31 @@ def test_dashboard_presents_wmsci_as_primary_event_metric(tmp_path):
     html = path.read_text()
 
     assert "WMSCI — intensità del ritiro attribuito" in html
-    assert "metrica principale di ordinamento" in html
+    assert "ordinati per WMSCI decrescente" in html
     assert "MSCI del profilo a riposo" in html
+
+
+def test_dashboard_opens_with_one_plain_language_wmsci_msci_guide_and_example(tmp_path):
+    path = tmp_path / "dashboard.html"
+    review_events, event_log, queue = _minimal_dashboard_frames()
+
+    _review.write_dashboard(
+        path,
+        review_events=review_events,
+        event_log=event_log,
+        queue=queue,
+    )
+
+    html = path.read_text()
+
+    assert html.index("Come leggere WMSCI e MSCI") < html.index("Cosa contiene questa dashboard")
+    assert "WMSCI misura l’intensità del ritiro attribuito" in html
+    assert "MSCI descrive come cambia la forma relativa del book" in html
+    assert "WMSCI = 3,2" in html
+    assert "MSCI = 0,8" in html
+    assert "non significa “3,2 volte più sospetto”" in html
+    assert "metrica principale di ordinamento" not in html
+    assert "Il nome canonico nello schema v2 è" not in html
 
 
 def test_review_population_summary_distinguishes_all_clusters_candidates_and_complete_sequences():
@@ -942,7 +966,7 @@ def test_dashboard_explains_population_evidence_levels_and_four_controls_in_plai
     assert 'id="evidenceFilter"' in html
     assert "Solo sequenze complete" in html
     assert "Solo candidati da approfondire" in html
-    assert "non dimostra da solo un intento manipolativo" in html
+    assert "non probabilità né prove di intento" in html
     assert "non coincide con la valutazione dei quattro controlli del singolo evento" in html
 
 
@@ -1010,8 +1034,6 @@ def test_parse_args_supports_key_event_queue_snapshots(tmp_path):
             str(tmp_path / "candidates.parquet"),
             "--output-dir",
             str(tmp_path / "out"),
-            "--queue-snapshot-mode",
-            "key-events",
         ]
     )
 

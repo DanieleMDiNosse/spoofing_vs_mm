@@ -9,7 +9,7 @@ from spoofing_detection.lob.panel import reconstruct_dataframe
 
 
 def ev(seq: int, event_type: int, order_id: str, side: int | None, price, leaves, displayed, *,
-       firm="F1", client="C1", order_type=2, order_qty=None, last_shares=None, last_px=None,
+       firm: object = "F1", client: object = "C1", order_type=2, order_qty=None, last_shares=None, last_px=None,
        priority=None, passive="N", aggressive="N", execution_id=0, trade_uid=None,
        trade_time=None):
     return {
@@ -149,6 +149,22 @@ def test_missing_client_identity_is_flagged_but_firm_state_is_kept():
     result = reconstruct(rows)
     r1 = row(result.panel, 1)
     assert r1["client_original_id_missing_flag"] is True
+    assert r1["post_firm_active_bid_visible_qty"] == 10
+    assert r1["post_client_original_active_bid_visible_qty"] == 0
+
+
+def test_zero_client_sentinel_is_normalized_to_missing_and_firm_state_is_kept():
+    rows = [ev(1, 1, "B1", 1, 100.0, 10, 10, firm="F1", client=0.0)]
+
+    result = reconstruct(rows)
+    normalized = result.normalized_events.row(0, named=True)
+    r1 = row(result.panel, 1)
+
+    assert normalized["client_original_id"] is None
+    assert normalized["NMSC_ORIGINALCLIENTIDSHORTCODE"] is None
+    assert normalized["client_original_id_missing_flag"] is True
+    assert "zero_client_original_id_sentinel" in normalized["normalization_issue_flags"]
+    assert "missing_client_original_id" in normalized["normalization_issue_flags"]
     assert r1["post_firm_active_bid_visible_qty"] == 10
     assert r1["post_client_original_active_bid_visible_qty"] == 0
 

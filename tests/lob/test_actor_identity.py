@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from decimal import Decimal
 
 import pytest
 
@@ -54,6 +55,40 @@ def test_missing_client_falls_back_to_firm_without_calling_it_client():
     assert actor.identity_level == "firm"
     assert actor.identity_source == "FIRMID"
     assert actor.identity_fallback_flag is True
+
+
+@pytest.mark.parametrize(
+    "client_sentinel",
+    [0, 0.0, -0.0, "0", " 0 ", "0.0", "0.00", "0e0", "-0.00", Decimal("0.00")],
+)
+def test_zero_client_sentinel_falls_back_to_firm(client_sentinel):
+    actor = resolve_actor_identity(client_original_id=client_sentinel, firm_id="F1")
+
+    assert actor is not None
+    assert actor.actor_key == "firm:F1"
+    assert actor.actor_id == "F1"
+    assert actor.identity_level == "firm"
+    assert actor.identity_source == "FIRMID"
+    assert actor.identity_fallback_flag is True
+
+
+def test_zero_client_sentinel_without_firm_is_unattributable():
+    assert resolve_actor_identity(client_original_id=0.0, firm_id=None) is None
+
+
+def test_zero_client_sentinel_does_not_merge_distinct_firms():
+    first = resolve_actor_identity(client_original_id=0.0, firm_id="F1")
+    second = resolve_actor_identity(client_original_id=0.0, firm_id="F2")
+
+    assert same_actor(first, second) is False
+
+
+def test_zero_firm_identifier_is_preserved_when_client_is_missing():
+    actor = resolve_actor_identity(client_original_id=None, firm_id=0.0)
+
+    assert actor is not None
+    assert actor.actor_key == "firm:0"
+    assert actor.identity_level == "firm"
 
 
 def test_namespaces_prevent_raw_identifier_collision():

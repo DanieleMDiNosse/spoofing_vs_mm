@@ -20,10 +20,16 @@ from spoofing_detection.lob.spoofing_metrics import (
     compute_client_top_n_exposures,
     compute_exploratory_metrics,
     compute_mcps_scores,
-    depth_kernel_weights,
     infer_tick_size_from_best_quotes,
     shifted_depth_distance_ticks,
 )
+
+
+EMPIRICAL_KERNEL_WEIGHTS = {
+    "bid": {rank: 1.0 for rank in range(1, 11)},
+    "ask": {rank: 1.0 for rank in range(1, 11)},
+}
+
 
 
 @pytest.mark.parametrize(
@@ -185,11 +191,42 @@ def test_shifted_depth_distance_gives_level_one_positive_distance():
     assert shifted_depth_distance_ticks("ask", price=100.3, best_price=100.2, tick_size=0.1) == pytest.approx(2.0)
 
 
-def test_depth_kernel_weights_are_normalized_and_positive():
-    weights = depth_kernel_weights([1.0, 2.0, 3.0], kappa=1.0, lambda_=0.5)
+def test_actor_exposures_require_empirical_kernel_weights():
+    active = {
+        "BID": order("BID", "bid", 100.0, 10.0, "C1"),
+        "ASK": order("ASK", "ask", 100.1, 10.0, "C1"),
+    }
 
-    assert sum(weights) == pytest.approx(1.0)
-    assert all(weight > 0 for weight in weights)
+    with pytest.raises(ValueError, match="empirical depth kernel"):
+        spoofing_metrics_module.compute_actor_top_n_exposures(
+            active,
+            top_n=1,
+            tick_size=0.1,
+            partition_id="P",
+            sort_index=10,
+            event_ts=None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("weights", "message"),
+    [
+        ({"bid": {1: 1.0}}, "bid and ask"),
+        ({"bid": {1: 1.0}, "ask": {1: 1.0}}, "missing ranks: 2"),
+        ({"bid": {1: 1.0, 2: -0.1}, "ask": {1: 1.0, 2: 1.0}}, "finite and non-negative"),
+    ],
+)
+def test_actor_exposures_reject_malformed_empirical_kernel(weights, message):
+    with pytest.raises(ValueError, match=message):
+        compute_actor_top_n_exposures(
+            {},
+            top_n=2,
+            tick_size=0.1,
+            partition_id="P",
+            sort_index=10,
+            event_ts=None,
+            empirical_kernel_weights=weights,
+        )
 
 
 def test_compute_client_top_n_exposures_uses_paper_aligned_dwi():
@@ -206,8 +243,7 @@ def test_compute_client_top_n_exposures_uses_paper_aligned_dwi():
         active,
         top_n=2,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
         partition_id="P",
         sort_index=10,
         event_ts=None,
@@ -215,12 +251,11 @@ def test_compute_client_top_n_exposures_uses_paper_aligned_dwi():
     by_client = {row["client_id"]: row for row in rows}
 
     c1 = by_client["C1"]
-    weights = depth_kernel_weights([1.0, 2.0], kappa=1.0, lambda_=0.5)
+    weights = [0.5, 0.5]
     expected_l_bid = weights[0] * 1.0 + weights[1] * 0.4
     expected_l_ask = weights[0] * 1.0 + weights[1] * 0.0
     expected_dwi = (expected_l_ask - expected_l_bid) / (expected_l_ask + expected_l_bid)
 
-    assert c1["lambda_"] == pytest.approx(0.5)
     assert c1["bid_level_1_depth_distance_ticks"] == pytest.approx(1.0)
     assert c1["bid_level_2_depth_distance_ticks"] == pytest.approx(2.0)
     assert c1["bid_level_1_client_relative_depth"] == pytest.approx(1.0)
@@ -246,8 +281,6 @@ def test_compute_client_top_n_exposures_can_use_empirical_rank_weights():
         active,
         top_n=2,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
         partition_id="P",
         sort_index=10,
         event_ts=None,
@@ -274,8 +307,7 @@ def test_compute_client_top_n_exposures_can_filter_to_clients_of_interest():
         active,
         top_n=2,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
         partition_id="P",
         sort_index=10,
         event_ts=None,
@@ -295,8 +327,7 @@ def test_compute_client_top_n_exposures_filters_numeric_client_ids_as_strings():
         active,
         top_n=2,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
         partition_id="P",
         sort_index=10,
         event_ts=None,
@@ -316,8 +347,7 @@ def test_compute_actor_top_n_exposures_keeps_client_and_firm_namespaces_distinct
         active,
         top_n=1,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
         partition_id="P",
         sort_index=10,
         event_ts=None,
@@ -339,8 +369,7 @@ def test_compute_actor_top_n_exposures_emits_explicit_zero_profile_by_actor_key(
         {"CLIENT": order("CLIENT", "bid", 100.0, 10.0, "C1")},
         top_n=1,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
         partition_id="P",
         sort_index=10,
         event_ts=None,
@@ -375,8 +404,11 @@ def test_firm_fallback_passive_execution_is_attributed_end_to_end():
     ]
 
     result = compute_exploratory_metrics(
-        pl.DataFrame(rows), top_n=2, tick_size=0.1, kappa=1.0,
-        lambda_=0.5, window_seconds=1.0,
+        pl.DataFrame(rows),
+        top_n=2,
+        tick_size=0.1,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
+        window_seconds=1.0,
     )
 
     assert result.rejected_executions.height == 0
@@ -407,8 +439,11 @@ def test_aggressive_execution_uses_trade_fields_without_active_order():
     ]
 
     result = compute_exploratory_metrics(
-        pl.DataFrame(rows), top_n=2, tick_size=0.1, kappa=1.0,
-        lambda_=0.5, window_seconds=1.0,
+        pl.DataFrame(rows),
+        top_n=2,
+        tick_size=0.1,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
+        window_seconds=1.0,
     )
 
     execution = result.execution_metrics.row(0, named=True)
@@ -464,8 +499,7 @@ def test_selected_aggressive_actor_without_resting_orders_gets_zero_state_row():
             pl.DataFrame(rows),
             top_n=2,
             tick_size=0.1,
-            kappa=1.0,
-            lambda_=0.5,
+            empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
             window_seconds=1.0,
             state_actor_keys=state_actor_keys,
         )
@@ -520,8 +554,7 @@ def test_execution_actor_state_filter_preserves_all_analytical_artifacts():
     kwargs = {
         "top_n": 2,
         "tick_size": 0.1,
-        "kappa": 1.0,
-        "lambda_": 0.5,
+        "empirical_kernel_weights": EMPIRICAL_KERNEL_WEIGHTS,
         "window_seconds": 1.0,
     }
 
@@ -556,8 +589,7 @@ def test_actor_state_chunking_preserves_schema_order_and_values(monkeypatch):
     kwargs = {
         "top_n": 2,
         "tick_size": 0.1,
-        "kappa": 1.0,
-        "lambda_": 0.5,
+        "empirical_kernel_weights": EMPIRICAL_KERNEL_WEIGHTS,
         "include_level_columns": False,
     }
     monkeypatch.setattr(spoofing_metrics_module, "_STATE_ROW_CHUNK_SIZE", 1_000_000)
@@ -575,8 +607,7 @@ def test_empty_execution_artifacts_preserve_actor_anchor_audit_schema():
         pl.DataFrame([raw_event(1, 1, "B0", 1, 100.0, 100, 100, "C1")]),
         top_n=2,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
         window_seconds=1.0,
     )
 
@@ -613,8 +644,7 @@ def test_empty_state_artifact_preserves_actor_metric_schema():
         empty_events,
         top_n=2,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
         window_seconds=1.0,
     )
 
@@ -646,8 +676,7 @@ def test_compute_exploratory_metrics_can_emit_compact_state_for_selected_clients
         df,
         top_n=2,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
         window_seconds=1.0,
         include_level_columns=False,
         state_client_ids={"C1"},
@@ -691,7 +720,12 @@ def test_compute_client_metric_time_series_emits_client_only_top_n_dwi_states():
         ]
     )
 
-    states = compute_client_metric_time_series(df, top_n=2, tick_size=0.1, kappa=1.0, lambda_=0.5)
+    states = compute_client_metric_time_series(
+        df,
+        top_n=2,
+        tick_size=0.1,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
+    )
 
     assert set(states["client_id"].drop_nulls().to_list()) == {"C1", "C2"}
     c1_latest = states.filter(pl.col("client_id") == "C1").tail(1).to_dicts()[0]
@@ -1048,7 +1082,11 @@ def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
     )
 
     result = compute_exploratory_metrics(
-        df, top_n=2, tick_size=0.1, kappa=1.0, lambda_=0.5, window_seconds=1.0
+        df,
+        top_n=2,
+        tick_size=0.1,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
+        window_seconds=1.0
     )
 
     assert result.execution_metrics.height == 1
@@ -1100,7 +1138,7 @@ def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
     assert result.direct_cancellations.height == 1
     assert result.candidate_deceptive_orders.height == 1
     candidate = result.candidate_deceptive_orders.to_dicts()[0]
-    weights = depth_kernel_weights([1.0, 2.0], kappa=1.0, lambda_=0.5)
+    weights = [0.5, 0.5]
     assert candidate["execution_sort_index"] == 5
     assert candidate["deceptive_order_id"] == "BD"
     assert candidate["deceptive_order_level"] == 2
@@ -1113,6 +1151,48 @@ def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
     assert candidate["deceptive_order_age_seconds_pre"] == pytest.approx(3.0)
     assert "fake_side" not in row
     assert "candidate_fake_order_ids_pre" not in row
+
+
+def test_matched_withdrawal_is_capped_at_pre_execution_candidate_quantity():
+    df = pl.DataFrame(
+        [
+            raw_event(1, 1, "B0", 1, 100.0, 100, 100, "C2"),
+            raw_event(2, 1, "BD", 1, 99.9, 50, 50, "C1"),
+            raw_event(3, 1, "A1", 2, 100.2, 5, 5, "C1"),
+            raw_event(4, 1, "A0", 2, 100.3, 100, 100, "C2"),
+            raw_event(
+                5, 3, "A1", 2, 100.2, 0, 0, "C1",
+                last_shares=5,
+                bookout="2024-01-02 09:30:05.000000",
+            ),
+            raw_event(
+                6, 2, "BD", 1, 99.9, 60, 60, "C1",
+                bookout="2024-01-02 09:30:05.250000",
+            ),
+            raw_event(
+                7, 4, "BD", 1, 99.9, 0, 0, "C1",
+                bookout="2024-01-02 09:30:05.500000",
+            ),
+        ]
+    )
+
+    result = compute_exploratory_metrics(
+        df,
+        top_n=2,
+        tick_size=0.1,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
+        window_seconds=1.0,
+    )
+
+    row = result.execution_metrics.to_dicts()[0]
+    candidate = result.execution_cancel_candidates.filter(pl.col("assigned_flag")).to_dicts()[0]
+    assert row["candidate_deceptive_visible_qty_pre"] == pytest.approx(50.0)
+    assert candidate["visible_qty_pre_cancel"] == pytest.approx(60.0)
+    assert candidate["candidate_visible_qty_pre"] == pytest.approx(50.0)
+    assert candidate["attributed_cancel_visible_qty"] == pytest.approx(50.0)
+    assert row["matched_deceptive_cancel_visible_qty_window"] == pytest.approx(50.0)
+    assert row["matched_deceptive_cancel_fraction_window"] == pytest.approx(1.0)
+    assert row["weighted_net_withdrawal_qty_window"] == pytest.approx(50.0 * math.exp(-0.5 / 10.0))
 
 
 def test_fragmented_passive_fills_become_one_cluster_with_raw_members_and_single_cancellation():
@@ -1152,8 +1232,7 @@ def test_fragmented_passive_fills_become_one_cluster_with_raw_members_and_single
         pl.DataFrame(rows),
         top_n=2,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
         window_seconds=1.0,
         execution_cluster_max_gap_ms=100,
     )
@@ -1270,8 +1349,7 @@ def test_candidate_deceptive_profile_must_be_recent_within_timing_window():
         df,
         top_n=2,
         tick_size=0.1,
-        kappa=1.0,
-        lambda_=0.5,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
         window_seconds=1.0,
         max_deceptive_order_age_seconds=600.0,
     )
@@ -1329,7 +1407,11 @@ def test_broad_opposite_cancel_is_not_a_matched_deceptive_profile_cancel():
     )
 
     result = compute_exploratory_metrics(
-        df, top_n=3, tick_size=0.1, kappa=1.0, lambda_=0.5, window_seconds=1.0
+        df,
+        top_n=3,
+        tick_size=0.1,
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
+        window_seconds=1.0
     )
 
     row = result.execution_metrics.to_dicts()[0]

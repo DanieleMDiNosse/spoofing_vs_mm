@@ -80,6 +80,55 @@ def test_audit_missing_client_trading_capacity_reports_bad_capacity():
     assert audit["claim_holds"] is False
 
 
+def test_audit_treats_zero_client_sentinel_as_missing_and_reports_it_separately():
+    df = pl.DataFrame(
+        {
+            "NMSC_ORIGINALCLIENTIDSHORTCODE": [0.0, None, 123.0],
+            "ORDER_TRADINGCAPACITY (*)": [3, 1, 3],
+            "ORDER_TRADINGCAPACITY (*) (Tooltip)": [
+                "3 : Any_other_capacity",
+                "1 : Dealing_on_own_account",
+                "3 : Any_other_capacity",
+            ],
+        }
+    )
+
+    audit = audit_missing_client_trading_capacity(df)
+
+    assert audit["zero_client_sentinel_rows"] == 1
+    assert audit["missing_client_rows"] == 2
+    assert audit["missing_client_bad_capacity_rows"] == 1
+    assert audit["missing_client_bad_tooltip_rows"] == 1
+    assert audit["claim_holds"] is False
+
+
+def test_normalize_event_recognizes_scaled_and_scientific_zero_client_sentinels():
+    for sentinel in ("0.00", "0e0", "-0.00"):
+        event = normalize_event(
+            minimal_raw_event(NMSC_ORIGINALCLIENTIDSHORTCODE=sentinel),
+            sort_index=1,
+            config=LOBConfig(),
+        )
+
+        assert event["client_original_id"] is None
+        assert event["client_original_id_missing_flag"] is True
+        assert "zero_client_original_id_sentinel" in event["normalization_issue_flags"]
+
+
+def test_audit_counts_scaled_and_scientific_zero_client_sentinels():
+    df = pl.DataFrame(
+        {
+            "NMSC_ORIGINALCLIENTIDSHORTCODE": ["0.00", "0e0", "-0.00", "C1"],
+            "ORDER_TRADINGCAPACITY (*)": [1, 1, 1, 3],
+        }
+    )
+
+    audit = audit_missing_client_trading_capacity(df)
+
+    assert audit["zero_client_sentinel_rows"] == 3
+    assert audit["missing_client_rows"] == 3
+
+
 def test_audit_missing_client_trading_capacity_uses_code_when_tooltip_absent():
     df = pl.DataFrame(
         {

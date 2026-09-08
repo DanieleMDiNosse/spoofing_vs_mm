@@ -76,6 +76,11 @@ Set `SIGNED_RUN_DIR` to a run whose `metadata.json` declares
 `exact_piecewise_v1` zero-denominator policy. The dashboard rejects missing or
 legacy metric provenance rather than relabeling incompatible outputs.
 
+Tune `event_review.top_n`, `pre_window_seconds`, `post_window_seconds`,
+`max_events`, and `queue_snapshot_mode` in
+`configs/spoofing_detection_parameters.json`; scientific parameter overrides on
+the command line are rejected.
+
 ```bash
 SIGNED_RUN_DIR=outputs/spoofing_metrics/SIGNED_MSCI_RUN/RISANAMENTO_top10_h10_age90_empirical
 
@@ -87,11 +92,7 @@ PYTHONDONTWRITEBYTECODE=1 conda run -n main python scripts/build_spoofing_event_
   --execution-cluster-members "$SIGNED_RUN_DIR/execution_cluster_members.parquet" \
   --execution-cancel-candidates "$SIGNED_RUN_DIR/execution_cancel_candidates.parquet" \
   --client-session-alerts "$SIGNED_RUN_DIR/production_readiness/client_session_alerts.parquet" \
-  --output-dir "$SIGNED_RUN_DIR/event_review" \
-  --top-n 10 \
-  --pre-window-seconds 30 \
-  --post-window-seconds 35 \
-  --queue-snapshot-mode key-events
+  --output-dir "$SIGNED_RUN_DIR/event_review"
 ```
 
 The dashboard will show the saved LLM review for events with `response.md`; otherwise it shows a message explaining how to generate one.

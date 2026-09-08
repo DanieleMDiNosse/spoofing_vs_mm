@@ -33,14 +33,14 @@ from spoofing_detection.lob.spoofing_config import (
     DEFAULT_SPOOFING_CONFIG_PATH,
     load_spoofing_config_defaults,
     parse_execution_anchor_modes,
+    reject_parameter_overrides,
+    spoofing_config_provenance,
     validate_actor_identity_mode,
 )
 
 
 _CONFIGURABLE_DEFAULT_KEYS = {
     "depth_grid",
-    "kappa",
-    "lambda_",
     "window_seconds",
     "withdrawal_window_seconds",
     "reversion_horizon_seconds",
@@ -53,6 +53,23 @@ _CONFIGURABLE_DEFAULT_KEYS = {
     "empirical_depth_kernel",
     "actor_identity_mode",
     "execution_anchor_modes",
+}
+
+_CONFIG_PARAMETER_OPTIONS = {
+    "--depth-grid",
+    "--window-seconds",
+    "--withdrawal-window-seconds",
+    "--reversion-horizon-seconds",
+    "--execution-cluster-max-gap-ms",
+    "--max-deceptive-order-age-seconds",
+    "--gamma-grid",
+    "--tick-size",
+    "--max-rows",
+    "--empirical-depth-kernel",
+    "--actor-identity-mode",
+    "--execution-anchor-modes",
+    "--make-dashboard",
+    "--no-make-dashboard",
 }
 
 OUTPUT_SCHEMA_VERSION = "actor_execution_anchor_v2"
@@ -222,50 +239,52 @@ def _depth_counts_from_files(paths: dict[str, Path]) -> dict[str, int]:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     config_parser.add_argument("--config", type=Path, default=DEFAULT_SPOOFING_CONFIG_PATH)
     config_args, _ = config_parser.parse_known_args(argv)
-    config_defaults = load_spoofing_config_defaults(
-        config_path=config_args.config,
-        section="grid",
-        allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
-    )
+    try:
+        config_defaults = load_spoofing_config_defaults(
+            config_path=config_args.config,
+            section="grid",
+            allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
+        )
+    except (OSError, ValueError) as exc:
+        config_parser.error(str(exc))
 
-    parser = argparse.ArgumentParser(description="Run multidepth top-n MSCI/MCPS spoofing metrics.")
+    parser = argparse.ArgumentParser(
+        description="Run multidepth top-n MSCI/MCPS spoofing metrics.",
+        allow_abbrev=False,
+    )
     parser.add_argument(
         "--config",
         type=Path,
         default=config_args.config,
-        help="JSON config file containing spoofing parameter defaults",
+        help="Authoritative JSON file containing all multidepth-grid parameters",
     )
     parser.add_argument("--input", type=Path, required=True, help="Raw input parquet event file")
     parser.add_argument("--quote-panel", type=Path, default=None, help="Quote panel for tick-size inference")
     parser.add_argument("--output-dir", type=Path, required=True, help="Output directory")
-    parser.add_argument("--depth-grid", default="1,2,3,5,10", help="Comma-separated top-n depths")
-    parser.add_argument("--kappa", type=float, default=1.0, help="Execution-risk protection parameter")
-    parser.add_argument("--lambda", dest="lambda_", type=float, default=1.0, help="Visibility-decay parameter")
-    parser.add_argument("--window-seconds", type=float, default=1.0, help="Clock-time post-execution window")
-    parser.add_argument("--withdrawal-window-seconds", type=float, default=2.0, help="Post-cluster withdrawal outcome window")
-    parser.add_argument("--reversion-horizon-seconds", type=float, default=2.0, help="Post-cancellation price-reversion horizon")
-    parser.add_argument("--execution-cluster-max-gap-ms", type=int, default=100, help="Maximum inclusive gap between child fills in one execution cluster")
+    parser.add_argument("--depth-grid", help="Comma-separated top-n depths")
+
+    parser.add_argument("--window-seconds", type=float, help="Clock-time post-execution window")
+    parser.add_argument("--withdrawal-window-seconds", type=float, help="Post-cluster withdrawal outcome window")
+    parser.add_argument("--reversion-horizon-seconds", type=float, help="Post-cancellation price-reversion horizon")
+    parser.add_argument("--execution-cluster-max-gap-ms", type=int, help="Maximum inclusive gap between child fills in one execution cluster")
     parser.add_argument(
         "--max-deceptive-order-age-seconds",
         type=float,
-        default=600.0,
         help="Maximum age of candidate deceptive orders before the execution, in seconds",
     )
-    parser.add_argument("--gamma-grid", default="0,0.1,0.25,0.5,1.0,1.5", help="Comma-separated signed MSCI thresholds")
-    parser.add_argument("--tick-size", type=float, default=None, help="Optional explicit tick size")
-    parser.add_argument("--max-rows", type=int, default=None, help="Optional raw-row cap for smoke runs")
+    parser.add_argument("--gamma-grid", help="Comma-separated signed MSCI thresholds")
+    parser.add_argument("--tick-size", type=float, help="Optional explicit tick size")
+    parser.add_argument("--max-rows", type=int, help="Optional raw-row cap for smoke runs")
     parser.add_argument(
         "--actor-identity-mode",
         choices=("client_then_firm",),
-        default="client_then_firm",
         help="Resolve original client first, then use namespaced firm fallback only when client is missing.",
     )
     parser.add_argument(
         "--execution-anchor-modes",
-        default="passive",
         help="Comma-separated execution branches; canonical order is passive,aggressive.",
     )
     parser.add_argument(
@@ -276,16 +295,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--empirical-depth-kernel",
         type=Path,
-        default=None,
-        help="Optional empirical_depth_kernel parquet/csv artifact. When set, rank weights override scalar kappa/lambda in DWI/MSCI weighting.",
+        help="Required empirical_depth_kernel parquet/csv artifact containing rank weights for both sides.",
     )
     parser.add_argument(
         "--make-dashboard",
         action=argparse.BooleanOptionalAction,
-        default=False,
         help="Write one dashboard per depth",
     )
     parser.set_defaults(**config_defaults)
+    reject_parameter_overrides(
+        parser,
+        argv,
+        parameter_options=_CONFIG_PARAMETER_OPTIONS,
+    )
     args = parser.parse_args(argv)
     try:
         args.actor_identity_mode = validate_actor_identity_mode(args.actor_identity_mode)
@@ -294,6 +316,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error(str(exc))
     if args.empirical_depth_kernel is not None and not isinstance(args.empirical_depth_kernel, Path):
         args.empirical_depth_kernel = Path(args.empirical_depth_kernel)
+
     if args.execution_cluster_max_gap_ms < 0:
         parser.error("--execution-cluster-max-gap-ms must be non-negative")
     if args.withdrawal_window_seconds <= 0:
@@ -421,8 +444,7 @@ def _write_grid_summary(path: Path, *, metadata: dict[str, Any], combined_scores
         "",
         f"- input: `{metadata['input']}`",
         f"- depth_grid: {metadata['depth_grid']}",
-        f"- kappa: {metadata['kappa']}",
-        f"- lambda: {metadata['lambda_']}",
+
         f"- ratio_zero_denominator_policy: {metadata['ratio_zero_denominator_policy']}",
         f"- window_seconds: {metadata['window_seconds']}",
         f"- withdrawal_window_seconds: {metadata['withdrawal_window_seconds']}",
@@ -469,6 +491,8 @@ def _write_grid_summary(path: Path, *, metadata: dict[str, Any], combined_scores
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.empirical_depth_kernel is None:
+        raise ValueError("empirical_depth_kernel must be configured; the parametric kernel fallback has been removed")
     depth_grid = _parse_int_grid(args.depth_grid)
     gamma_grid = _parse_float_grid(args.gamma_grid)
     raw_events = pl.read_parquet(args.input)
@@ -482,10 +506,9 @@ def main(argv: list[str] | None = None) -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     client_audit = audit_missing_client_trading_capacity(raw_events_for_compute)
-    empirical_kernel_weights = (
-        load_empirical_kernel_weights(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None
-    )
+    empirical_kernel_weights = load_empirical_kernel_weights(args.empirical_depth_kernel)
     expected_metadata: dict[str, Any] = {
+        **spoofing_config_provenance(args.config, section="grid"),
         "input": str(args.input.resolve()),
         "input_sha256": _sha256(args.input),
         "quote_panel": str(args.quote_panel.resolve()) if args.quote_panel is not None else None,
@@ -499,8 +522,7 @@ def main(argv: list[str] | None = None) -> None:
         "score_grouping": SCORE_GROUPING,
         "market_orders_included": "aggressive" in args.execution_anchor_modes,
         "market_observation": _market_observation(args.execution_anchor_modes),
-        "kappa": args.kappa,
-        "lambda_": args.lambda_,
+
         "ratio_zero_denominator_policy": RATIO_ZERO_DENOMINATOR_POLICY,
         "window_seconds": args.window_seconds,
         "withdrawal_window_seconds": args.withdrawal_window_seconds,
@@ -510,13 +532,9 @@ def main(argv: list[str] | None = None) -> None:
         "gamma_grid": gamma_grid,
         "tick_size": tick_size,
         "max_rows": args.max_rows,
-        "empirical_depth_kernel": (
-            str(args.empirical_depth_kernel.resolve())
-            if args.empirical_depth_kernel is not None
-            else None
-        ),
+        "empirical_depth_kernel": str(args.empirical_depth_kernel.resolve()),
         "empirical_depth_kernel_sha256": _sha256(args.empirical_depth_kernel),
-        "kernel_mode": "empirical" if args.empirical_depth_kernel is not None else "parametric",
+        "kernel_mode": "empirical",
         **_analysis_metadata(),
         **_msci_metadata(),
     }
@@ -548,8 +566,7 @@ def main(argv: list[str] | None = None) -> None:
             raw_events_for_compute,
             top_n=top_n,
             tick_size=tick_size,
-            kappa=args.kappa,
-            lambda_=args.lambda_,
+
             window_seconds=args.window_seconds,
             withdrawal_window_seconds=args.withdrawal_window_seconds,
             reversion_horizon_seconds=args.reversion_horizon_seconds,
@@ -610,10 +627,10 @@ def main(argv: list[str] | None = None) -> None:
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         **expected_metadata,
         "output_dir": str(args.output_dir),
-        "config": str(args.config) if args.config is not None and args.config.exists() else None,
         "depth_grid": depth_grid,
         **_analysis_metadata(),
         "reuse_depth_outputs": args.reuse_depth_outputs,
+        "make_dashboard": args.make_dashboard,
         "client_identity_audit": client_audit,
         "actor_execution_audit": actor_execution_audit,
         "observed_execution_anchor_modes": list(parse_execution_anchor_modes(observed_execution_anchor_modes))

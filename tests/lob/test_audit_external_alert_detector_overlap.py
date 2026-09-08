@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "audit_external_alert_detector_overlap.py"
 SPEC = importlib.util.spec_from_file_location("audit_external_alert_detector_overlap", SCRIPT_PATH)
@@ -125,6 +126,48 @@ def test_canonical_actor_identity_normalizes_integral_float_storage():
     assert canonical.get_column("_actor_key").to_list() == ["client_original:123"]
 
 
+def test_canonical_actor_identity_treats_zero_client_as_missing_and_keeps_firms_separate():
+    raw = pl.DataFrame(
+        {
+            "TRADETIME": [datetime(2024, 1, 1, 9, 0), datetime(2024, 1, 1, 9, 0, 1)],
+            "BOOKOUTTIME": [None, None],
+            "BOOKIN": [None, None],
+            "SEQUENCETIME": [None, None],
+            "NMSC_ORIGINALCLIENTIDSHORTCODE": pl.Series([0.0, 0.0], dtype=pl.Float64),
+            "FIRMID": ["F1", "F2"],
+            "ORDEREVENTTYPE (*)": [3, 3],
+            "PASSIVEORDER": ["Y", "Y"],
+            "AGGRESSIVEORDER": ["N", "N"],
+            "LASTSHARES": [1, 1],
+            "LASTTRADEDPX": [100.0, 100.0],
+        }
+    )
+
+    canonical = module._with_canonical_fields(raw)
+
+    assert canonical.get_column("_actor_key").to_list() == ["firm:F1", "firm:F2"]
+    assert canonical.get_column(module.SOURCE_CLIENT_ID).to_list() == [None, None]
+    assert canonical.get_column(module.SOURCE_FIRM_ID).to_list() == ["F1", "F2"]
+
+
+def test_source_artifact_identities_normalize_scaled_zero_client_sentinel():
+    frame = pl.DataFrame(
+        {
+            "event_client": ["0.00", "0e0", "C1"],
+            "event_firm": ["F1", "F2", "F3"],
+        }
+    )
+
+    normalized = module._with_source_identities(
+        frame,
+        client_column="event_client",
+        firm_column="event_firm",
+    )
+
+    assert normalized.get_column(module.SOURCE_CLIENT_ID).to_list() == [None, None, "C1"]
+    assert normalized.get_column(module.SOURCE_FIRM_ID).to_list() == ["F1", "F2", "F3"]
+
+
 def test_audit_separates_subject_all_actor_union_and_date_only_recall(tmp_path):
     t0 = datetime(2024, 6, 13, 10, 0)
     raw = pl.DataFrame(
@@ -169,9 +212,18 @@ def test_audit_separates_subject_all_actor_union_and_date_only_recall(tmp_path):
             ],
             "execution_cluster_id": ["c1", "c2", "c3"],
             "execution_anchor_mode": ["passive", "aggressive", "aggressive"],
+            "cluster_start_ts": [t0, t0.replace(second=1), t0.replace(second=1)],
+            "cluster_end_ts": [t0, t0.replace(second=1), t0.replace(second=1)],
+            "execution_side": ["BUY", "SELL", "SELL"],
+            "execution_quantity": [10.0, 5.0, 7.0],
+            "execution_vwap": [100.0, 100.1, 100.2],
             "event_client_original_id": ["101", "202", "303"],
             "event_firm_id": ["F1", "F2", "F1"],
             "has_matched_deceptive_cancel_window": [True, True, True],
+            "gate_rapid_matched_withdrawal": [True, True, True],
+            "gate_small_fill_relative_to_withdrawal": [True, True, True],
+            "gate_favorable_pre_fill_move": [False, True, True],
+            "gate_cancel_anchored_reversion": [False, True, True],
             "spoofing_compatible_sequence": [False, True, True],
         }
     ).write_parquet(metrics_path / "execution_metrics.parquet")
@@ -225,6 +277,30 @@ def test_audit_separates_subject_all_actor_union_and_date_only_recall(tmp_path):
     assert timed["source_period_results"][0]["identity_granularity_aligned"] is False
     assert timed["source_period_results"][0]["detector_actor_key_count_in_period"] == 2
     assert timed["source_period_results"][0]["recovered_execution_clusters"] == 2
+    detector_events = timed["source_period_results"][0]["detector_events"]
+    assert len(detector_events) == 2
+    assert detector_events[0] == {
+        "event_alias": detector_events[0]["event_alias"],
+        "cluster_start": "2024-06-13T10:00:00",
+        "cluster_end": "2024-06-13T10:00:00",
+        "execution_anchor_mode": "passive",
+        "execution_side": "BUY",
+        "execution_quantity": 10.0,
+        "execution_vwap": 100.0,
+        "has_matched_withdrawal": True,
+        "gate_rapid_matched_withdrawal": True,
+        "gate_small_fill_relative_to_withdrawal": True,
+        "gate_favorable_pre_fill_move": False,
+        "gate_cancel_anchored_reversion": False,
+        "strict_detection": False,
+    }
+    assert detector_events[0]["event_alias"].startswith("detector_event_")
+    assert detector_events[0]["event_alias"] != detector_events[1]["event_alias"]
+    serialized_events = json.dumps(detector_events)
+    assert "client_original:101" not in serialized_events
+    assert '"c1"' not in serialized_events
+    assert "execution_cluster_id" not in serialized_events
+    assert "actor_key" not in serialized_events
     assert timed["source_period_results"][0]["subject_scope_detector_outcome"] == "strict_detection"
     assert timed["source_period_results"][0]["exact_actor_detector_outcome"] == (
         "identity_granularity_not_aligned_exact_actor_recall_not_identifiable"
@@ -265,6 +341,40 @@ def test_audit_separates_subject_all_actor_union_and_date_only_recall(tmp_path):
     assert row["date_level_rejected_execution_rows"] == 1
     assert row["detector_actor_key_count_in_period"] is None
     assert row["date_level_detector_actor_key_count_in_period"] == 2
+    assert row["detector_events"] is None
     assert date_only["source_timed_periods"] == 0
     assert date_only["union_timed_periods"] == 0
     assert date_only["union_periods_with_recovered_execution"] == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("has_matched_deceptive_cancel_window", None, "must be boolean"),
+        ("execution_side", None, "must be a non-empty string"),
+        ("execution_quantity", float("nan"), "must be positive and finite"),
+    ],
+)
+def test_detector_event_details_rejects_missing_or_invalid_scientific_values(
+    field: str, value: object, message: str
+) -> None:
+    metric = {
+        "actor_key": "client_original:101",
+        "execution_cluster_id": "cluster-1",
+        "cluster_start_ts": datetime(2024, 6, 13, 10, 0, 0),
+        "cluster_end_ts": datetime(2024, 6, 13, 10, 0, 1),
+        "execution_anchor_mode": "aggressive",
+        "execution_side": "ask",
+        "execution_quantity": 10.0,
+        "execution_vwap": 100.0,
+        "has_matched_deceptive_cancel_window": True,
+        "gate_rapid_matched_withdrawal": True,
+        "gate_small_fill_relative_to_withdrawal": True,
+        "gate_favorable_pre_fill_move": True,
+        "gate_cancel_anchored_reversion": True,
+        "spoofing_compatible_sequence": True,
+    }
+    metric[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        module._detector_event_details(pl.DataFrame([metric]), b"test-key")

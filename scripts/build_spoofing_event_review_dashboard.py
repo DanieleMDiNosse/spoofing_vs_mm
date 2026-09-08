@@ -30,7 +30,12 @@ from spoofing_detection.lob.panel import (
     _partition_id,
     sort_events,
 )
-from spoofing_detection.lob.spoofing_config import DEFAULT_SPOOFING_CONFIG_PATH, load_spoofing_config_defaults
+from spoofing_detection.lob.spoofing_config import (
+    DEFAULT_SPOOFING_CONFIG_PATH,
+    load_spoofing_config_defaults,
+    reject_parameter_overrides,
+    spoofing_config_provenance,
+)
 from spoofing_detection.lob.spoofing_metrics import (
     MSCI_DEFINITION,
     MSCI_RANGE,
@@ -48,25 +53,37 @@ _CONFIGURABLE_DEFAULT_KEYS = {
     "queue_snapshot_mode",
 }
 
+_CONFIG_PARAMETER_OPTIONS = {
+    "--top-n",
+    "--pre-window-seconds",
+    "--post-window-seconds",
+    "--max-events",
+    "--queue-snapshot-mode",
+}
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     config_parser.add_argument("--config", type=Path, default=DEFAULT_SPOOFING_CONFIG_PATH)
     config_args, _ = config_parser.parse_known_args(argv)
-    config_defaults = load_spoofing_config_defaults(
-        config_path=config_args.config,
-        section="event_review",
-        allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
-    )
+    try:
+        config_defaults = load_spoofing_config_defaults(
+            config_path=config_args.config,
+            section="event_review",
+            allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
+        )
+    except (OSError, ValueError) as exc:
+        config_parser.error(str(exc))
 
     parser = argparse.ArgumentParser(
-        description="Build an interactive review dashboard and exact queue parquet for matched spoofing-like events."
+        description="Build an interactive review dashboard and exact queue parquet for matched spoofing-like events.",
+        allow_abbrev=False,
     )
     parser.add_argument(
         "--config",
         type=Path,
         default=config_args.config,
-        help="JSON config file containing spoofing parameter defaults",
+        help="Authoritative JSON file containing all event-review parameters",
     )
     parser.add_argument("--input", type=Path, required=True, help="Raw input parquet event file")
     parser.add_argument("--execution-metrics", type=Path, required=True, help="execution_metrics.parquet from spoofing run")
@@ -77,14 +94,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="candidate_deceptive_orders.parquet from spoofing run",
     )
     parser.add_argument("--output-dir", type=Path, required=True, help="Output directory")
-    parser.add_argument("--top-n", type=int, default=10, help="Top book levels to include in queue snapshots")
-    parser.add_argument("--pre-window-seconds", type=float, default=30.0, help="Seconds before execution to show")
-    parser.add_argument("--post-window-seconds", type=float, default=5.0, help="Seconds after execution to show")
-    parser.add_argument("--max-events", type=int, default=None, help="Optional cap on matched events for smoke runs")
+    parser.add_argument("--top-n", type=int, help="Top book levels to include in queue snapshots")
+    parser.add_argument("--pre-window-seconds", type=float, help="Seconds before execution to show")
+    parser.add_argument("--post-window-seconds", type=float, help="Seconds after execution to show")
+    parser.add_argument("--max-events", type=int, help="Optional cap on matched events for smoke runs")
     parser.add_argument(
         "--queue-snapshot-mode",
         choices=("all", "key-events"),
-        default="all",
         help="Use 'key-events' to write queue snapshots only for nearest pre/execution/post events, reducing dashboard memory.",
     )
     parser.add_argument("--parameter-grid-root", type=Path, default=None, help="Optional root containing kappa/lambda sensitivity runs")
@@ -98,6 +114,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--execution-cluster-members", type=Path, default=None, help="Optional raw child-fill provenance parquet")
     parser.add_argument("--execution-cancel-candidates", type=Path, default=None, help="Optional assigned and competing cancellation links parquet")
     parser.set_defaults(**config_defaults)
+    reject_parameter_overrides(
+        parser,
+        argv,
+        parameter_options=_CONFIG_PARAMETER_OPTIONS,
+    )
     return parser.parse_args(argv)
 
 
@@ -796,38 +817,19 @@ def _parameter_table_html(
     post_window_seconds: float,
     metric_metadata: dict[str, Any],
 ) -> str:
-    kernel_mode = str(metric_metadata.get("kernel_mode") or "parametric")
-    if kernel_mode == "empirical":
-        kernel_rows = [
-            (
-                "Depth-kernel mode",
-                "empirical",
-                "Instrument- and side-specific rank weights estimated from observable level-reach and visibility data.",
-            ),
-            (
-                "Empirical-kernel artifact",
-                str(metric_metadata.get("empirical_depth_kernel") or "NA"),
-                "Calibration artifact supplying the operational rank weights for this metric run.",
-            ),
-        ]
-    else:
-        kernel_rows = [
-            (
-                "Depth-kernel mode",
-                kernel_mode,
-                "Parametric depth weights determined by the active kappa and lambda coefficients.",
-            ),
-            (
-                "kappa",
-                _format_number(metric_metadata.get("kappa")),
-                "Depth-kernel parameter controlling the protection-from-execution component.",
-            ),
-            (
-                "lambda",
-                _format_number(metric_metadata.get("lambda_")),
-                "Depth-kernel parameter controlling decay of informational visibility with distance.",
-            ),
-        ]
+    kernel_mode = str(metric_metadata.get("kernel_mode") or "unspecified")
+    kernel_rows = [
+        (
+            "Depth-kernel mode",
+            kernel_mode,
+            "Operational metrics require instrument- and side-specific empirical rank weights.",
+        ),
+        (
+            "Empirical-kernel artifact",
+            str(metric_metadata.get("empirical_depth_kernel") or "NA"),
+            "Calibration artifact supplying the operational rank weights for this metric run.",
+        ),
+    ]
     rows = [
         (
             "LOB review top-N depth",
@@ -1001,6 +1003,13 @@ h1 {{ margin-bottom: 0.2rem; text-align: center; }}
 .intro {{ color: #364152; max-width: 1180px; line-height: 1.45; }}
 .intro ul {{ margin: 0.5rem 0 0.2rem 1.2rem; padding: 0; }}
 .intro li {{ margin: 0.25rem 0; }}
+.metric-guide {{ color: #273449; line-height: 1.45; }}
+.metric-guide h2 {{ margin-bottom: 0.4rem; }}
+.metric-guide-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }}
+.metric-guide-item {{ border: 1px solid #dbe3ef; border-radius: 8px; padding: 12px; background: #f8fafc; }}
+.metric-guide-item h3 {{ margin: 0 0 6px; font-size: 1.02rem; }}
+.metric-example {{ margin: 12px 0 0; padding: 11px 12px; border-left: 5px solid #7c3aed; background: #f5f3ff; border-radius: 6px; }}
+.metric-caution {{ margin: 8px 0 0; color: #59667a; font-size: 0.9rem; }}
 .parameter-table {{ margin-top: 0.7rem; width: 100%; max-width: 100%; table-layout: fixed; }}
 .parameter-table th {{ position: static; }}
 .parameter-table td {{ overflow-wrap: anywhere; vertical-align: top; }}
@@ -1060,7 +1069,24 @@ details summary {{ cursor: pointer; font-weight: 650; color: #334155; }}
 <body>
 <div class=\"page\">
 <h1>Revisione degli eventi compatibili con spoofing</h1>
-<p class="note">Questa dashboard organizza gli elementi utili alla vigilanza: spiega perché ogni evento è stato selezionato, quali controlli supera e quali richiedono approfondimento. Un esito positivo orienta la revisione, ma non dimostra da solo un intento manipolativo.</p>
+<p class="note">Questa dashboard ordina i candidati, spiega perché ogni evento è stato selezionato e collega le metriche ai messaggi e alle quantità osservate nel book.</p>
+<div class="card metric-guide">
+  <h2>Come leggere WMSCI e MSCI</h2>
+  <div class="metric-guide-grid">
+    <div class="metric-guide-item">
+      <h3>WMSCI — intensità del ritiro attribuito</h3>
+      <p><b>WMSCI misura l’intensità del ritiro attribuito</b> allo stesso soggetto dopo l’esecuzione. Cresce quando l’ordine opposto visibile e il ritiro rapido attribuito sono grandi rispetto alla quantità eseguita e quando una quota maggiore dell’ordine candidato viene ritirata.</p>
+      <p><b>Come interpretarlo:</b> a parità di configurazione, un valore più alto porta il candidato più in alto nell’ordinamento. Parte da zero e non ha un limite superiore prefissato.</p>
+    </div>
+    <div class="metric-guide-item">
+      <h3>MSCI — cambiamento relativo della forma del book</h3>
+      <p><b>MSCI descrive come cambia la forma relativa del book</b> attorno all’esecuzione; è un contrasto con segno compreso tra −1 e 2. Valori positivi indicano un contrasto complessivo verso il lato opposto, valori vicini a zero non mostrano un contrasto netto e valori negativi indicano che la riduzione sullo stesso lato prevale anche sulla componente di cambiamento della forma.</p>
+      <p><b>Come interpretarlo:</b> è un contesto secondario sulla forma del book, non una versione normalizzata di WMSCI.</p>
+    </div>
+  </div>
+  <p class="metric-example"><b>Mini esempio illustrativo.</b> Un evento con <b>WMSCI = 3,2</b> e <b>MSCI = 0,8</b> mostra un ritiro attribuito relativamente intenso e un contrasto della forma del book positivo. Un evento con <b>WMSCI = 0,4</b> e <b>MSCI = −0,3</b> ha un segnale di ritiro più debole e una riduzione che prevale sullo stesso lato. Il primo viene ordinato prima per WMSCI.</p>
+  <p class="metric-caution">I due valori hanno scale diverse e vanno letti separatamente: WMSCI = 3,2 non significa “3,2 volte più sospetto”. Sono indicatori di screening, non probabilità né prove di intento.</p>
+</div>
 <div class=\"card intro\">
   <h2>Cosa contiene questa dashboard</h2>
   <div id="populationSummary" class="population-grid"></div>
@@ -1068,13 +1094,13 @@ details summary {{ cursor: pointer; font-weight: 650; color: #334155; }}
   <div class="evidence-levels">
     <div class="evidence-level"><b>1. Cluster ricostruito</b><br><span class="population-help">Una o più esecuzioni collegate ricostruite dai messaggi del mercato. Non è ancora un candidato mostrato nella dashboard.</span></div>
     <div class="evidence-level candidate"><b>2. Candidato da revisionare</b><br><span class="population-help">Dopo l'esecuzione è stato attribuito allo stesso soggetto il ritiro rapido di un ordine sul lato opposto. Tutti gli eventi selezionabili in questa dashboard appartengono almeno a questo livello.</span></div>
-    <div class="evidence-level complete"><b>3. Sequenza completa</b><br><span class="population-help">Il candidato supera contemporaneamente i quattro controlli mostrati nella scheda evento. Indica compatibilità con lo schema comportamentale, non prova dell'intento.</span></div>
+    <div class="evidence-level complete"><b>3. Sequenza completa</b><br><span class="population-help">Il candidato supera contemporaneamente i quattro controlli mostrati nella scheda evento.</span></div>
   </div>
   <p class="surveillance-note"><b>Interpretazione prudente.</b> Un candidato che non supera tutti i controlli non è automaticamente un falso positivo: può mancare una misura, oppure il caso può essere rilevante per altri elementi. La decisione finale richiede la lettura del book, degli ordini, delle esecuzioni e del contesto del soggetto.</p>
   <details>
     <summary>Dettagli di calcolo, parametri e provenienza</summary>
     <p><b>Trading capacity</b>: <b>1</b> = negoziazione per conto proprio (<span lang="en">Dealing on own account</span>); <b>2</b> = matched principal (<span lang="en">Matched principal</span>); <b>3</b> = altra capacità (<span lang="en">Any other capacity</span>). <b>Firm ID</b> è usato solo quando manca il cliente originale e può riunire più clienti sottostanti.</p>
-    <p><b>Candidate deceptive orders</b> indica gli ordini recenti dello stesso soggetto, sul lato opposto, visibili prima dell'esecuzione. <b>Price-response diagnostics</b> comprende il favorable pre-fill mid move e la reversione successiva al ritiro. <b>DWI, SCI e MSCI</b> restano diagnostiche secondarie sulla forma del book: MSCI è un contrasto con segno (<span lang="en">signed contrast</span>) tra SCI normalizzato, riduzione sul lato opposto e riduzione sullo stesso lato; valori negativi indicano che prevale la riduzione sullo stesso lato (<span lang="en">same-side collapse dominates</span>). Queste misure aiutano l'approfondimento ma non sostituiscono l'attribuzione del ritiro.</p>
+    <p><b>Candidate deceptive orders</b> indica gli ordini recenti dello stesso soggetto, sul lato opposto, visibili prima dell'esecuzione. <b>Price-response diagnostics</b> comprende il favorable pre-fill mid move e la reversione successiva al ritiro. <b>DWI e SCI</b> sono componenti tecniche del profilo a riposo conservate per l'approfondimento.</p>
     <p>Le tre fasi usano l'ordine di elaborazione del matching engine (<span lang="en">Matching-engine sort order defines the three stages</span>); nella fase di esecuzione la profondità totale è quella immediatamente precedente al fill (<span lang="en">execution stage uses immediately pre-fill total depth</span>). I timestamp originali sono mostrati senza correzioni e possono non essere monotoni a precisione sub-millisecondo.</p>
     {parameter_table}
   </details>
@@ -1301,14 +1327,13 @@ function renderSummary(ev) {{
   const complete = sequenceState(ev) === 'complete';
   const conclusion = complete
     ? 'Tutti i quattro controlli risultano soddisfatti: la sequenza è compatibile con lo schema comportamentale esaminato.'
-    : 'Non tutti i controlli risultano soddisfatti o misurabili. Il caso resta visibile come candidato da approfondire e non va interpretato automaticamente come falso positivo.';
+    : 'Non tutti i controlli risultano soddisfatti o misurabili. Il caso resta visibile come candidato da approfondire.';
   document.getElementById('summary').innerHTML = `<h2>Evento ${{escapeHtml(ev.review_event_id ?? '')}} <span class="sequence-badge ${{sequenceClass(ev)}}">${{escapeHtml(sequenceLabel(ev))}}</span></h2>
   <p class="selection-reason"><b>Perché questo evento è presente.</b> È stato collegato allo stesso soggetto un ritiro rapido, successivo all’esecuzione, di uno o più ordini sul lato opposto. Identificativi degli ordini ritirati: ${{escapeHtml(ev.matched_deceptive_cancel_order_ids_window ?? 'Non disponibile')}}.</p>
-  <p><b>Conclusione operativa:</b> ${{escapeHtml(conclusion)}} Questo esito è un indicatore per la vigilanza e non dimostra da solo un intento manipolativo.</p>
+  <p><b>Conclusione operativa:</b> ${{escapeHtml(conclusion)}}</p>
   <h3>Esito dei quattro controlli</h3>
   <div class="control-grid">${{controlCards}}</div>
   <h3>Informazioni essenziali</h3>
-  <p><b>WMSCI</b> è la metrica principale di ordinamento dei candidati. Il nome canonico nello schema v2 è <code>withdrawal_profile_scale_event</code>; <code>WMSCI_event</code> è mantenuto come alias di compatibilità. MSCI resta un indicatore secondario della forma del profilo a riposo.</p>
   <div class="key-facts">
     <div class="key-fact"><b>Orario dell’esecuzione</b><br>${{escapeHtml(ev.event_ts ?? 'Non disponibile')}}</div>
     <div class="key-fact"><b>Soggetto</b><br>${{escapeHtml(actorPlainText(ev))}}<br><small>${{escapeHtml(identityPlainText(ev))}}</small></div>
@@ -1316,14 +1341,14 @@ function renderSummary(ev) {{
     <div class="key-fact"><b>Lato eseguito / lato ritirato</b><br>${{escapeHtml(sidePlainText(ev.execution_side))}} / ${{escapeHtml(sidePlainText(ev.deceptive_side))}}</div>
     <div class="key-fact"><b>Quantità eseguita</b><br>${{metricText(executionQuantityValue(ev))}}</div>
     <div class="key-fact"><b>Quantità ritirata attribuita</b><br>${{metricText(ev.matched_deceptive_cancel_visible_qty_window)}}</div>
-    <div class="key-fact"><b>WMSCI — intensità del ritiro attribuito</b><br>${{metricText(withdrawalProfileScaleValue(ev), 6)}}<br><small>metrica principale di ordinamento</small></div>
-    <div class="key-fact"><b>MSCI del profilo a riposo</b><br>${{metricText(msciRestingProfileValue(ev), 6)}}<br><small>indicatore secondario</small></div>
+    <div class="key-fact"><b>WMSCI — intensità del ritiro attribuito</b><br>${{metricText(withdrawalProfileScaleValue(ev), 6)}}</div>
+    <div class="key-fact"><b>MSCI del profilo a riposo</b><br>${{metricText(msciRestingProfileValue(ev), 6)}}</div>
   </div>
   <details><summary>Dettagli tecnici e dati originali</summary>
   <p><span class="badge">matched deceptive-order cancellation</span></p>
   <b>actor:</b> ${{escapeHtml(actorText(ev))}} &nbsp; <b>identity level:</b> ${{escapeHtml(identityLevelText(ev))}} &nbsp; <b>identity scope:</b> ${{escapeHtml(identityScopeText(ev))}} &nbsp; <b>execution anchor:</b> ${{escapeHtml(executionAnchorText(ev))}}<br>
   <b>raw event client:</b> ${{escapeHtml(ev.event_client_original_id ?? 'NA')}} &nbsp; <b>raw event firm:</b> ${{escapeHtml(ev.event_firm_id ?? 'NA')}} &nbsp; <b>trading capacity:</b> ${{escapeHtml(capacityText(ev))}}<br>
-  <b>WMSCI / withdrawal profile scale:</b> ${{metricText(withdrawalProfileScaleValue(ev), 6)}} &nbsp; <b>MSCI resting profile:</b> ${{metricText(msciRestingProfileValue(ev), 6)}} &nbsp; <b>SCI:</b> ${{metricText(ev.SCI, 6)}}<br>
+  <b>campi metrici:</b> <code>withdrawal_profile_scale_event</code> (alias <code>WMSCI_event</code>); <code>MSCI_resting_profile</code> (alias <code>MSCI</code>) &nbsp; <b>SCI:</b> ${{metricText(ev.SCI, 6)}}<br>
   <b>favorable pre-fill mid move:</b> ${{metricText(ev.favorable_mid_move_pre_fill)}} &nbsp; <b>post-cancel mid reversion:</b> ${{metricText(ev.post_cancel_mid_reversion)}} &nbsp; <b>execution advantage vs posture mid:</b> ${{metricText(ev.execution_price_advantage_vs_posture_mid)}}<br>
   <b>candidate visible qty pre:</b> ${{metricText(ev.candidate_deceptive_visible_qty_pre)}} &nbsp; <b>matched cancel qty:</b> ${{metricText(ev.matched_deceptive_cancel_visible_qty_window)}} &nbsp; <b>matched fraction:</b> ${{metricText(ev.matched_deceptive_cancel_fraction_window)}}<br>
   <b>withdrawal/fill:</b> ${{metricText(ev.withdrawal_to_fill_ratio)}} &nbsp; <b>cancel delay:</b> ${{metricText(ev.matched_deceptive_cancel_min_delay_seconds)}}–${{metricText(ev.matched_deceptive_cancel_max_delay_seconds)}}s<br>
@@ -1664,6 +1689,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     metadata = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        **spoofing_config_provenance(args.config, section="event_review"),
         "input": str(args.input),
         "execution_metrics": str(args.execution_metrics),
         "candidate_deceptive_orders": str(args.candidate_deceptive_orders),
@@ -1671,6 +1697,7 @@ def main(argv: list[str] | None = None) -> None:
         "top_n": args.top_n,
         "pre_window_seconds": args.pre_window_seconds,
         "post_window_seconds": args.post_window_seconds,
+        "max_events": args.max_events,
         "queue_snapshot_mode": args.queue_snapshot_mode,
         "execution_cluster_members": str(args.execution_cluster_members) if args.execution_cluster_members else None,
         "execution_cancel_candidates": str(args.execution_cancel_candidates) if args.execution_cancel_candidates else None,

@@ -59,6 +59,8 @@ def test_cancel_candidate_must_follow_cluster_in_canonical_sort_order():
         "cluster_last_sort_index",
         "cancel_event_ts",
         "cancel_visible_qty",
+        "candidate_visible_qty_pre",
+        "attributed_cancel_visible_qty",
         "ORDERID",
         "event_ts",
         "visible_qty_pre_cancel",

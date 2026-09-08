@@ -4,11 +4,29 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import polars as pl
 
-UNKNOWN_ACTOR_KEYS = {"", "0", "null", "none", "nan"}
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from spoofing_detection.lob.actor_identity import (  # noqa: E402
+    is_zero_client_original_identity_sentinel,
+)
+
+UNKNOWN_ACTOR_KEYS = {
+    "",
+    "0",
+    "null",
+    "none",
+    "nan",
+    "client_original:0",
+    "client_original:0.0",
+}
 VALID_IDENTITY_LEVELS = {"client_original", "firm"}
 VALID_EXECUTION_ANCHORS = {"passive", "aggressive"}
 SUPPORTED_SCHEMA_VERSIONS = {
@@ -64,6 +82,10 @@ def _validate_actor_anchor_frame(frame: pl.DataFrame, *, artifact: str) -> None:
             for value in actor_keys.to_list()
             if value in UNKNOWN_ACTOR_KEYS
             or not any(value.startswith(f"{prefix}:") for prefix in VALID_IDENTITY_LEVELS)
+            or (
+                value.startswith("client_original:")
+                and is_zero_client_original_identity_sentinel(value.partition(":")[2])
+            )
         }
     )
     assert not invalid_actor_keys, f"invalid actor buckets in {artifact}: {invalid_actor_keys}"

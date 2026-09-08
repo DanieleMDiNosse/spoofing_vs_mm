@@ -198,6 +198,26 @@ def test_actor_audit_rejects_inconsistent_identity_source():
         module._validate_actor_anchor_frame(invalid, artifact="fixture")
 
 
+@pytest.mark.parametrize("actor_id", ["0", "0.0", "0.00", "0e0", "-0.0"])
+def test_actor_audit_rejects_zero_client_sentinel_actor(actor_id):
+    module = _load_module()
+    invalid = pl.DataFrame(
+        [
+            {
+                "actor_key": f"client_original:{actor_id}",
+                "actor_id": actor_id,
+                "identity_level": "client_original",
+                "identity_source": "NMSC_ORIGINALCLIENTIDSHORTCODE",
+                "identity_fallback_flag": False,
+                "execution_anchor_mode": "passive",
+            }
+        ]
+    )
+
+    with pytest.raises(AssertionError, match="invalid actor buckets"):
+        module._validate_actor_anchor_frame(invalid, artifact="fixture")
+
+
 def test_actor_audit_accepts_multiple_valid_rows():
     module = _load_module()
     valid = pl.DataFrame(

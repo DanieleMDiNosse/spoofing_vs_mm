@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -173,6 +174,31 @@ def test_summarize_run_rejects_invalid_firm_fallback_semantics(tmp_path: Path):
         load_module().summarize_run("Sample", run_dir)
 
 
+def test_summarize_run_rejects_zero_client_sentinel_artifacts(tmp_path: Path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _write_metadata(run_dir)
+    _write_candidates(run_dir)
+    contaminated = _execution_frame().with_columns(
+        pl.when(pl.col("identity_level") == "client_original")
+        .then(pl.lit("client_original:0.00"))
+        .otherwise(pl.col("actor_key"))
+        .alias("actor_key"),
+        pl.when(pl.col("identity_level") == "client_original")
+        .then(pl.lit("0.00"))
+        .otherwise(pl.col("actor_id"))
+        .alias("actor_id"),
+        pl.when(pl.col("identity_level") == "client_original")
+        .then(pl.lit("0.00"))
+        .otherwise(pl.col("client_original_id"))
+        .alias("client_original_id"),
+    )
+    contaminated.write_parquet(run_dir / "execution_metrics.parquet")
+
+    with pytest.raises(ValueError, match="zero client sentinel"):
+        load_module().summarize_run("Sample", run_dir)
+
+
 def test_render_tex_labels_actor_identity_and_execution_anchor():
     summary = pl.DataFrame(
         {
@@ -211,10 +237,124 @@ def test_render_tex_labels_actor_identity_and_execution_anchor():
     assert "\\newcommand{\\SampleAggressiveClusters}{1}" in macros
     assert "\\newcommand{\\SamplePassiveClusters}{1}" in macros
     assert "\\newcommand{\\SampleCompatibleSequences}{1}" in macros
-    assert "Raw fills" in summary_table
+    assert "Execution messages" in summary_table
+    assert "cluster" not in summary_table.lower()
+    assert "fill" not in summary_table.lower()
+    assert "cluster" not in actor_table.lower()
+    assert "fill" not in actor_table.lower()
     assert "Assigned cancels" in summary_table
     assert "Firm fallback" in summary_table
     assert "Aggressive" in summary_table
     assert r"F\_1" in actor_table
     assert "W/E max" in actor_table
     assert "top_client_results" not in actor_table
+
+
+def test_external_alert_artifacts_hash_inputs_and_remove_subject_aliases(tmp_path: Path):
+    audit_path = tmp_path / "external_alert_audit.json"
+    audit = {
+        "external_source": {
+            "local_path_disclosed": False,
+            "sha256": "a" * 64,
+            "source_kind": "primary_pdf",
+        },
+        "verification_tier": "external_subject_temporal_coverage",
+        "recall_unit": "unioned timed external-alert window",
+        "detector_recall_evaluated": "identity-aligned unioned timed windows",
+        "timestamp_precedence": ["TRADETIME", "BOOKOUTTIME"],
+        "identifier_policy": "keyed pseudonyms",
+        "limitations": ["positive-only source"],
+        "overall": {
+            "source_external_periods": 37,
+            "source_timed_periods": 36,
+            "source_date_only_periods": 1,
+            "source_periods_with_raw_subject_event": 37,
+            "union_timed_periods": 34,
+            "union_periods_with_raw_subject_event": 34,
+            "union_periods_with_recovered_execution": 34,
+            "union_periods_with_matched_withdrawal": 30,
+            "union_periods_with_strict_subject_scope_detection": 4,
+            "identity_aligned_union_timed_periods": 4,
+            "identity_aligned_union_periods_with_strict_detection": 0,
+            "identity_unaligned_union_timed_periods": 30,
+            "identity_unaligned_union_periods_with_strict_subject_scope_detection": 4,
+        },
+        "datasets": {
+            "SAMPLE": {
+                "source_external_periods": 2,
+                "source_timed_periods": 2,
+                "source_date_only_periods": 0,
+                "union_timed_periods": 1,
+                "union_periods_with_recovered_execution": 1,
+                "union_periods_with_matched_withdrawal": 1,
+                "union_periods_with_strict_subject_scope_detection": 1,
+                "identity_aligned_union_timed_periods": 0,
+                "identity_aligned_union_periods_with_strict_detection": 0,
+                "identity_unaligned_union_timed_periods": 1,
+                "identity_unaligned_union_periods_with_strict_subject_scope_detection": 1,
+                "per_pseudonymized_actor": {
+                    "actor_secret": {
+                        "detector_actor_key_count_in_dataset": 2,
+                        "identity_granularity_aligned": False,
+                        "identity_namespace": "firm",
+                        "source_external_periods": 2,
+                        "source_timed_periods": 2,
+                        "source_date_only_periods": 0,
+                        "union_timed_periods": 1,
+                        "union_periods_with_recovered_execution": 1,
+                        "union_periods_with_matched_withdrawal": 1,
+                        "union_periods_with_strict_subject_scope_detection": 1,
+                        "identity_aligned_union_periods_with_strict_detection": 0,
+                    }
+                },
+                "source_period_results": [
+                    {
+                        "actor_alias": "actor_secret",
+                        "start": "2024-01-01T10:00:00",
+                        "recovered_child_fill_rows": 4,
+                        "recovered_child_fill_rows_by_anchor": {"aggressive": 4},
+                        "recovered_execution_clusters": 1,
+                        "recovered_execution_clusters_by_anchor": {"aggressive": 1},
+                        "clusters_with_matched_withdrawal": 0,
+                        "clusters_with_strict_detection": 0,
+                    }
+                ],
+            }
+        },
+    }
+    payload = json.dumps(audit, sort_keys=True).encode()
+    audit_path.write_bytes(payload)
+
+    provenance, public_summary = load_module().external_alert_artifacts(audit_path)
+
+    assert provenance["audit_path"] == str(audit_path)
+    assert provenance["audit_sha256"] == hashlib.sha256(payload).hexdigest()
+    assert provenance["primary_source"] == audit["external_source"]
+    assert provenance["overall_counts"] == audit["overall"]
+    assert public_summary["overall_counts"] == audit["overall"]
+    assert public_summary["datasets"]["SAMPLE"]["subject_summaries"] == [
+        {
+            "subject_rank": 1,
+            "detector_actor_key_count_in_dataset": 2,
+            "identity_granularity_aligned": False,
+            "identity_namespace": "firm",
+            "source_external_periods": 2,
+            "source_timed_periods": 2,
+            "source_date_only_periods": 0,
+            "union_timed_periods": 1,
+            "union_periods_with_recovered_execution": 1,
+            "union_periods_with_matched_withdrawal": 1,
+            "union_periods_with_strict_subject_scope_detection": 1,
+            "identity_aligned_union_periods_with_strict_detection": 0,
+        }
+    ]
+    assert public_summary["datasets"]["SAMPLE"]["source_record_totals"] == {
+        "clusters_with_matched_withdrawal": 0,
+        "clusters_with_strict_detection": 0,
+        "recovered_child_fill_rows": 4,
+        "recovered_child_fill_rows_by_anchor": {"aggressive": 4},
+        "recovered_execution_clusters": 1,
+        "recovered_execution_clusters_by_anchor": {"aggressive": 1},
+    }
+    assert "actor_secret" not in json.dumps(public_summary)
+    assert "2024-01-01" not in json.dumps(public_summary)

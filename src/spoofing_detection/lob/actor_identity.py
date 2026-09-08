@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .models import ActiveOrder
@@ -34,9 +35,27 @@ def normalize_identity_value(value: Any) -> str | None:
     return str(value)
 
 
+def normalize_client_original_identity_value(value: Any) -> str | None:
+    """Normalize the client shortcode, treating the feed's zero sentinel as missing."""
+    normalized = normalize_identity_value(value)
+    return None if is_zero_client_original_identity_sentinel(normalized) else normalized
+
+
+def is_zero_client_original_identity_sentinel(value: Any) -> bool:
+    """Return whether a client identity is any finite numeric representation of zero."""
+    normalized = normalize_identity_value(value)
+    if normalized is None:
+        return False
+    try:
+        numeric = Decimal(normalized)
+    except (InvalidOperation, ValueError):
+        return False
+    return numeric.is_finite() and numeric == 0
+
+
 def resolve_actor_identity(*, client_original_id: Any, firm_id: Any) -> ActorIdentity | None:
     """Prefer original-client identity, falling back only to firm identity."""
-    client = normalize_identity_value(client_original_id)
+    client = normalize_client_original_identity_value(client_original_id)
     if client is not None:
         return ActorIdentity(
             actor_key=f"client_original:{client}",

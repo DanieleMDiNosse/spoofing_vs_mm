@@ -1,0 +1,200 @@
+{
+  "audit_input_sha256": "71a31e15dd31d3b8d4507dbdfa2892cd7758a07b16a3ea03e767987260eb957b",
+  "datasets": {
+    "FERRARI": {
+      "aggregate_counts": {
+        "distinct_external_actors": 2,
+        "identity_aligned_union_periods_with_strict_detection": 0,
+        "identity_aligned_union_timed_periods": 3,
+        "identity_unaligned_union_periods_with_strict_subject_scope_detection": 4,
+        "identity_unaligned_union_timed_periods": 30,
+        "source_date_only_periods": 0,
+        "source_external_periods": 35,
+        "source_periods_with_raw_subject_event": 35,
+        "source_timed_periods": 35,
+        "union_periods_with_matched_withdrawal": 30,
+        "union_periods_with_raw_subject_event": 33,
+        "union_periods_with_recovered_execution": 33,
+        "union_periods_with_strict_subject_scope_detection": 4,
+        "union_timed_periods": 33
+      },
+      "source_record_totals": {
+        "clusters_with_matched_withdrawal": 46,
+        "clusters_with_strict_detection": 4,
+        "recovered_child_fill_rows": 122,
+        "recovered_child_fill_rows_by_anchor": {
+          "aggressive": 93,
+          "passive": 29
+        },
+        "recovered_execution_clusters": 67,
+        "recovered_execution_clusters_by_anchor": {
+          "aggressive": 40,
+          "passive": 27
+        }
+      },
+      "subject_summaries": [
+        {
+          "detector_actor_key_count_in_dataset": 2,
+          "identity_aligned_union_periods_with_strict_detection": 0,
+          "identity_granularity_aligned": false,
+          "identity_namespace": "firm",
+          "source_date_only_periods": 0,
+          "source_external_periods": 32,
+          "source_timed_periods": 32,
+          "subject_rank": 1,
+          "union_periods_with_matched_withdrawal": 29,
+          "union_periods_with_recovered_execution": 30,
+          "union_periods_with_strict_subject_scope_detection": 4,
+          "union_timed_periods": 30
+        },
+        {
+          "detector_actor_key_count_in_dataset": 1,
+          "identity_aligned_union_periods_with_strict_detection": 0,
+          "identity_granularity_aligned": true,
+          "identity_namespace": "firm",
+          "source_date_only_periods": 0,
+          "source_external_periods": 3,
+          "source_timed_periods": 3,
+          "subject_rank": 2,
+          "union_periods_with_matched_withdrawal": 1,
+          "union_periods_with_recovered_execution": 3,
+          "union_periods_with_strict_subject_scope_detection": 0,
+          "union_timed_periods": 3
+        }
+      ]
+    },
+    "NEXI": {
+      "aggregate_counts": {
+        "distinct_external_actors": 1,
+        "identity_aligned_union_periods_with_strict_detection": 0,
+        "identity_aligned_union_timed_periods": 1,
+        "identity_unaligned_union_periods_with_strict_subject_scope_detection": 0,
+        "identity_unaligned_union_timed_periods": 0,
+        "source_date_only_periods": 0,
+        "source_external_periods": 1,
+        "source_periods_with_raw_subject_event": 1,
+        "source_timed_periods": 1,
+        "union_periods_with_matched_withdrawal": 0,
+        "union_periods_with_raw_subject_event": 1,
+        "union_periods_with_recovered_execution": 1,
+        "union_periods_with_strict_subject_scope_detection": 0,
+        "union_timed_periods": 1
+      },
+      "source_record_totals": {
+        "clusters_with_matched_withdrawal": 0,
+        "clusters_with_strict_detection": 0,
+        "recovered_child_fill_rows": 4,
+        "recovered_child_fill_rows_by_anchor": {
+          "aggressive": 4
+        },
+        "recovered_execution_clusters": 1,
+        "recovered_execution_clusters_by_anchor": {
+          "aggressive": 1
+        }
+      },
+      "subject_summaries": [
+        {
+          "detector_actor_key_count_in_dataset": 1,
+          "identity_aligned_union_periods_with_strict_detection": 0,
+          "identity_granularity_aligned": true,
+          "identity_namespace": "client_original",
+          "source_date_only_periods": 0,
+          "source_external_periods": 1,
+          "source_timed_periods": 1,
+          "subject_rank": 1,
+          "union_periods_with_matched_withdrawal": 0,
+          "union_periods_with_recovered_execution": 1,
+          "union_periods_with_strict_subject_scope_detection": 0,
+          "union_timed_periods": 1
+        }
+      ]
+    },
+    "RISANAMENTO": {
+      "aggregate_counts": {
+        "distinct_external_actors": 1,
+        "identity_aligned_union_periods_with_strict_detection": 0,
+        "identity_aligned_union_timed_periods": 0,
+        "identity_unaligned_union_periods_with_strict_subject_scope_detection": 0,
+        "identity_unaligned_union_timed_periods": 0,
+        "source_date_only_periods": 1,
+        "source_external_periods": 1,
+        "source_periods_with_raw_subject_event": 1,
+        "source_timed_periods": 0,
+        "union_periods_with_matched_withdrawal": 0,
+        "union_periods_with_raw_subject_event": 0,
+        "union_periods_with_recovered_execution": 0,
+        "union_periods_with_strict_subject_scope_detection": 0,
+        "union_timed_periods": 0
+      },
+      "source_record_totals": {
+        "date_level_clusters_with_matched_withdrawal": 1,
+        "date_level_clusters_with_strict_detection": 0,
+        "date_level_recovered_child_fill_rows": 82,
+        "date_level_recovered_child_fill_rows_by_anchor": {
+          "aggressive": 46,
+          "passive": 36
+        },
+        "date_level_recovered_execution_clusters": 59,
+        "date_level_recovered_execution_clusters_by_anchor": {
+          "aggressive": 32,
+          "passive": 27
+        }
+      },
+      "subject_summaries": [
+        {
+          "detector_actor_key_count_in_dataset": 1,
+          "identity_aligned_union_periods_with_strict_detection": 0,
+          "identity_granularity_aligned": true,
+          "identity_namespace": "client_original",
+          "source_date_only_periods": 1,
+          "source_external_periods": 1,
+          "source_timed_periods": 0,
+          "subject_rank": 1,
+          "union_periods_with_matched_withdrawal": 0,
+          "union_periods_with_recovered_execution": 0,
+          "union_periods_with_strict_subject_scope_detection": 0,
+          "union_timed_periods": 0
+        }
+      ]
+    }
+  },
+  "detector_recall_evaluated": "exact_actor_recall_on_identity_aligned_unioned_timed_windows; broader_subject_scope_overlap_reported_separately",
+  "identifier_policy": "External identifiers use report-local keyed HMAC-SHA-256 pseudonyms; the key and local source path are not serialized.",
+  "limitations": [
+    "External alert labels establish source-provided periods, not manipulative intent independently re-adjudicated here.",
+    "RISANAMENTO is coverage-only at date level because the source provides no intraday interval; it is excluded from event-level recall numerators and denominators.",
+    "Subject-scope overlap matches raw client/firm provenance. Exact-actor recall is identifiable only when the external identity and detector actor key have aligned granularity.",
+    "Strict subject-scope detection requires matched provenance, a recovered execution, matched withdrawal, and all configured behavioral gates.",
+    "source_period_results preserves every source window; union_timed_results contains one row per merged interval and is the sole basis of timed overlap and recall totals.",
+    "Embedded metrics provenance is restricted to allowlisted hashes, enum-valued modes, and row counts; upstream paths and commands are omitted."
+  ],
+  "overall_counts": {
+    "identity_aligned_union_periods_with_strict_detection": 0,
+    "identity_aligned_union_timed_periods": 4,
+    "identity_unaligned_union_periods_with_strict_subject_scope_detection": 4,
+    "identity_unaligned_union_timed_periods": 30,
+    "source_date_only_periods": 1,
+    "source_external_periods": 37,
+    "source_periods_with_raw_subject_event": 37,
+    "source_timed_periods": 36,
+    "union_periods_with_matched_withdrawal": 30,
+    "union_periods_with_raw_subject_event": 34,
+    "union_periods_with_recovered_execution": 34,
+    "union_periods_with_strict_subject_scope_detection": 4,
+    "union_timed_periods": 34
+  },
+  "primary_source": {
+    "local_path_disclosed": false,
+    "sha256": "ab317fe461949012ade51577b5b5c6ff3eac0277e095982cde131efb3bb95f9b",
+    "source_kind": "primary_pdf"
+  },
+  "recall_unit": "identity-aligned unioned timed external-alert window with at least one strict detector execution",
+  "schema_version": "spoofing_external_alert_audit_summary_v1",
+  "timestamp_precedence": [
+    "TRADETIME",
+    "BOOKOUTTIME",
+    "BOOKIN",
+    "SEQUENCETIME"
+  ],
+  "verification_tier": "external_subject_temporal_coverage_execution_recovery_and_strict_detector_overlap"
+}

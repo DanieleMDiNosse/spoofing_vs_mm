@@ -7,7 +7,9 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "run_spoofing_production_readiness.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = REPO_ROOT / "scripts" / "run_spoofing_production_readiness.py"
+CONFIG_PATH = REPO_ROOT / "configs" / "spoofing_detection_parameters.json"
 
 
 def _load_module():
@@ -16,6 +18,14 @@ def _load_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def write_readiness_config(tmp_path: Path, **overrides: object) -> Path:
+    payload = json.loads(CONFIG_PATH.read_text())
+    payload["production_readiness"].update(overrides)
+    config_path = tmp_path / "spoofing_parameters.json"
+    config_path.write_text(json.dumps(payload))
+    return config_path
 
 
 def test_run_pipeline_writes_alerts(tmp_path):
@@ -64,6 +74,12 @@ def test_run_pipeline_writes_alerts(tmp_path):
     output_dir = tmp_path / "readiness"
     executions.write_parquet(execution_path)
     event_log.write_parquet(event_log_path)
+    config_path = write_readiness_config(
+        tmp_path,
+        msci_threshold_by_anchor={"passive": 0.5, "aggressive": 0.5},
+        min_events=2,
+        min_mcps=0.5,
+    )
     outputs = module.run_pipeline(
         execution_metrics_path=execution_path,
         event_log_path=event_log_path,
@@ -73,6 +89,7 @@ def test_run_pipeline_writes_alerts(tmp_path):
         min_mcps=0.5,
         actor_identity_mode="client_then_firm",
         execution_anchor_modes=("passive", "aggressive"),
+        config_path=config_path,
     )
     assert outputs["alerts"].exists()
     assert outputs["risk"].name == "actor_session_risk_features.parquet"
@@ -94,6 +111,7 @@ def test_run_pipeline_writes_alerts(tmp_path):
     assert metadata["actor_feature_population"] == "attributable_execution_and_event_rows_only"
     assert metadata["excluded_unattributable_execution_rows"] == 0
     assert metadata["excluded_unattributable_event_rows"] == 0
+    assert metadata["parameter_source"] == "json_config_only"
 
     empty_execution_path = tmp_path / "empty_execution_metrics.parquet"
     empty_event_log_path = tmp_path / "empty_event_log.parquet"
@@ -131,24 +149,33 @@ def test_run_pipeline_writes_alerts(tmp_path):
     assert not invalid_output_dir.exists()
 
 
+def test_config_provenance_cannot_be_attached_to_mismatched_programmatic_parameters(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    with pytest.raises(ValueError, match="do not match JSON config"):
+        module.run_pipeline(
+            execution_metrics_path=tmp_path / "not-read-executions.parquet",
+            event_log_path=tmp_path / "not-read-events.parquet",
+            output_dir=tmp_path / "output",
+            msci_threshold=0.5,
+            min_events=999,
+            min_mcps=0.0,
+            actor_identity_mode="client_then_firm",
+            execution_anchor_modes=("passive", "aggressive"),
+            config_path=CONFIG_PATH,
+        )
+
+
 def test_parse_args_loads_production_readiness_thresholds_from_config(tmp_path: Path):
     module = _load_module()
-    config_path = tmp_path / "spoofing_parameters.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "production_readiness": {
-                    "msci_threshold_by_anchor": {
-                        "passive": 0.001,
-                        "aggressive": None,
-                    },
-                    "min_events": 4,
-                    "min_mcps": 0.05,
-                    "actor_identity_mode": "client_then_firm",
-                    "execution_anchor_modes": ["aggressive", "passive"],
-                }
-            }
-        )
+    config_path = write_readiness_config(
+        tmp_path,
+        msci_threshold_by_anchor={"passive": 0.001, "aggressive": None},
+        min_events=4,
+        min_mcps=0.05,
+        actor_identity_mode="client_then_firm",
+        execution_anchor_modes=["aggressive", "passive"],
     )
 
     args = module.parse_args(
@@ -161,44 +188,37 @@ def test_parse_args_loads_production_readiness_thresholds_from_config(tmp_path: 
             str(tmp_path / "event_log.parquet"),
             "--output-dir",
             str(tmp_path / "readiness"),
-            "--min-events",
-            "2",
         ]
     )
 
     assert args.config == config_path
     assert args.msci_threshold_by_anchor == {"passive": 0.001, "aggressive": None}
-    assert args.min_events == 2
+    assert args.min_events == 4
     assert args.min_mcps == 0.05
     assert args.actor_identity_mode == "client_then_firm"
     assert args.execution_anchor_modes == ("passive", "aggressive")
 
-    scalar_override = module.parse_args(
-        [
-            "--config",
-            str(config_path),
-            "--execution-metrics",
-            str(tmp_path / "execution_metrics.parquet"),
-            "--event-log",
-            str(tmp_path / "event_log.parquet"),
-            "--output-dir",
-            str(tmp_path / "readiness"),
-            "--msci-threshold=0.4",
-        ]
-    )
-    assert scalar_override.msci_threshold_by_anchor == {
-        "passive": 0.4,
-        "aggressive": None,
-    }
+    with pytest.raises(SystemExit):
+        module.parse_args(
+            [
+                "--config",
+                str(config_path),
+                "--execution-metrics",
+                str(tmp_path / "execution_metrics.parquet"),
+                "--event-log",
+                str(tmp_path / "event_log.parquet"),
+                "--output-dir",
+                str(tmp_path / "readiness"),
+                "--msci-threshold=0.4",
+            ]
+        )
 
 
-def test_parse_args_uses_positive_signed_msci_margin_without_config(tmp_path: Path):
+def test_parse_args_uses_positive_signed_msci_margin_from_config(tmp_path: Path):
     module = _load_module()
 
     args = module.parse_args(
         [
-            "--config",
-            str(tmp_path / "missing.json"),
             "--execution-metrics",
             str(tmp_path / "execution_metrics.parquet"),
             "--event-log",
@@ -208,15 +228,14 @@ def test_parse_args_uses_positive_signed_msci_margin_without_config(tmp_path: Pa
         ]
     )
 
-    assert args.msci_threshold == 0.1
-    assert args.msci_threshold_by_anchor is None
-    assert args.execution_anchor_modes == ("passive",)
+    assert args.msci_threshold is None
+    assert args.msci_threshold_by_anchor == {"passive": 0.1, "aggressive": None}
+    assert args.execution_anchor_modes == ("passive", "aggressive")
 
 
 def test_parse_args_rejects_invalid_actor_identity_mode_from_config(tmp_path: Path):
     module = _load_module()
-    config_path = tmp_path / "spoofing_parameters.json"
-    config_path.write_text(json.dumps({"production_readiness": {"actor_identity_mode": "invalid_mode"}}))
+    config_path = write_readiness_config(tmp_path, actor_identity_mode="invalid_mode")
 
     with pytest.raises(SystemExit):
         module.parse_args(

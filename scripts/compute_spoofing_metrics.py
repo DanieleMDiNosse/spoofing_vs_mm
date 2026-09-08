@@ -16,11 +16,13 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from spoofing_detection.lob.actor_identity import resolve_actor_identity
+from spoofing_detection.lob.actor_identity import (
+    normalize_client_original_identity_value,
+    resolve_actor_identity,
+)
 from spoofing_detection.lob.client_identity_audit import audit_missing_client_trading_capacity
 from spoofing_detection.lob.depth_kernel_calibration import load_empirical_kernel_weights
 from spoofing_detection.lob.enums import normalize_enum_code
-from spoofing_detection.lob.normalize import to_str_or_none
 from spoofing_detection.lob.spoofing_metrics import (
     MSCI_DEFINITION,
     MSCI_RESTING_PROFILE_DEFINITION,
@@ -35,14 +37,14 @@ from spoofing_detection.lob.spoofing_config import (
     DEFAULT_SPOOFING_CONFIG_PATH,
     load_spoofing_config_defaults,
     parse_execution_anchor_modes,
+    reject_parameter_overrides,
+    spoofing_config_provenance,
     validate_actor_identity_mode,
 )
 
 
 _CONFIGURABLE_DEFAULT_KEYS = {
     "top_n",
-    "kappa",
-    "lambda_",
     "window_seconds",
     "withdrawal_window_seconds",
     "reversion_horizon_seconds",
@@ -56,6 +58,24 @@ _CONFIGURABLE_DEFAULT_KEYS = {
     "empirical_depth_kernel",
     "actor_identity_mode",
     "execution_anchor_modes",
+}
+
+_CONFIG_PARAMETER_OPTIONS = {
+    "--top-n",
+    "--window-seconds",
+    "--withdrawal-window-seconds",
+    "--reversion-horizon-seconds",
+    "--execution-cluster-max-gap-ms",
+    "--max-deceptive-order-age-seconds",
+    "--gamma-grid",
+    "--tick-size",
+    "--max-rows",
+    "--state-client-mode",
+    "--compact-state",
+    "--no-compact-state",
+    "--empirical-depth-kernel",
+    "--actor-identity-mode",
+    "--execution-anchor-modes",
 }
 
 
@@ -95,21 +115,27 @@ def _observed_execution_anchor_modes(executions: pl.DataFrame) -> list[str]:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     config_parser.add_argument("--config", type=Path, default=DEFAULT_SPOOFING_CONFIG_PATH)
     config_args, _ = config_parser.parse_known_args(argv)
-    config_defaults = load_spoofing_config_defaults(
-        config_path=config_args.config,
-        section="metrics",
-        allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
-    )
+    try:
+        config_defaults = load_spoofing_config_defaults(
+            config_path=config_args.config,
+            section="metrics",
+            allowed_keys=_CONFIGURABLE_DEFAULT_KEYS,
+        )
+    except (OSError, ValueError) as exc:
+        config_parser.error(str(exc))
 
-    parser = argparse.ArgumentParser(description="Compute multilevel top-n spoofing surveillance metrics.")
+    parser = argparse.ArgumentParser(
+        description="Compute multilevel top-n spoofing surveillance metrics.",
+        allow_abbrev=False,
+    )
     parser.add_argument(
         "--config",
         type=Path,
         default=config_args.config,
-        help="JSON config file containing spoofing parameter defaults",
+        help="Authoritative JSON file containing all spoofing metric parameters",
     )
     parser.add_argument("--input", type=Path, required=True, help="Raw input parquet event file")
     parser.add_argument(
@@ -119,58 +145,49 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Reconstructed lob_event_state_panel.parquet used only for tick-size inference",
     )
     parser.add_argument("--output-dir", type=Path, required=True, help="Output directory")
-    parser.add_argument("--top-n", type=int, default=3, help="Market top-N levels used for actor depth profiles")
-    parser.add_argument("--kappa", type=float, default=1.0, help="Execution-risk protection parameter")
-    parser.add_argument("--lambda", dest="lambda_", type=float, default=1.0, help="Visibility-decay parameter")
-    parser.add_argument("--window-seconds", type=float, default=1.0, help="Clock-time post-execution window")
+    parser.add_argument("--top-n", type=int, help="Market top-N levels used for actor depth profiles")
+
+    parser.add_argument("--window-seconds", type=float, help="Clock-time post-execution window")
     parser.add_argument(
         "--withdrawal-window-seconds",
         type=float,
-        default=2.0,
         help="Maximum delay from execution-cluster end to attributed cancellation",
     )
     parser.add_argument(
         "--reversion-horizon-seconds",
         type=float,
-        default=2.0,
         help="Price-reversion horizon measured from each actual cancellation",
     )
     parser.add_argument(
         "--execution-cluster-max-gap-ms",
         type=int,
-        default=100,
         help="Maximum gap between same-anchor child fills merged into one execution cluster",
     )
     parser.add_argument(
         "--max-deceptive-order-age-seconds",
         type=float,
-        default=600.0,
         help="Maximum age of candidate deceptive orders before the execution, in seconds",
     )
-    parser.add_argument("--gamma-grid", default="0,0.1,0.25,0.5,1.0,1.5", help="Comma-separated signed MSCI thresholds")
-    parser.add_argument("--tick-size", type=float, default=None, help="Optional explicit tick size")
-    parser.add_argument("--max-rows", type=int, default=None, help="Optional raw-row cap for smoke runs")
+    parser.add_argument("--gamma-grid", help="Comma-separated signed MSCI thresholds")
+    parser.add_argument("--tick-size", type=float, help="Optional explicit tick size")
+    parser.add_argument("--max-rows", type=int, help="Optional raw-row cap for smoke runs")
     parser.add_argument(
         "--actor-identity-mode",
         choices=("client_then_firm",),
-        default="client_then_firm",
         help="Resolve the original client shortcode first, then use firm fallback only when client is missing.",
     )
     parser.add_argument(
         "--execution-anchor-modes",
-        default="passive",
         help="Comma-separated execution branches; canonical order is passive,aggressive.",
     )
     parser.add_argument(
         "--empirical-depth-kernel",
         type=Path,
-        default=None,
-        help="Optional empirical_depth_kernel parquet/csv artifact. When set, rank weights override scalar kappa/lambda in DWI/MSCI weighting.",
+        help="Required empirical_depth_kernel parquet/csv artifact containing rank weights for both sides.",
     )
     parser.add_argument(
         "--state-client-mode",
         choices=("all", "execution-actors", "passive-fill-clients"),
-        default="all",
         help=(
             "Choose actors represented in actor_metric_time_series. 'execution-actors' retains every client/firm "
             "actor observed on a selected passive/aggressive fill while avoiding state rows for non-executing actors; "
@@ -180,10 +197,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--compact-state",
         action=argparse.BooleanOptionalAction,
-        default=False,
         help="Omit per-level diagnostic columns from actor_metric_time_series while keeping DWI/L_bid/L_ask metrics.",
     )
     parser.set_defaults(**config_defaults)
+    reject_parameter_overrides(
+        parser,
+        argv,
+        parameter_options=_CONFIG_PARAMETER_OPTIONS,
+    )
     args = parser.parse_args(argv)
     try:
         args.actor_identity_mode = validate_actor_identity_mode(args.actor_identity_mode)
@@ -197,6 +218,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         )
     if args.empirical_depth_kernel is not None and not isinstance(args.empirical_depth_kernel, Path):
         args.empirical_depth_kernel = Path(args.empirical_depth_kernel)
+
     if args.execution_cluster_max_gap_ms < 0:
         parser.error("--execution-cluster-max-gap-ms must be non-negative")
     if args.withdrawal_window_seconds <= 0:
@@ -233,7 +255,7 @@ def _infer_state_client_ids(raw_events: pl.DataFrame, *, mode: str) -> set[str] 
     return {
         client_id
         for value in client_rows.get_column("NMSC_ORIGINALCLIENTIDSHORTCODE").unique().to_list()
-        if (client_id := to_str_or_none(value)) is not None
+        if (client_id := normalize_client_original_identity_value(value)) is not None
     }
 
 
@@ -558,8 +580,7 @@ def _write_summary_report(
         f"- input: `{metadata['input']}`",
         f"- quote_panel: `{metadata.get('quote_panel')}`",
         f"- top_n: {metadata['top_n']}",
-        f"- kappa: {metadata['kappa']}",
-        f"- lambda: {metadata['lambda_']}",
+
         f"- ratio_zero_denominator_policy: {metadata['ratio_zero_denominator_policy']}",
         f"- window_seconds: {metadata['window_seconds']}",
         f"- withdrawal_window_seconds: {metadata.get('withdrawal_window_seconds', 2.0)}",
@@ -615,6 +636,8 @@ def _write_summary_report(
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.empirical_depth_kernel is None:
+        raise ValueError("empirical_depth_kernel must be configured; the parametric kernel fallback has been removed")
     gamma_grid = _parse_float_grid(args.gamma_grid)
     raw_events = pl.read_parquet(args.input)
     raw_events_for_compute = raw_events.head(args.max_rows) if args.max_rows is not None else raw_events
@@ -632,15 +655,12 @@ def main(argv: list[str] | None = None) -> None:
         mode=args.state_client_mode,
         execution_anchor_modes=args.execution_anchor_modes,
     )
-    empirical_kernel_weights = (
-        load_empirical_kernel_weights(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None
-    )
+    empirical_kernel_weights = load_empirical_kernel_weights(args.empirical_depth_kernel)
     result = compute_exploratory_metrics(
         raw_events_for_compute,
         top_n=args.top_n,
         tick_size=tick_size,
-        kappa=args.kappa,
-        lambda_=args.lambda_,
+
         window_seconds=args.window_seconds,
         withdrawal_window_seconds=args.withdrawal_window_seconds,
         reversion_horizon_seconds=args.reversion_horizon_seconds,
@@ -686,7 +706,7 @@ def main(argv: list[str] | None = None) -> None:
         "input": str(args.input),
         "quote_panel": str(args.quote_panel) if args.quote_panel is not None else None,
         "output_dir": str(args.output_dir),
-        "config": str(args.config) if args.config is not None and args.config.exists() else None,
+        **spoofing_config_provenance(args.config, section="metrics"),
         "output_schema_version": OUTPUT_SCHEMA_VERSION,
         "actor_identity_mode": args.actor_identity_mode,
         "execution_anchor_modes": list(args.execution_anchor_modes),
@@ -694,8 +714,7 @@ def main(argv: list[str] | None = None) -> None:
         "score_grouping": SCORE_GROUPING,
         "firm_fallback_semantics": FIRM_FALLBACK_SEMANTICS,
         "top_n": args.top_n,
-        "kappa": args.kappa,
-        "lambda_": args.lambda_,
+
         "ratio_zero_denominator_policy": RATIO_ZERO_DENOMINATOR_POLICY,
         "window_seconds": args.window_seconds,
         "withdrawal_window_seconds": args.withdrawal_window_seconds,
@@ -768,8 +787,8 @@ def main(argv: list[str] | None = None) -> None:
         "state_actor_selection_mode": args.state_client_mode,
         "state_actor_count": len(state_actor_keys) if state_actor_keys is not None else None,
         "compact_state": args.compact_state,
-        "empirical_depth_kernel": str(args.empirical_depth_kernel) if args.empirical_depth_kernel is not None else None,
-        "kernel_mode": "empirical" if args.empirical_depth_kernel is not None else "parametric",
+        "empirical_depth_kernel": str(args.empirical_depth_kernel),
+        "kernel_mode": "empirical",
         "client_identity_audit": client_audit,
         "actor_execution_audit": {
             "execution_clusters_by_anchor_mode": _grouped_counts(
@@ -812,9 +831,7 @@ def main(argv: list[str] | None = None) -> None:
             "raw_events_sha256": _sha256(args.input),
             "quote_panel_sha256": _sha256(args.quote_panel) if args.quote_panel is not None else None,
             "config_sha256": _sha256(args.config) if args.config is not None and args.config.exists() else None,
-            "empirical_depth_kernel_sha256": _sha256(args.empirical_depth_kernel)
-            if args.empirical_depth_kernel is not None
-            else None,
+            "empirical_depth_kernel_sha256": _sha256(args.empirical_depth_kernel),
         },
         "artifact_hashes": {
             key: _sha256(path)

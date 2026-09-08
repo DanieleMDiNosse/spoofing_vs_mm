@@ -9,6 +9,9 @@ import polars as pl
 import pytest
 
 
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "spoofing_detection_parameters.json"
+
+
 def load_grid_module():
     script_path = Path(__file__).resolve().parents[2] / "scripts" / "run_multilevel_spoofing_grid.py"
     spec = importlib.util.spec_from_file_location("run_multilevel_spoofing_grid", script_path)
@@ -18,6 +21,24 @@ def load_grid_module():
     return module
 
 
+def write_grid_config(tmp_path: Path, **overrides: object) -> Path:
+    payload = json.loads(CONFIG_PATH.read_text())
+    kernel_path = tmp_path / "empirical_depth_kernel.csv"
+    if not kernel_path.exists():
+        pl.DataFrame(
+            {
+                "side": ["bid", "ask"],
+                "rank": [1, 1],
+                "kernel_weight": [1.0, 1.0],
+            }
+        ).write_csv(kernel_path)
+    overrides.setdefault("empirical_depth_kernel", str(kernel_path))
+    payload["grid"].update(overrides)
+    config_path = tmp_path / "spoofing_parameters.json"
+    config_path.write_text(json.dumps(payload))
+    return config_path
+
+
 def test_grid_runner_parses_depth_and_gamma_grids():
     module = load_grid_module()
 
@@ -25,13 +46,11 @@ def test_grid_runner_parses_depth_and_gamma_grids():
     assert module._parse_float_grid("0.25,0.5") == [0.25, 0.5]
 
 
-def test_grid_runner_uses_signed_msci_gamma_grid_without_config(tmp_path: Path):
+def test_grid_runner_uses_signed_msci_gamma_grid_from_config(tmp_path: Path):
     module = load_grid_module()
 
     args = module.parse_args(
         [
-            "--config",
-            str(tmp_path / "missing.json"),
             "--input",
             str(tmp_path / "input.parquet"),
             "--output-dir",
@@ -39,35 +58,36 @@ def test_grid_runner_uses_signed_msci_gamma_grid_without_config(tmp_path: Path):
         ]
     )
 
-    assert args.gamma_grid == "0,0.1,0.25,0.5,1.0,1.5"
+    assert args.gamma_grid == "0.0,0.1,0.25,0.5,1.0,1.5"
     assert args.actor_identity_mode == "client_then_firm"
-    assert args.execution_anchor_modes == ("passive",)
+    assert args.execution_anchor_modes == ("passive", "aggressive")
 
 
 def test_grid_runner_validates_and_canonicalizes_execution_anchor_modes(tmp_path: Path):
     module = load_grid_module()
+    config_path = write_grid_config(tmp_path, execution_anchor_modes=["aggressive", "passive"])
     common = [
         "--config",
-        str(tmp_path / "missing.json"),
+        str(config_path),
         "--input",
         str(tmp_path / "input.parquet"),
         "--output-dir",
         str(tmp_path / "out"),
     ]
 
-    assert module.parse_args([*common, "--execution-anchor-modes", "aggressive,passive"]).execution_anchor_modes == (
+    assert module.parse_args(common).execution_anchor_modes == (
         "passive",
         "aggressive",
     )
-    for invalid in ("", "passive,unknown", "passive,passive"):
+    for invalid in ([], ["passive", "unknown"], ["passive", "passive"]):
+        invalid_config = write_grid_config(tmp_path, execution_anchor_modes=invalid)
         with pytest.raises(SystemExit):
-            module.parse_args([*common, "--execution-anchor-modes", invalid])
+            module.parse_args(["--config", str(invalid_config), *common[2:]])
 
 
 def test_grid_runner_rejects_invalid_actor_identity_mode_from_config(tmp_path: Path):
     module = load_grid_module()
-    config_path = tmp_path / "spoofing_parameters.json"
-    config_path.write_text(json.dumps({"grid": {"actor_identity_mode": "invalid_mode"}}))
+    config_path = write_grid_config(tmp_path, actor_identity_mode="invalid_mode")
 
     with pytest.raises(SystemExit):
         module.parse_args(
@@ -88,7 +108,7 @@ def test_grid_runner_rejects_removed_epsilon_option(tmp_path: Path):
         module.parse_args(
             [
                 "--config",
-                str(tmp_path / "missing.json"),
+                str(CONFIG_PATH),
                 "--input",
                 str(tmp_path / "input.parquet"),
                 "--output-dir",
@@ -111,28 +131,21 @@ def test_grid_runner_builds_depth_output_directories(tmp_path: Path):
     assert paths["actor_mcps_scores"] == tmp_path / "topn_3" / "actor_mcps_scores.parquet"
 
 
-def test_grid_runner_parse_args_loads_parameters_from_config_with_cli_overrides(tmp_path: Path):
+def test_grid_runner_parse_args_loads_parameters_only_from_config(tmp_path: Path):
     module = load_grid_module()
-    config_path = tmp_path / "spoofing_parameters.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "grid": {
-                    "depth_grid": [1, 3, 5],
-                    "kappa": 2.0,
-                    "lambda": 0.5,
-                    "window_seconds": 30.0,
-                    "withdrawal_window_seconds": 2.5,
-                    "reversion_horizon_seconds": 3.5,
-                    "execution_cluster_max_gap_ms": 250,
-                    "max_deceptive_order_age_seconds": 120.0,
-                    "gamma_grid": [0.001, 0.01],
-                    "empirical_depth_kernel": str(tmp_path / "kernel.parquet"),
-                    "actor_identity_mode": "client_then_firm",
-                    "execution_anchor_modes": ["aggressive", "passive"],
-                }
-            }
-        )
+    config_path = write_grid_config(
+        tmp_path,
+        depth_grid=[1, 3, 5],
+
+        window_seconds=30.0,
+        withdrawal_window_seconds=2.5,
+        reversion_horizon_seconds=3.5,
+        execution_cluster_max_gap_ms=250,
+        max_deceptive_order_age_seconds=120.0,
+        gamma_grid=[0.001, 0.01],
+        empirical_depth_kernel=str(tmp_path / "kernel.parquet"),
+        actor_identity_mode="client_then_firm",
+        execution_anchor_modes=["aggressive", "passive"],
     )
 
     args = module.parse_args(
@@ -145,15 +158,13 @@ def test_grid_runner_parse_args_loads_parameters_from_config_with_cli_overrides(
             str(tmp_path / "quotes.parquet"),
             "--output-dir",
             str(tmp_path / "out"),
-            "--depth-grid",
-            "2,4",
         ]
     )
 
     assert args.config == config_path
-    assert args.depth_grid == "2,4"
-    assert args.kappa == 2.0
-    assert args.lambda_ == 0.5
+    assert args.depth_grid == "1,3,5"
+    assert not hasattr(args, "kappa")
+    assert not hasattr(args, "lambda_")
     assert args.window_seconds == 30.0
     assert args.withdrawal_window_seconds == 2.5
     assert args.reversion_horizon_seconds == 3.5
@@ -165,20 +176,19 @@ def test_grid_runner_parse_args_loads_parameters_from_config_with_cli_overrides(
     assert args.actor_identity_mode == "client_then_firm"
     assert args.execution_anchor_modes == ("passive", "aggressive")
 
-    cli_kernel = tmp_path / "cli_kernel.parquet"
-    cli_args = module.parse_args(
-        [
-            "--input",
-            str(tmp_path / "input.parquet"),
-            "--quote-panel",
-            str(tmp_path / "quotes.parquet"),
-            "--output-dir",
-            str(tmp_path / "out"),
-            "--empirical-depth-kernel",
-            str(cli_kernel),
-        ]
-    )
-    assert cli_args.empirical_depth_kernel == cli_kernel
+    with pytest.raises(SystemExit):
+        module.parse_args(
+            [
+                "--config",
+                str(config_path),
+                "--input",
+                str(tmp_path / "input.parquet"),
+                "--output-dir",
+                str(tmp_path / "out"),
+                "--depth-grid",
+                "2,4",
+            ]
+        )
 
 
 def test_grid_metadata_declares_gate_and_analytical_populations():
@@ -221,13 +231,14 @@ def test_grid_metadata_declares_signed_msci_for_provenance_and_cache_invalidatio
 
 def test_grid_runner_depth_reuse_is_explicit_opt_in(tmp_path: Path):
     module = load_grid_module()
+    config_path = write_grid_config(tmp_path, tick_size=0.01)
     required = [
+        "--config",
+        str(config_path),
         "--input",
         str(tmp_path / "input.parquet"),
         "--output-dir",
         str(tmp_path / "out"),
-        "--tick-size",
-        "0.01",
     ]
 
     assert module.parse_args(required).reuse_depth_outputs is False
@@ -350,17 +361,11 @@ def test_grid_runner_main_versions_actor_anchor_artifacts_and_audits(tmp_path: P
     module.main(
         [
             "--config",
-            str(tmp_path / "missing.json"),
+            str(write_grid_config(tmp_path, tick_size=0.01, depth_grid=[1])),
             "--input",
             str(input_path),
             "--output-dir",
             str(output_dir),
-            "--tick-size",
-            "0.01",
-            "--depth-grid",
-            "1",
-            "--execution-anchor-modes",
-            "aggressive,passive",
         ]
     )
 

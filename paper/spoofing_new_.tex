@@ -20,6 +20,8 @@
 \usepackage{authblk}
 \usepackage{array}
 \usepackage[table]{xcolor}
+% Revisions that unpack dense attributive modifiers are highlighted in blue.
+\newenvironment{review}{\begingroup\color{blue}}{\endgroup}
 \usepackage{tabularx}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,plotmarks}
@@ -57,14 +59,13 @@
 \begin{abstract}
 How can surveillance data isolate order-book sequences that are compatible with spoofing without treating ordinary
 liquidity provision as manipulation? We address this question with an auditable microstructure framework that reconstructs
-the visible limit order book and groups related execution messages into a single analytical execution. An execution is anchored either by the
-actor's passive resting-order execution or by the actor's aggressive execution. We attribute orders through the original
+the visible limit order book and groups related execution messages into a single analytical execution. An execution is anchored either by \begin{review}a passive execution of the actor's resting order\end{review} or by the actor's aggressive execution. We attribute orders through the original
 client code when it is available and otherwise through the firm identifier, while preserving the identity level. For each
-execution, the candidate set comprises the same actor's opposite-side orders that are active in the top $10$ ranks immediately
+execution, the candidate set comprises \begin{review}orders placed by the same actor on the opposite side\end{review} that are active in the top $10$ ranks immediately
 before the first execution and were first observed no more than $90$ seconds earlier. The strict gate passes only when four
 conditions hold simultaneously: cancellation of at least one candidate order is canonically assigned within $2$ seconds; attributed
-withdrawal exceeds execution quantity; observed favorable pre-execution midprice movement is positive; and
-observed cancel-anchored midprice reversion is positive over a $2$-second horizon. An empirical depth kernel weights visible
+withdrawal exceeds execution quantity; \begin{review}the observed favorable movement in the midprice before execution\end{review} is positive; and
+\begin{review}the observed midprice reversion measured from the cancellation\end{review} is positive over a $2$-second horizon. An empirical depth kernel weights visible
 liquidity by book rank. In the Risanamento, Nexi, and Ferrari samples, respectively, the reconstruction identifies
 \RisanamentoMatchedClusters{}, \NexiMatchedClusters{}, and \FerrariMatchedClusters{} matched executions, of which
 \RisanamentoCompatibleSequences{}, \NexiCompatibleSequences{}, and \FerrariCompatibleSequences{} satisfy the strict gate.
@@ -101,61 +102,60 @@ control inventory, or limit adverse selection. Static size thresholds, cancellat
 therefore cannot by themselves distinguish manipulative conduct from legitimate liquidity provision. Such rules can
 produce false positives and cannot establish the participant's intent.
 
+\begin{review}
 A deliberately broad diagnostic makes this overlap visible. \Cref{fig:actor_cancellation_rank} ranks actors by the rate at
 which they cancel liquidity on the side opposite to an execution within the next two seconds. Positive rates occur in all
 three samples, but the frequency and the number of supporting executions vary substantially across actors. The
 statistic is deliberately agnostic about why an order was cancelled. A high value can arise from ordinary quote and
 inventory management, so it is not evidence of manipulation. The dispersion instead motivates a reconstruction that asks
 which rapid cancellations also belong to the more specific sequence implied by the hypothesized mechanism.
+\end{review}
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=\textwidth]{generated/actor_post_execution_cancellation_rank.pdf}
-    \caption{Rate at which each actor cancels opposite-side liquidity within two seconds of its own execution. For actor
-    $i$, the denominator $N_i^E$ contains all of its passive and aggressive executions. The numerator counts executions
-    followed by at least one cancellation by the same canonical actor on the opposite side during
+    \caption{\begin{review}Rate at which each actor cancels opposite-side liquidity within two seconds of its own execution.
+    For actor $i$, the denominator $N_i^E$ contains all of its passive and aggressive executions. The numerator
+    counts executions followed by at least one cancellation by the same canonical actor on the opposite side during
     $(t_c^{\mathrm{end}},t_c^{\mathrm{end}}+2\,\mathrm{s}]$. The cancellation must also follow the final constituent execution message
     in canonical source order and remain in the same trading partition. Each execution contributes at most one unit to the
     numerator, regardless of how many qualifying cancellations follow it. Each execution defines its own window, so the same
     cancellation can follow more than one nearby execution. Client-level and firm-fallback actors form two separate curves and
-    are ranked from highest to lowest rate within each identity scope and instrument. The actor-rank axis is logarithmic, and no actor
-    identifier is displayed. Identity follows the client-first rule: the original client code is used when available, with
-    the firm identifier used only as a labelled fallback. Marker area increases with $\log(1+N_i^E)$ to make sample support
-    visible; marker shape and color also distinguish the two identity scopes. No actor is removed for low
+    are ranked from highest to lowest rate within each identity scope and instrument. The actor-rank axis is logarithmic, and
+    no actor identifier is displayed. Identity follows the client-first rule: the original client code is used when
+    available, with the firm identifier used only as a labelled fallback. Marker area increases with $\log(1+N_i^E)$ to
+    make sample support visible; marker shape and color also distinguish the two identity scopes. No actor is removed for low
     activity. Firm fallback is a coarser scope that can pool client activity, so its rates are not directly equivalent to
     client-level rates. This broad statistic does not impose the later conditions on candidate age, the fixed candidate set,
     withdrawal size, or the price path, and it does not use WMSCI, MSCI, or the strict gate. A high rate is not evidence of
-    manipulation.}
+    manipulation.\end{review}}
     \label{fig:actor_cancellation_rank}
 \end{figure}
 
 This paper asks whether the observable conjunction implied by the hypothesized mechanism can be reconstructed from
-participant-level messages without treating frequent cancellation itself as evidence of spoofing. Complete top-$10$
-resting-profile measures first describe the shape of an actor's displayed liquidity; these diagnostics do not determine
-eligibility. For each passive or aggressive execution, we then fix a candidate set of same-actor, opposite-side
-orders that are active in the top $10$ ranks and no more than $90$ seconds old. A matched execution has at least one cancellation
-of a candidate order canonically assigned within $2$ seconds. The strict four-condition gate additionally requires the
-attributed withdrawal to exceed execution quantity, observed favorable pre-execution midprice movement to be
-positive, and observed cancel-anchored midprice reversion to be positive over the $2$-second reversion horizon. Actor identity
+\begin{review}messages attributed to individual participants\end{review} without treating frequent cancellation itself as evidence of spoofing. \begin{review}Measures of the actor's complete resting profile over the top $10$ ranks\end{review} first describe the shape of an actor's displayed liquidity; these diagnostics do not determine
+eligibility. For each passive or aggressive execution, we then fix \begin{review}a candidate set containing orders placed by the same actor on the opposite side\end{review} that are active in the top $10$ ranks and no more than $90$ seconds old. A matched execution has at least one cancellation
+of a candidate order canonically assigned within $2$ seconds. \begin{review}The strict gate with four conditions\end{review} additionally requires the
+attributed withdrawal to exceed execution quantity, \begin{review}the observed favorable movement in the midprice before execution\end{review} to be
+positive, and \begin{review}the observed midprice reversion measured from the cancellation\end{review} to be positive over the $2$-second reversion horizon. Actor identity
 is a separate data problem, so we use the original client code when present and the firm identifier only as a fallback. Each
 physical cancellation is assigned to at most one execution.
 
-The empirical reconstruction identifies rapid same-actor withdrawals in all three samples and after both execution routes.
+The empirical reconstruction identifies \begin{review}rapid withdrawals by the same actor\end{review} in all three samples and after both execution routes.
 The full four-condition sequence is less common because it additionally requires attributed withdrawal to exceed
 execution quantity, favorable movement, and reversion. This distinction is the main interpretive result: a mechanical
-withdrawal can motivate review, but it is not equivalent to a sequence that also satisfies the size and price-path conditions
+withdrawal can motivate review, but it is not equivalent to a sequence that also satisfies \begin{review}the conditions on size and on the price path\end{review}
 of the stylized mechanism. The output is therefore an auditable set of descriptive screening diagnostics for analyst review,
 not a statistical validation, a label of manipulation, or an estimate of causal price impact. Within the candidate set, the
-Withdrawal Multilevel Spoofing Conditionality Index (WMSCI) is the primary event-prioritization metric. It ranks events by the
+Withdrawal Multilevel Spoofing Conditionality Index (WMSCI) is \begin{review}the primary metric used to prioritize events\end{review}. It ranks events by the
 scale and speed of attributed withdrawal relative to the execution, but it does not define the four-condition gate.
 
 An exploratory comparison with externally supplied surveillance alerts gives the same evidence hierarchy. The $36$ timed
 source records form $34$ distinct subject--instrument intervals after overlapping or endpoint-sharing records are merged. All
 $34$ intervals contain a recovered execution, $30$ contain an attributed withdrawal, and four contain a strict
-sequence. All four strict overlaps occur where the external firm-level subject maps to multiple canonical actors, so they
-establish subject-scope coverage rather than exact-actor correspondence. Because the external alerts are positive seeds
-rather than independently adjudicated labels, this comparison reports recovery relative to the source alerts. Exact-actor
-strict recall is defined only for intervals whose external and internal identities have aligned granularity; it is not recall
+sequence. All four strict overlaps occur where \begin{review}the external subject, identified at firm level, maps to multiple canonical actors\end{review}, so they
+establish \begin{review}coverage at subject scope rather than correspondence with an exact actor\end{review}. Because the external alerts are positive seeds
+rather than independently adjudicated labels, this comparison reports recovery relative to the source alerts. \begin{review}Strict recall for an exact actor\end{review} is defined only for intervals whose external and internal identities have aligned granularity; it is not recall
 against confirmed manipulation.
 
 \section{Market Making Versus Spoofing}
@@ -167,19 +167,18 @@ features that can guide surveillance.
 
 \subsection{The Market Maker's Problem}
 \label{subsec:market_maker}
-A market maker supplies liquidity by posting resting orders on the bid and ask sides of the book. In a stylized
-inventory-risk benchmark, the dealer seeks to earn the bid--ask spread while controlling inventory risk and exposure to
-adverse selection. Optimal quotes therefore depend on both order-arrival rates and the dealer's inventory.
+A market maker supplies liquidity by posting resting orders on the bid and ask sides of the book. In \begin{review}a stylized benchmark based on inventory risk\end{review}, the dealer seeks to earn the bid--ask spread while controlling inventory risk and exposure to
+adverse selection. Optimal quotes therefore depend on both \begin{review}rates of order arrival\end{review} and the dealer's inventory.
 
-Stochastic-control models often express this problem through a Hamilton--Jacobi--Bellman equation. The dealer chooses bid
+\begin{review}Models of stochastic control\end{review} often express this problem through a Hamilton--Jacobi--Bellman equation. The dealer chooses bid
 and ask quotes that balance execution revenue against inventory risk. For example, a long inventory exposes the dealer to
 a price decline. The dealer can respond by shifting both quotes downward: a lower ask encourages purchases from the
 dealer, while a lower bid discourages further sales to the dealer. The quote adjustment depends on the midprice, the
 spread required for compensation, and the penalty for inventory away from the target.
 
-Within this benchmark, frequent cancellation is a risk-management action. The market maker cancels and reposts orders as
-the midprice changes, as adverse-selection risk changes, or as inventory moves away from its target. The dealer generally
-maintains a two-sided presence near the top of the book within this stylized benchmark, although actual quoting can become
+Within this benchmark, frequent cancellation is \begin{review}an action for risk management\end{review}. The market maker cancels and reposts orders as
+the midprice changes, as \begin{review}the risk of adverse selection\end{review} changes, or as inventory moves away from its target. The dealer generally
+maintains \begin{review}a presence on both sides\end{review} near the top of the book within this stylized benchmark, although actual quoting can become
 asymmetric because of inventory, information, or market conditions. Expected profits in the benchmark come primarily from
 spread capture rather than from deliberately inducing a directional change in the midprice.
 
@@ -188,18 +187,18 @@ spread capture rather than from deliberately inducing a directional change in th
 In the stylized spoofing mechanism, the participant is hypothesized to seek to improve the price of a directional execution.
 The participant displays a large order on one side of the book and submits a smaller order on the opposite side. The large
 displayed order creates an asymmetric depth profile. Algorithms or traders that use bid--ask volume imbalance may interpret
-this profile as evidence of short-term price pressure and adjust their orders. If other traders respond to the displayed
+this profile as evidence of \begin{review}pressure on prices over a short horizon\end{review} and adjust their orders. If other traders respond to the displayed
 asymmetry, the resulting price movement could improve the execution of the smaller opposite-side order.
 
 The displayed order creates a trade-off between influence and execution risk. An order near the best quote is prominent
 in the book but is also more likely to execute. An order posted at Level 2, Level 3, or deeper has a buffer against
-immediate execution while remaining visible in multilevel order-book data. A participant implementing the stylized
+immediate execution while remaining visible in \begin{review}order-book data across multiple levels\end{review}. A participant implementing the stylized
 strategy may therefore distribute the large profile across deeper levels rather than place all of it at the touch.
 
-After the smaller order executes, rapid withdrawal of the displayed opposite-side profile is consistent with reducing
+After the smaller order executes, rapid withdrawal of \begin{review}the displayed profile on the opposite side\end{review} is consistent with reducing
 subsequent execution exposure under the hypothesized strategy. This timing motivates the diagnostic contrast with ordinary
-quote updates: the candidate withdrawal follows the opposite-side execution rather than only changes in fair value,
-inventory, or adverse-selection risk. \Cref{tab:surveillance-models} summarizes these stylized incentives; none is directly
+quote updates: the candidate withdrawal follows \begin{review}the execution on the opposite side\end{review} rather than only changes in fair value,
+inventory, or \begin{review}the risk of adverse selection\end{review}. \Cref{tab:surveillance-models} summarizes these stylized incentives; none is directly
 observed as intent.
 
 \begin{table}[htbp]
@@ -221,7 +220,7 @@ benchmarks, not observed intent or necessary conditions for either activity.}
 \textbf{Microstructure Feature} & \textbf{Legitimate Market Maker} & \textbf{Hypothesized Spoofing-Compatible Mechanism} \\
 \midrule
 Primary objective
-& Earn the bid--ask spread while controlling inventory and adverse-selection risk.
+& Earn the bid--ask spread while controlling inventory and \begin{review}the risk of adverse selection\end{review}.
 & Improve a directional execution through a displayed order-book signal. \\
 
 Order-book imbalance
@@ -245,8 +244,7 @@ Source of expected gain
 
 \section{Existing Approaches}
 \label{sec:existing_approaches}
-Spoofing-detection methods differ mainly in the object they classify. Rule-based methods reconstruct a stylized episode
-from order-book mechanics. Statistical methods monitor unusual states of order flow. Sequence and graph models learn
+\begin{review}Methods for detecting spoofing\end{review} differ mainly in the object they classify. \begin{review}Methods based on rules reconstruct a stylized episode from the mechanics of the order book\end{review}. Statistical methods monitor unusual states of order flow. Sequence and graph models learn
 temporal or relational patterns from event data. For the present setting, this taxonomy is useful because it distinguishes
 methods that reconstruct attributable order sequences from methods that detect unusual states or learned temporal patterns.
 \Cref{fig:method_taxonomy} summarizes the method families, which can overlap in practice.
@@ -304,34 +302,30 @@ methods that reconstruct attributable order sequences from methods that detect u
             \draw[arrow] (\source.south) -- (\target.north);
         }
     \end{tikzpicture}
-    \caption{Method families in the spoofing-detection literature. The categories can overlap; each column identifies
+    \caption{Method families in \begin{review}the literature on spoofing detection\end{review}. The categories can overlap; each column identifies
     the main object or representation used by a strand of work.}
     \label{fig:method_taxonomy}
 \end{figure}
 
-Early empirical studies operationalize spoofing-surveillance screens through interpretable order-book conditions. Using account-level Korea Exchange
-data, \cite{LeeEomPark2013} identify large orders placed far from the best quote, followed by opposite-side trading and
+Early empirical studies operationalize \begin{review}screens for spoofing surveillance through interpretable conditions from the order book\end{review}. Using \begin{review}Korea Exchange data at the account level\end{review}, \cite{LeeEomPark2013} identify large orders placed far from the best quote, followed by opposite-side trading and
 subsequent withdrawal. Related surveillance rules have been applied to Brazilian equities
 \cite{MendoncaDeGenaro2020}, FX spot markets \cite{StenforsSusai2021}, cross-market FX activity
 \cite{StenforsEtAl2023}, and Taiwan derivatives \cite{ChenHsiehYang2026}. These studies connect a screen to observable
 features such as order size, posting distance, cancellation timing, opposite-side execution, and short-lived price
-impact. However, the reported implementations use venue-specific thresholds, and their reconstruction can require
+impact. However, the reported implementations use \begin{review}thresholds specific to each venue\end{review}, and their reconstruction can require
 privileged message data or account identifiers.
 
 A second line of work monitors statistical anomalies in the order book. \cite{TaoDayLingDrapeau2022} derive spoofing
-incentives from multilevel imbalance and propose a Wasserstein-distance statistic for real-time monitoring.
-\cite{LiPolukarovaVentre2023} represent the order book as a statistical-physics system and detect abnormal momentum in
-cryptocurrency markets. Explainable forensic methods partly overlap with this family. Message-level visualization can
+incentives from multilevel imbalance and propose \begin{review}a statistic based on Wasserstein distance for monitoring in real time\end{review}.
+\cite{LiPolukarovaVentre2023} represent the order book as \begin{review}a system described using concepts from statistical physics\end{review} and detect abnormal momentum in
+cryptocurrency markets. Explainable forensic methods partly overlap with this family. \begin{review}Visualization at the message level\end{review} can
 reconstruct prosecuted episodes \cite{DebieEtAl2023}. Interpretable probabilistic neural networks instead estimate how an
 isolated limit order changes the conditional distribution of future prices and the expected gain from a hypothetical
 manipulation strategy in centralized cryptocurrency markets \cite{FabreChallet2025}. The latter object measures
-order-level \emph{spoofability}; it does not establish whether one participant generated the candidate posture, the
-smaller execution-side order, and the withdrawal. Our framework addresses this complementary attribution problem by
+\begin{review}the \emph{spoofability} of an individual order\end{review}; it does not establish whether one participant generated the candidate posture, \begin{review}the smaller order on the execution side\end{review}, and the withdrawal. Our framework addresses this complementary attribution problem by
 linking these observed actions through canonical actor keys while recording whether each linkage is at client or firm scope.
 
-Machine-learning methods add temporal or relational structure. \cite{TuccellaNadlerSerban2021} formulate spoofing as an
-early-warning problem and train a gated recurrent unit model on cryptocurrency order-book event streams. Graph-based
-methods move the unit of analysis from isolated orders to networks of traders and transactions. This representation can
+Machine-learning methods add temporal or relational structure. \cite{TuccellaNadlerSerban2021} formulate spoofing as \begin{review}a problem of early warning\end{review} and train a gated recurrent unit model on \begin{review}streams of events from cryptocurrency order books\end{review}. \begin{review}Methods based on graphs\end{review} move the unit of analysis from isolated orders to networks of traders and transactions. This representation can
 capture coordinated spoofing patterns \cite{KangMuNing2023,KangMuNing2024,XiangEtAl2025}. Reported models combine
 temporal transaction graphs, community features, and dynamic latent representations. Their practical performance remains
 difficult to compare because available labels, market settings, and validation designs differ.
@@ -340,50 +334,40 @@ These studies imply two requirements for the present surveillance setting. First
 microstructure interpretation. The screen must record candidate volume, posting distance from the touch, cancellation
 timing, and the relation to an opposite-side execution. Second, any eventual validation must reflect scarce and noisy
 enforcement labels, rare positive cases, and the analyst cost of false positives. Given the evidence currently available,
-the model below preserves the auditability of rule-based surveillance while producing descriptive participant-level order
-sequences from proprietary event data.
+the model below preserves the auditability of rule-based surveillance while producing \begin{review}descriptive order sequences attributed to individual participants\end{review} from proprietary event data.
 
 \section{Data}
 \label{sec:data}
 
-We use three CONSOB limit-order-book message samples. The Risanamento sample covers June--November 2024, the Nexi sample
+We use \begin{review}three samples of CONSOB messages from the limit order book\end{review}. The Risanamento sample covers June--November 2024, the Nexi sample
 covers 23 April 2024, and the Ferrari sample covers 13 June 2024. These samples differ in duration and participant
-composition, so cross-instrument differences are descriptive rather than controlled comparisons.
+composition, so \begin{review}differences across instruments\end{review} are descriptive rather than controlled comparisons.
 
 For an exploratory coverage audit, we also use an externally supplied CONSOB surveillance report containing $37$ alert
 records supplied as positive seeds. These externally identified periods are used to test whether the reconstruction covers
 the reported activity; they are not independently adjudicated manipulation labels. The source contains $35$ timed Ferrari
 records, one timed Nexi record, and one Risanamento record that identifies only the trading date. We preserve every source
 record and merge timed intervals that overlap or share an endpoint only within the same instrument and external subject.
-This procedure yields $34$ distinct timed intervals, while the date-only Risanamento record remains outside the event-level
-denominator.
+This procedure yields $34$ distinct timed intervals, while \begin{review}the Risanamento record that identifies only the date remains outside the denominator for event-level analysis\end{review}.
 
-For timed records, we parse the source bounds at millisecond precision and include both endpoints. To place raw events on a
-common event-time axis, we use the first nonmissing timestamp in the source-field priority order \texttt{TRADETIME},
+For timed records, we parse the source bounds at millisecond precision and include both endpoints. To place raw events on \begin{review}a common axis of event time\end{review}, we use the first nonmissing timestamp in \begin{review}the priority order of the source fields\end{review} \texttt{TRADETIME},
 \texttt{BOOKOUTTIME}, \texttt{BOOKIN}, and \texttt{SEQUENCETIME}. We recover an execution when at least one of its
-constituent execution messages lies inside the closed union interval; matched-withdrawal and strict status are then read from that
-execution's event-level diagnostics. The union interval, rather than each potentially overlapping source record, is therefore
+constituent execution messages lies inside the closed union interval; \begin{review}we then read whether the execution has a matched withdrawal and satisfies the strict gate from its diagnostics at the event level\end{review}. The union interval, rather than each potentially overlapping source record, is therefore
 the observational unit for timed counts.
 
 We match each external subject in the identity namespace reported by the source. Consequently, an external firm can cover
-several canonical actor keys when client identifiers are available internally. We therefore distinguish subject-scope
-overlap from exact-actor correspondence and treat the latter as identifiable only when the external identity maps to one
-canonical actor at the same granularity. The alert report contains no negative sample, so the comparison cannot estimate a
-false-positive rate.
+several canonical actor keys when client identifiers are available internally. We therefore distinguish \begin{review}overlap at subject scope from correspondence with an exact actor\end{review} and treat the latter as identifiable only when the external identity maps to one
+canonical actor at the same granularity. The alert report contains no negative sample, so the comparison cannot estimate \begin{review}a rate of false positives\end{review}.
 
 For each instrument, we reconstruct the visible order book from order-level events and infer the tick size from the
-reconstructed best quotes. We compute actor-wide resting-profile diagnostics over the first ten book ranks and separately
-construct an age-conditioned set of opposite-side candidate orders. The main specification uses a $10$-second structural
-post-execution window, a $2$-second rapid-withdrawal attribution window, a $2$-second reversion horizon measured from each
-assigned cancellation, and a maximum candidate-order age of $90$ seconds.
+reconstructed best quotes. \begin{review}We compute diagnostics for each actor's resting profile over the first ten book ranks and separately construct a set of candidate orders on the opposite side that satisfy the age restriction.\end{review} \begin{review}The main specification uses a $10$-second window after execution for structural reconstruction, a $2$-second window for attributing rapid withdrawals, a $2$-second horizon for reversion measured from each assigned cancellation, and a maximum age of $90$ seconds for candidate orders.\end{review}
 
 The original client code is not available on every message. We therefore define one canonical actor key before constructing
 events. If the original client code is present, it defines the actor; only when it is missing do we use the firm identifier.
 The technical client value \texttt{0} is treated as missing rather than as an actor, so a message carrying this sentinel uses
 the firm fallback when a firm identifier is available. The two namespaces are kept distinct, and every output records whether
-attribution is at the client or firm level. A client-derived key and a firm-fallback key are distinct canonical identities;
-the fallback does not merge a client-identified message with a firm-only message. Messages missing both identifiers are
-excluded from actor-attributed analysis; none occurs in the reported samples. Firm fallback is coarser than client
+attribution is at the client or firm level. \begin{review}A key derived from the client code and a fallback key based on the firm identifier are distinct canonical identities; the fallback does not merge a message identified by client code with a message identified only at firm level.\end{review} Messages missing both identifiers are
+excluded from \begin{review}analysis that requires actor attribution\end{review}; none occurs in the reported samples. Firm fallback is coarser than client
 attribution and can combine several clients represented by the same firm. It is therefore an identity fallback, not evidence
 that those clients are one economic account.
 
@@ -392,10 +376,10 @@ aggressive and reject messages for which the two role flags are both set or both
 one analytical execution when they share the trading partition---trading date, venue, market, instrument, and EMM code---as
 well as canonical actor, order identifier, execution role, and side. Passive executions also require a common resting price;
 aggressive executions can span several traded prices under the same order and sweep. Consecutive constituent execution messages must be no more than
-$100$ milliseconds apart, with no intervening cancellation, modification, or new-order lifecycle event for the same order.
+$100$ milliseconds apart, with no intervening cancellation, modification, or \begin{review}lifecycle event that creates a new order\end{review} for the same order.
 The $100$-millisecond threshold is an operational choice, and the reported findings are conditional on it; sensitivity to
-alternative inter-execution-message gaps is not reported here. Raw-message identifiers and the constituent messages assigned to each execution remain available as
-provenance, while executions form the analytical unit for event metrics and actor--partition aggregation. The
+\begin{review}alternative gaps between execution messages\end{review} is not reported here. \begin{review}Identifiers of raw messages\end{review} and the constituent messages assigned to each execution remain available as
+provenance, while executions form the analytical unit for event metrics and \begin{review}aggregation by actor and partition\end{review}. The
 resulting surveillance dossiers support analyst review and are not enforcement labels.
 
 \section{Model}
@@ -403,16 +387,9 @@ resulting surveillance dossiers support analyst review and are not enforcement l
 The model translates the stylized contrast between market making and spoofing into a sequence of observable conditions. Its
 central question is whether recent opposite-side orders disappear specifically after the same participant executes. To
 answer it, we construct two distinct objects. The first is the participant's complete resting profile across the top $n$
-book levels, which supplies descriptive DWI, SCI, and MSCI shape diagnostics. The second is an age-conditioned set of
-opposite-side candidate orders, which supplies matched-withdrawal quantities and the event-prioritization metric WMSCI.
-Separately, the strict gate applies the prespecified withdrawal-size, favorable-movement, and reversion conditions. These
-sign and size restrictions are screening conditions, not estimates of causal influence or intent. The resting-profile,
-withdrawal, and price-response quantities remain separate because they describe different parts of the mechanism.
-
-The motivating rate in \cref{fig:actor_cancellation_rank} stops at the broad temporal association between an execution and a
-later opposite-side cancellation. The reconstruction below narrows this population in stages. It first requires an
-attributable recent candidate withdrawal, then compares the withdrawn and executed quantities, and finally checks the
-favorable-movement and reversion conditions. The broad rate does not enter these later gates.
+book levels, which supplies descriptive DWI, SCI, and MSCI shape diagnostics. The second is \begin{review}a set of candidate orders on the opposite side that satisfy the age restriction\end{review}, which supplies \begin{review}quantities for matched withdrawal and WMSCI, the metric used to prioritize events\end{review}.
+Separately, the strict gate applies \begin{review}the prespecified conditions on withdrawal size, favorable movement, and reversion\end{review}. These
+sign and size restrictions are screening conditions, not estimates of causal influence or intent. \begin{review}The quantities describing the resting profile, withdrawal, and price response\end{review} remain separate because they describe different parts of the mechanism.
 
 % \subsection{Spoofer's timeline}
 % \label{subsec:spoofing_timeline}
@@ -506,9 +483,8 @@ observable order, execution, and cancellation records rather than inferring the 
         \draw[-{Latex[length=3mm]}, thick, black!75] (13.2,1.4) -- (13.8,1.4);
     \end{tikzpicture}%
     }
-    \caption{Schematic top-$n$ timeline for the hypothesized spoofing mechanism. The large candidate posture forms an
-    agent-specific depth profile over several bid levels, while the smaller order rests near the opposite best quote. The
-    construction applies symmetrically to candidate buy- and sell-intent episodes. The figure shows the passive execution
+    \caption{Schematic top-$n$ timeline for the hypothesized spoofing mechanism. The large candidate posture forms \begin{review}a depth profile for the agent\end{review} over several bid levels, while the smaller order rests near the opposite best quote. The
+    construction applies symmetrically to \begin{review}candidate episodes with buy or sell intent\end{review}. The figure shows the passive execution
     route; the operational reconstruction also admits an aggressive execution by the same actor.}
     \label{fig:topn_spoofing_timeline}
 \end{figure}
@@ -521,8 +497,7 @@ liquidity can remain visible while facing less immediate execution risk.
 The hypothesized mechanism for participant $i$ has three states:
 \begin{enumerate}
     \item \textbf{State 1 (Candidate Posturing):} Shortly before the execution, the participant displays a large
-    liquidity profile on one side of the book, typically away from the touch. The actor has an opposite-side execution
-    anchor, which may be passive or aggressive in the operational reconstruction.
+    liquidity profile on one side of the book, typically away from the touch. The actor has \begin{review}an execution anchor on the opposite side\end{review}, which may be passive or aggressive in the operational reconstruction.
     \item \textbf{State 2 (Execution):} The large profile is present when the smaller opposite-side order executes. In the
     hypothesized mechanism, the profile can coincide with a more extreme measured imbalance before this execution.
     \item \textbf{State 3 (Withdrawal):} The participant rapidly cancels the opposite-side profile after the execution;
@@ -535,18 +510,16 @@ individual execution messages are grouped; it does not change actor identity. In
 same actor's recent orders on the side opposite to the actor's execution side. An aggressive anchor is therefore not itself
 evidence of spoofing, just as a passive anchor is not evidence of legitimate market making.
 
-These three states illustrate the hypothesized mechanism; their qualitative descriptors do not define strict-set
-membership. For either execution route, the candidate set consists of same-actor, opposite-side orders observed in the top
-$10$ ranks before the execution and satisfying the $90$-second age limit. A cancellation within $2$ seconds supplies rapid
-matched-withdrawal evidence. The strict gate then requires attributed withdrawal to exceed execution quantity and both
+These three states illustrate the hypothesized mechanism; their qualitative descriptors do not define \begin{review}membership in the strict set\end{review}. For either execution route, the candidate set consists of \begin{review}orders placed by the same actor on the opposite side\end{review} observed in the top
+$10$ ranks before the execution and satisfying the $90$-second age limit. A cancellation within $2$ seconds supplies \begin{review}rapid evidence of a matched withdrawal\end{review}. The strict gate then requires attributed withdrawal to exceed execution quantity and both
 midprice response diagnostics to be positive. The detector observes these conditions, not the participant's intent or the
-profile's causal effect on other traders. The recency restriction prevents long-lived liquidity from entering a candidate
+profile's causal effect on other traders. The recency restriction prevents \begin{review}liquidity that has been resting for a long time\end{review} from entering a candidate
 episode solely because it was already resting in the book.
 
 \subsubsection{\texorpdfstring{Top-$n$}{Top-n} Participant-Specific Depth Profiles}
 \label{subsec:topn_depth_profiles}
 
-We first define the participant-specific depth profile used throughout the model. Let $s \in \{b,a\}$ denote the bid or
+We first define the \begin{review}depth profile for each participant\end{review} used throughout the model. Let $s \in \{b,a\}$ denote the bid or
 ask side, and let $k=1,\ldots,n$ denote book rank. Rank $k=1$ is the best quote on side $s$, and
 $V^{i,s}_{k}(t)$ is participant $i$'s displayed volume at time $t$ on that side and rank. The vector
 \begin{equation}
@@ -569,18 +542,17 @@ profile therefore divides participant volume by total displayed market depth at 
     \end{cases}
     \label{eq:relative_agent_depth}
 \end{equation}
-where $D^{s}_{k}(t)$ is the total displayed market depth on side $s$ and rank $k$. The zero-depth branch makes the
-rank-level convention explicit; an imbalance remains undefined when the participant has no positive weighted footprint on
+where $D^{s}_{k}(t)$ is the total displayed market depth on side $s$ and rank $k$. \begin{review}The branch for zero depth makes the convention at each rank explicit\end{review}; an imbalance remains undefined when the participant has no positive weighted footprint on
 either side.
 We denote the distance from the touch by $d^{s}_{k}(t)$. In tick units, this distance equals the number of ticks between
-rank $k$ and the same-side best quote, shifted upward by one. The shift gives Rank 1 a positive distance and preserves the
+rank $k$ and \begin{review}the best quote on the same side\end{review}, shifted upward by one. The shift gives Rank 1 a positive distance and preserves the
 ordering of deeper ranks.
 
 \subsubsection{Multilevel Distance-Weighted Imbalance}
 \label{subsec:multilevel_dwi}
 
 \paragraph{Economic intuition and a stylized parametric benchmark.}
-We use a depth kernel to reduce the top-$n$ vector to a scalar weighted-liquidity measure. The kernel is designed to assign
+We use a depth kernel to reduce the top-$n$ vector to \begin{review}a scalar measure of weighted liquidity\end{review}. The kernel is designed to assign
 high weight to ranks that remain represented in multilevel book data while facing comparatively low immediate execution
 risk. The following parametric kernel illustrates this trade-off:
 \begin{equation}
@@ -600,7 +572,7 @@ The visibility component $e^{-\lambda d}$ decreases with depth. The protection c
 $1-e^{-\kappa d}$ increases as the displayed price moves away from immediate execution. Their product penalizes both the
 high execution risk near the touch and the lower visibility deeper in the book. The parameters $\lambda$ and $\kappa$
 control the two shapes. This expression is only a conceptual benchmark: the empirical analysis uses neither these weights
-nor fitted values of $\lambda$ and $\kappa$. Instead, it constructs rank-level empirical proxies for each instrument and
+nor fitted values of $\lambda$ and $\kappa$. Instead, it constructs \begin{review}empirical proxies at each rank\end{review} for each instrument and
 book side.
 
 \Cref{fig:depth_kernel_behavior} illustrates the benchmark trade-off and its discrete normalization; it is not an
@@ -668,17 +640,15 @@ estimated empirical profile.
 \end{figure}
 
 \paragraph{Operational empirical depth kernel.}
-The operational kernel replaces both exponential components with empirical rank-level quantities. We calibrate each book
-rank $k$ separately for instrument $m$ and side $s$. A rank receives more weight when its depth has a strong short-horizon
-association with midprice changes and its displayed price is rarely reached over the same horizon. Tick distance can vary
+The operational kernel replaces both exponential components with \begin{review}empirical quantities defined at each rank\end{review}. We calibrate each book
+rank $k$ separately for instrument $m$ and side $s$. A rank receives more weight when its depth has \begin{review}a strong association with midprice changes over a short horizon\end{review} and its displayed price is rarely reached over the same horizon. Tick distance can vary
 for a given rank over time, but the calibrated unit remains the rank.
 
-\emph{Operational calculation.} We reconstruct a post-event top-$n$ snapshot after every ordered message. Let
+\emph{Operational calculation.} We reconstruct \begin{review}a post-event top-$n$ snapshot after every ordered message\end{review}. Let
 $\mathcal{O}_{m,s,k}$ contain the snapshots in which rank $k$ exists on side $s$ and has positive displayed depth. For
 each $t\in\mathcal{O}_{m,s,k}$, the indicator $R^{m,s}_{t,k}(H)$ equals one when at least one execution during $(t,t+H]$ occurs
 at or through the rank's displayed price. An ask rank is reached when the maximum ask execution price in the window is at least
-the displayed price. A bid rank is reached when the minimum bid execution price is at most the displayed price. We estimate the
-rank-level message-snapshot hit frequency, denoted $\widehat p^{m,s}_{k}(H)$, from pooled hit and exposure counts:
+the displayed price. A bid rank is reached when the minimum bid execution price is at most the displayed price. We estimate \begin{review}the hit frequency at each rank across message snapshots\end{review}, denoted $\widehat p^{m,s}_{k}(H)$, from pooled hit and exposure counts:
 \begin{equation}
     \widehat p^{m,s}_{k}(H)
     =
@@ -690,10 +660,8 @@ rank-level message-snapshot hit frequency, denoted $\widehat p^{m,s}_{k}(H)$, fr
     \label{eq:empirical_hit_probability}
 \end{equation}
 Each observable snapshot contributes once, even when the same rank appears at different tick distances. Thus,
-\cref{eq:empirical_hit_probability} divides total hits by total exposures; it does not average distance-specific hit
-rates. Realized tick distance is retained only as descriptive metadata and does not define additional kernel rows or enter
-a parametric fit. Its probability interpretation is conditional on the message-snapshot sampling scheme. The estimator is a
-short-horizon proxy for whether the displayed price is reached, not an individual order's execution probability, which also
+\cref{eq:empirical_hit_probability} divides total hits by total exposures; it does not average \begin{review}hit rates computed separately by distance\end{review}. Realized tick distance is retained only as descriptive metadata and does not define additional kernel rows or enter
+a parametric fit. Its probability interpretation is conditional on \begin{review}the sampling scheme based on message snapshots\end{review}. The estimator is \begin{review}a proxy over a short horizon\end{review} for whether the displayed price is reached, not an individual order's execution probability, which also
 depends on queue position, order size, and intervening cancellations.
 We define the protection component as the complement of the hit probability:
 \begin{equation}
@@ -702,8 +670,8 @@ We define the protection component as the complement of the hit probability:
 \end{equation}
 A value of $\widehat\rho^{m,s}_{k}(H)$ near one indicates that rank $k$ is rarely reached over horizon $H$.
 
-The second component measures the association between displayed depth and subsequent short-horizon price changes. Let
-$D^{m,s}_{k}(t)$ denote total market depth, rather than participant-$i$ depth, at rank $k$. Total displayed top-$n$ depth
+The second component measures the association between displayed depth and \begin{review}subsequent price changes over a short horizon\end{review}. Let
+$D^{m,s}_{k}(t)$ denote total market depth, rather than \begin{review}depth displayed by participant $i$\end{review}, at rank $k$. \begin{review}The total displayed depth across the top $n$ ranks\end{review}
 at snapshot $t$ is
 \begin{equation}
     D^{m}_{n}(t)
@@ -728,7 +696,7 @@ and bid depth contribute in opposite directions to imbalance.
 
 For each snapshot, $M^m_{t,H}$ is the last finite reconstructed midprice observed after $t$ and no later than $t+H$.
 The corresponding price change is $\Delta M^m_{t,H}=M^m_{t,H}-M^m(t)$. Let $\mathcal{V}_{m,s,k}(H)$ contain the rank-$k$
-snapshots for which both midprices are finite. For each instrument--side--rank cell, we compute the following pooled
+snapshots for which both midprices are finite. For \begin{review}each cell defined by instrument, side, and rank\end{review}, we compute the following pooled
 empirical covariance in absolute value, normalized by the number of eligible snapshots. The overbars denote sample means over
 $\mathcal{V}_{m,s,k}(H)$:
 \begin{equation}
@@ -743,9 +711,9 @@ $\mathcal{V}_{m,s,k}(H)$:
     \label{eq:empirical_visibility_covariance}
 \end{equation}
 The absolute value makes $\widehat\nu^{m,s}_{k}(H)$ a measure of the magnitude, rather than the direction, of
-rank-specific co-movement. We pool observations across realized tick distances before computing the covariance. We do not
-compute or average separate distance-bucket covariances. This quantity is a weighting proxy, not a causal estimate of price
-impact. It is also expressed in instrument-specific price units. We therefore use it only to allocate weights across
+\begin{review}co-movement specific to that rank\end{review}. We pool observations across realized tick distances before computing the covariance. We do not
+compute or average separate \begin{review}covariances for separate distance buckets\end{review}. This quantity is a weighting proxy, not a causal estimate of price
+impact. It is also expressed in \begin{review}the price units of the instrument\end{review}. We therefore use it only to allocate weights across
 ranks on the same side of one instrument, not to compare covariance magnitudes across instruments.
 
 The empirical kernel follows the same multiplicative decomposition as \cref{eq:depth_kernel}, but no exponential curve is
@@ -771,13 +739,12 @@ We normalize the product of these two quantities within each instrument and side
 The denominator must be finite and strictly positive. If every rank on a side has zero protection, or if the product is
 otherwise degenerate, calibration fails instead of returning an uninterpretable all-zero vector. The covariance floor is a
 numerical regularizer rather than empirical evidence of price association. When estimated covariances are at or below the
-floor, relative weights can be driven primarily by protection and must not be interpreted as evidence of rank-specific price
-association. Every reported kernel in \cref{tab:empirical_depth_kernel_calibration} passes the normalization condition and
+floor, relative weights can be driven primarily by protection and must not be interpreted as evidence of \begin{review}price association at a given rank\end{review}. Every reported kernel in \cref{tab:empirical_depth_kernel_calibration} passes the normalization condition and
 sums to one before rounding.
 
 In the remaining formulas, we use the shorthand
 $\omega^{s}_{k}(t)\equiv\widehat\omega^{m,s}_{k}(H)$ for an event in instrument $m$; the time argument indicates that the
-fixed weight is applied to a time-varying profile. Every event for instrument $m$ uses the same calibrated kernel. The kernel is not
+fixed weight is applied to \begin{review}a profile that varies over time\end{review}. Every event for instrument $m$ uses the same calibrated kernel. The kernel is not
 re-estimated by actor, event, or observed outcome, and calibration admits only one weight for each $(m,s,k)$ cell. The
 descriptive analysis uses the full available sample for each instrument. A prospective or out-of-sample application must
 instead estimate the kernel on an earlier training period and hold it fixed, so that future order flow does not enter the
@@ -785,7 +752,7 @@ weights.
 
 \begin{table}[htbp]
 \centering
-\caption{Operational full-sample empirical top-$10$ depth-kernel weights at horizon $H=10$ seconds. Values are rounded to
+\caption{\begin{review}Empirical weights of the top-$10$ depth kernel, estimated on the full sample at horizon $H=10$ seconds.\end{review} Values are rounded to
 three decimal places and sum to one within each instrument and side before rounding. These weights, rather than fitted
 exponential parameters, enter the empirical spoofing metrics.}
 \label{tab:empirical_depth_kernel_calibration}
@@ -806,7 +773,7 @@ Ferrari     & Ask & 0.095 & 0.022 & 0.016 & 0.209 & 0.270 & 0.032 & 0.144 & 0.03
 \end{table}
 
 The operational calibration uses the first ten ranks and the same $H=10$ second horizon for every instrument. It produces
-20 weights per instrument, one for each side--rank cell. The kernel remains side-specific. To draw one curve per
+20 weights per instrument, \begin{review}one for each combination of side and rank\end{review}. The kernel remains side-specific. To draw one curve per
 instrument for visualization only, we average the bid and ask weights at each rank:
 \begin{equation}
     \overline{\omega}^{m}_{k}(H)
@@ -819,7 +786,7 @@ instrument for visualization only, we average the bid and ask weights at each ra
     \label{eq:side_averaged_empirical_kernel}
 \end{equation}
 Each side-specific kernel sums to one, so $\sum_{k=1}^{10}\overline{\omega}^{m}_{k}(H)=1$. We use this average only in
-\cref{fig:empirical_top10_kernel_profiles}. The empirical surveillance metrics use the side-specific top-$10$ weights in
+\cref{fig:empirical_top10_kernel_profiles}. The empirical surveillance metrics use \begin{review}the top-$10$ weights calibrated separately by side\end{review} in
 \cref{tab:empirical_depth_kernel_calibration}.
 
 \begin{figure}[htbp]
@@ -871,7 +838,7 @@ Each side-specific kernel sums to one, so $\sum_{k=1}^{10}\overline{\omega}^{m}_
         \draw[ferrari] (7.15,0.304) -- (7.85,0.304);
         \node[anchor=west] at (7.95,0.304) {Ferrari};
     \end{tikzpicture}
-    \caption{Full-sample empirical top-$10$ depth-kernel profiles at $H=10$ seconds. Each line is the arithmetic mean of
+    \caption{\begin{review}Empirical profiles of the top-$10$ depth kernel estimated on the full sample at $H=10$ seconds.\end{review} Each line is the arithmetic mean of
     the separately normalized bid and ask weights in \cref{eq:side_averaged_empirical_kernel}. The mean permits one curve
     per instrument on a common rank axis and is used only for visualization. Surveillance metrics use the underlying
     side-specific kernels.}
@@ -880,8 +847,7 @@ Each side-specific kernel sums to one, so $\sum_{k=1}^{10}\overline{\omega}^{m}_
 \FloatBarrier
 
 To expose the two empirical inputs rather than only their normalized product,
-\Cref{fig:empirical_topn_visibility_profiles,fig:empirical_topn_execution_risk_profiles} plot the side-specific
-visibility and execution-risk profiles used in the calibration. The second plot reports
+\Cref{fig:empirical_topn_visibility_profiles,fig:empirical_topn_execution_risk_profiles} plot \begin{review}the visibility profiles and the profiles of execution risk, each estimated separately by side\end{review} used in the calibration. The second plot reports
 $\widehat p^{m,s}_{k}(H)$ directly; the
 kernel uses its protection complement $\widehat\rho^{m,s}_{k}(H)=1-\widehat p^{m,s}_{k}(H)$.
 
@@ -916,10 +882,8 @@ $\operatorname{DWI}^{i}_{n}(t)<0$ denotes a bid-heavy profile. The denominator s
 total weighted footprint, reducing sensitivity to the absolute scale of that footprint within the same instrument and
 kernel calibration. Values near $+1$ and $-1$ correspond to profiles concentrated almost entirely on the ask and bid sides,
 respectively. A value near zero denotes a balanced positive footprint, whereas the statistic remains undefined when both
-weighted sides are absent. The reconstructed state series additionally records a one-time zero-profile transition when a
-previously observed top-$n$ profile disappears; DWI is set to zero only for that explicit operational state. Setting $n=1$
-gives the best-level measure. Larger values of $n$ also capture candidate liquidity posted behind the touch. DWI is a
-descriptive profile-shape diagnostic. Neither its level nor its change defines candidate-set membership or the strict gate.
+weighted sides are absent. The reconstructed state series additionally records \begin{review}a single transition to a zero profile when the previously observed profile over the top $n$ ranks disappears\end{review}; DWI is set to zero only for that explicit operational state. Setting $n=1$
+gives the best-level measure. Larger values of $n$ also capture candidate liquidity posted behind the touch. DWI is \begin{review}a descriptive diagnostic of profile shape\end{review}. Neither its level nor its change defines candidate-set membership or the strict gate.
 \Cref{fig:topn_imbalance_dynamics} illustrates two stylized paths; it is not an empirical classification rule.
 
 \begin{figure}[htbp]
@@ -970,8 +934,7 @@ descriptive profile-shape diagnostic. Neither its level nor its change defines c
         \node[blue!70!black, align=left, anchor=west] at (3.35,0.30) {stylized smooth-\\rebalancing trajectory};
         \node[align=center] at (2.35,-1.62) {For the opposite spoofing direction, the sign pattern is mirrored.};
     \end{tikzpicture}
-    \caption{Stylized execution-time behavior of the multilevel distance-weighted imbalance. The conditional-withdrawal
-    trajectory shows a large top-$n$ imbalance returning rapidly toward zero after the opposite-side execution. The smooth
+    \caption{\begin{review}Stylized behavior of the multilevel distance-weighted imbalance around an execution.\end{review} \begin{review}The trajectory with conditional withdrawal\end{review} shows a large top-$n$ imbalance returning rapidly toward zero after \begin{review}the execution on the opposite side\end{review}. The smooth
     trajectory illustrates gradual rebalancing. Neither trajectory is an empirical classification rule.}
     \label{fig:topn_imbalance_dynamics}
 \end{figure}
@@ -985,19 +948,18 @@ while controlling inventory or responding to adverse selection. The additional o
 disappears conditionally after the participant's execution on the opposite side, as predicted by the stylized mechanism.
 
 Let $c$ denote an execution for canonical actor $i$. Its ordered constituent execution messages share the trading partition,
-actor key, order identifier, execution role, and side, and they satisfy the operational inter-execution-message-gap rule. Passive executions
+actor key, order identifier, execution role, and side, and they satisfy \begin{review}the operational rule for the gap between execution messages\end{review}. Passive executions
 also share the resting price. Aggressive executions use reported traded price and quantity and may span
 several price levels within the same order or sweep. The timestamps $t_c^{\mathrm{start}}$ and $t_c^{\mathrm{end}}$ denote
 the first and last constituent execution messages. The quantity $Q_c$ is their total executed quantity, and $s_c\in\{b,a\}$ is the actor's
-execution side. We denote the opposite candidate-posture side by $\bar{s}_c$. The pre- and post-execution observation times are
+execution side. We denote \begin{review}the side opposite the execution, on which the candidate posture is sought\end{review} by $\bar{s}_c$. \begin{review}The observation times before and after the execution\end{review} are
 defined from the reconstructed state series in source order. Each state is recorded after applying its message. Therefore,
-$t_c^{-}$ denotes the last actor-state row whose source index is strictly smaller than the first constituent execution message's index. Let
-$t_c^{\mathrm{target}}=t_c^{\mathrm{end}}+H_S$, where $H_S=10$ seconds is the structural state horizon. The post-execution
-state $t_c^{+}$ is the last reconstructed state at or before $t_c^{\mathrm{target}}$ whose source index is no smaller than
-the final constituent execution message's index. SCI, each side-specific collapse measure $C^{i,s}_{c,n}$, and MSCI are undefined when either
+$t_c^{-}$ denotes \begin{review}the last row in the actor's state series\end{review} whose source index is strictly smaller than the first constituent execution message's index. Let
+$t_c^{\mathrm{target}}=t_c^{\mathrm{end}}+H_S$, where $H_S=10$ seconds is the structural state horizon. \begin{review}The state after the execution\end{review} $t_c^{+}$ is the last reconstructed state at or before $t_c^{\mathrm{target}}$ whose source index is no smaller than
+the final constituent execution message's index. SCI, \begin{review}the collapse measure for each side\end{review} $C^{i,s}_{c,n}$, and MSCI are undefined when either
 required reconstructed state is unavailable.
 
-We also impose a pre-execution episode window $\Theta>0$. An opposite-side order enters the candidate profile for execution
+We also impose \begin{review}an episode window before execution\end{review} $\Theta>0$. \begin{review}An order on the opposite side enters the candidate profile\end{review} for execution
 $c$ only when its first observed posting time $\tau_o$ satisfies
 \begin{equation}
     0 \leq t_c^{\mathrm{start}}-\tau_o \leq \Theta .
@@ -1007,7 +969,7 @@ The empirical analysis uses $\Theta=90$ seconds as an exploratory default. Let
 $\mathcal{P}^{i,\bar{s}_c}_{c,n,\Theta}$ contain the orders that are active immediately before the first constituent execution message, belong
 to actor $i$, lie on side $\bar{s}_c$ within the first $n$ book ranks, and satisfy
 \cref{eq:deceptive_age_window}. The detector fixes this candidate set at the first constituent execution message. It records each order's
-visible quantity, rank, kernel-weighted relative-depth contribution, and first-observed time. In particular, the raw
+visible quantity, rank, \begin{review}contribution to relative depth after applying the kernel weights\end{review}, and first-observed time. In particular, the raw
 candidate quantity is
 \begin{equation}
     Q^{i,\bar{s}_c}_{c,n}
@@ -1015,7 +977,7 @@ candidate quantity is
     \sum_{o\in\mathcal{P}^{i,\bar{s}_c}_{c,n,\Theta}} q_o(t_c^{-}).
     \label{eq:age_conditioned_candidate_quantity}
 \end{equation}
-The age restriction therefore governs candidate-order attribution, matched withdrawal, WMSCI, and the strict event gate.
+The age restriction therefore governs \begin{review}the attribution of candidate orders\end{review}, matched withdrawal, WMSCI, and the strict event gate.
 It does not filter the state series used by SCI and MSCI.
 
 The \textit{Spoofing Conditionality Index} instead measures the absolute change in the normalized shape of actor $i$'s
@@ -1052,10 +1014,10 @@ weighted liquidity that disappears from each side after the execution using an e
 where $[x]_{+}=\max\{x,0\}$. A large $C^{i,\bar{s}_c}_{c,n}$ indicates that the actor's top-$n$ liquidity decreased on the
 side opposite to the execution. A two-sided quote refresh after a midprice change can instead generate material
 collapse on both sides. The boundary values have a direct interpretation:
-$C^{i,s}_{c,n}=1$ means that the entire weighted pre-execution profile on side $s$ disappeared, whereas
+$C^{i,s}_{c,n}=1$ means that the entire \begin{review}weighted profile before execution\end{review} on side $s$ disappeared, whereas
 $C^{i,s}_{c,n}=0$ means that it did not decrease or was absent before execution.
 
-To summarize these diagnostics while preserving evidence in both directions, define the event-level signed contrast
+To summarize these diagnostics while preserving evidence in both directions, define \begin{review}the signed contrast at the event level\end{review}
 \begin{equation}
     \operatorname{MSCI}^{i}_{c,n}
     =\frac{1}{2}\operatorname{SCI}^{i}_{c,n}
@@ -1064,15 +1026,13 @@ To summarize these diagnostics while preserving evidence in both directions, def
     \label{eq:signed_msci}
 \end{equation}
 Because DWI lies in $[-1,1]$, $\operatorname{SCI}/2$ and each collapse term lie in $[0,1]$. Therefore, MSCI lies in
-$[-1,2]$ without an additional clipping step. A positive MSCI means that normalized shape change and opposite-side collapse
-outweigh same-side collapse. Zero is the neutral contrast, whereas a negative MSCI means that same-side collapse dominates.
+$[-1,2]$ without an additional clipping step. A positive MSCI means that normalized shape change and \begin{review}collapse on the opposite side\end{review}
+outweigh \begin{review}collapse on the same side\end{review}. Zero is the neutral contrast, whereas a negative MSCI means that \begin{review}collapse on the same side\end{review} dominates.
 
 The positive part in the definition of $C$ distinguishes liquidity disappearance from liquidity growth. It does not truncate
-the subsequent cross-side contrast. The three inputs remain separately inspectable, so a two-sided quote refresh is
-distinguishable from an asymmetric collapse. MSCI is a secondary event-level diagnostic that enters actor-level feature
-summaries. It is neither a probability nor matched-withdrawal evidence. It does not enter the four-condition event gate or the
-reported result tables. Operational outputs call it \texttt{MSCI\_resting\_profile} to emphasize that it uses all active
-same-actor top-$n$ orders, not only the age-conditioned candidate set. Consequently, long-lived balanced liquidity can dilute
+\begin{review}the subsequent contrast between sides\end{review}. The three inputs remain separately inspectable, so a two-sided quote refresh is
+distinguishable from an asymmetric collapse. MSCI is \begin{review}a secondary diagnostic at the event level that enters summaries of features for each actor\end{review}. It is neither a probability nor matched-withdrawal evidence. It does not enter the four-condition event gate or the
+reported result tables. Operational outputs call it \texttt{MSCI\_resting\_profile} to emphasize that it uses \begin{review}all active top-$n$ orders of the same actor, not only the candidate set restricted by age\end{review}. Consequently, \begin{review}balanced liquidity that has been resting for a long time\end{review} can dilute
 the measured shape change. MSCI should therefore be interpreted as context about the actor's complete resting profile rather
 than as the collapse of the recent candidate layer.
 
@@ -1080,23 +1040,22 @@ than as the collapse of the recent candidate layer.
 \label{subsec:canonical_matched_withdrawal}
 
 A cancellation can be eligible for several nearby executions. To measure withdrawal without counting that
-cancellation more than once, let $\mathcal E(o)$ contain the eligible same-actor, opposite-side executions that precede
+cancellation more than once, let $\mathcal E(o)$ contain \begin{review}the eligible executions of the same actor whose execution side is opposite to the cancelled order\end{review} that precede
 cancellation $o$ by at most $\Delta\tau_W$, where $\Delta\tau_W=2$ seconds in the reported specification. Eligibility is
-evaluated only when the cancelled order belongs to the execution's fixed pre-execution candidate set; the timing and
-source-sequence precedence conditions stated below must also hold. We assign $o$ deterministically to the canonical execution
+evaluated only when the cancelled order belongs to \begin{review}the execution's fixed candidate set defined before execution\end{review}; the timing and
+\begin{review}precedence in the source sequence\end{review} conditions stated below must also hold. We assign $o$ deterministically to the canonical execution
 \begin{equation}
     a(o)=\underset{c\in\mathcal E(o)}{\arg\min}\,
     \left(t_o-t_c^{\mathrm{end}},\;t_c^{\mathrm{start}},\;\operatorname{id}_c\right),
     \label{eq:canonical_cancel_assignment}
 \end{equation}
 where the tuple is ordered lexicographically and the stable execution identifier breaks any final tie. Eligibility also
-requires source-sequence precedence: the cancellation follows the final constituent execution message in both event time and source
-sequence. For eligible top-$n$ cancellations, define $\mathcal{C}_{c,n}^{i}=\{o:a(o)=c\}$. A physical cancellation is
-identified by its trading partition, source index, and candidate order identifier. We preserve every eligible link for
+requires \begin{review}precedence in the source sequence\end{review}: the cancellation follows the final constituent execution message in both event time and source
+sequence. For \begin{review}eligible cancellations among orders in the top $n$ ranks\end{review}, define $\mathcal{C}_{c,n}^{i}=\{o:a(o)=c\}$. A physical cancellation is
+identified by its trading partition, source index, and \begin{review}identifier of the candidate order\end{review}. We preserve every eligible link for
 audit, but each physical cancellation contributes to at most one execution's metrics.
 
-An order can grow after the execution but before its cancellation. Such growth was not part of the pre-execution candidate
-profile and must not increase the withdrawal attributed to that profile. For each assigned order
+An order can grow after the execution but before its cancellation. Such growth was not part of \begin{review}the candidate profile observed before execution\end{review} and must not increase the withdrawal attributed to that profile. For each assigned order
 $o\in\mathcal{C}_{c,n}^{i}$, let $q^{\mathrm{pre}}_{c,o}$ denote its visible quantity immediately before the execution and let
 $q^{\mathrm{cancel}}_o$ denote its visible quantity immediately before cancellation. We define the attributed quantity as
 \begin{equation}
@@ -1105,7 +1064,7 @@ $q^{\mathrm{cancel}}_o$ denote its visible quantity immediately before cancellat
     \min\!\left\{q^{\mathrm{pre}}_{c,o},q^{\mathrm{cancel}}_o\right\}.
     \label{eq:attributed_cancel_quantity}
 \end{equation}
-The raw cancellation-time quantity remains available for audit. The cap ensures that only liquidity already present in the
+\begin{review}The raw quantity observed at cancellation\end{review} remains available for audit. The cap ensures that only liquidity already present in the
 candidate layer contributes to matched withdrawal. The total assigned withdrawal and its ratio to execution quantity are
 \begin{equation}
     U^{i}_{c,n}=\sum_{o\in\mathcal{C}_{c,n}^{i}}\bar q_{c,o},
@@ -1113,7 +1072,7 @@ candidate layer contributes to matched withdrawal. The total assigned withdrawal
     R^{i}_{c,n}=\frac{U^{i}_{c,n}}{Q_c},
     \label{eq:assigned_withdrawal}
 \end{equation}
-where $Q_c>0$ is the execution quantity by construction. Using the age-conditioned candidate quantity
+where $Q_c>0$ is \begin{review}the quantity executed in the execution\end{review} by construction. Using \begin{review}the candidate quantity after imposing the age restriction\end{review}
 $Q^{i,\bar{s}_c}_{c,n}$ from \cref{eq:age_conditioned_candidate_quantity}, we report the fraction of that profile removed as
 \begin{equation}
     A^{i}_{c,n}
@@ -1126,12 +1085,10 @@ $Q^{i,\bar{s}_c}_{c,n}$ from \cref{eq:age_conditioned_candidate_quantity}, we re
     \label{eq:assigned_withdrawal_share}
 \end{equation}
 The two ratios answer different questions. $R^{i}_{c,n}$ compares the attributed withdrawal with the executed quantity,
-whereas $A^{i}_{c,n}$ compares it with the candidate profile that was available to withdraw. Under the reconstructed order
-lifecycle and unique physical-cancellation assignment, the cap in \cref{eq:attributed_cancel_quantity} keeps
+whereas $A^{i}_{c,n}$ compares it with the candidate profile that was available to withdraw. Under \begin{review}the reconstructed lifecycle of each order and the unique assignment of each physical cancellation\end{review}, the cap in \cref{eq:attributed_cancel_quantity} keeps
 $A^{i}_{c,n}$ in $[0,1]$ whenever its denominator is positive.
 
-For event prioritization, we also summarize the scale and speed of the attributed withdrawal. Define the delay-weighted
-withdrawal quantity
+For event prioritization, we also summarize the scale and speed of the attributed withdrawal. Define \begin{review}the withdrawal quantity weighted by delay\end{review}
 \begin{equation}
     \widetilde U^{i}_{c,n}
     =
@@ -1142,7 +1099,7 @@ withdrawal quantity
 \end{equation}
 Within the $2$-second assignment window, the exponential factor decreases with cancellation delay. The decay scale
 $\tau_w$ prioritizes temporal proximity; it is not an estimate of a causal response rate.
-The event-level \textit{Withdrawal Multilevel Spoofing Conditionality Index} is
+\begin{review}The \textit{Withdrawal Multilevel Spoofing Conditionality Index} for each event\end{review} is
 \begin{equation}
     \operatorname{WMSCI}^{i}_{c,n}
     =
@@ -1159,25 +1116,23 @@ The event-level \textit{Withdrawal Multilevel Spoofing Conditionality Index} is
 \end{equation}
 The first logarithmic term measures the candidate posture relative to the execution. The second measures the
 rapidly withdrawn quantity on the same scale, and $A^{i}_{c,n}$ measures the share of the candidate posture that is removed.
-Under the piecewise definition, WMSCI is zero when no positive candidate-layer or delay-weighted attributed-withdrawal
-contribution is available; this does not imply that the unrestricted resting profile was unchanged. WMSCI is non-negative
-and has no fixed upper bound. We use it as the primary metric for ordering event-level candidates for
+Under the piecewise definition, WMSCI is zero when \begin{review}there is no positive contribution from the candidate layer or from attributed withdrawal after weighting by delay\end{review}; this does not imply that the unrestricted resting profile was unchanged. WMSCI is non-negative
+and has no fixed upper bound. We use it as the primary metric for ordering \begin{review}candidate events\end{review} for
 human review. It is neither a probability nor a calibrated measure of manipulative intent, and its magnitude should not be
 interpreted as a proportional increase in suspiciousness. The full descriptive gate instead requires
-$U^{i}_{c,n}>Q_c$ and the separate price-path conditions; it does not apply a WMSCI threshold. At the actor--partition level,
+$U^{i}_{c,n}>Q_c$ and \begin{review}the separate conditions on the price path\end{review}; it does not apply a WMSCI threshold. \begin{review}For each actor--partition combination\end{review},
 we summarize repeated behavior through counts and withdrawal rates rather than aggregating WMSCI into an actor ranking.
 
 \subsubsection{Price-Response Diagnostics}
 \label{subsec:price_response_diagnostics}
 
-The matched-withdrawal variables show whether an actor removes same-actor opposite-side liquidity after its own
-execution. They do not show whether the price path is consistent with the hypothesized mechanism. Such a path first moves
+\begin{review}The variables for matched withdrawal show whether an actor removes liquidity that it placed on the opposite side after its own execution.\end{review} They do not show whether the price path is consistent with the hypothesized mechanism. Such a path first moves
 in the direction favorable to the execution and then partly reverses after the candidate layer is removed. We
-measure these two features with separate price-response diagnostics. They are economic consistency checks, not causal
+measure these two features with \begin{review}separate diagnostics of the price response\end{review}. They are economic consistency checks, not causal
 estimates of manipulation.
 
 Let $b(t)$ and $a(t)$ denote the best bid and ask, with corresponding displayed quantities $q^b_1(t)$ and $q^a_1(t)$. When
-both quotes and positive top-level depth are available, the two market-price proxies are the midprice
+both quotes and \begin{review}positive depth at the best quotes\end{review} are available, \begin{review}the two proxies for the market price\end{review} are the midprice
 $M_{\mathrm{mid}}(t)=[a(t)+b(t)]/2$ and the queue microprice
 $M_{\mathrm{micro}}(t)=[a(t)q^b_1(t)+b(t)q^a_1(t)]/[q^b_1(t)+q^a_1(t)]$
 \cite{Stoikov02122018}; otherwise the corresponding diagnostic is missing. Let $M(t)$ denote either proxy, and let $t_0$
@@ -1192,7 +1147,7 @@ execution direction as
     \label{eq:price_response_direction}
 \end{equation}
 Under this convention, a positive signed change is favorable to the execution: a sell benefits from an upward move and a
-buy from a downward move. We measure the favorable movement between candidate-layer posting and execution as
+buy from a downward move. We measure the favorable movement \begin{review}between the posting of the candidate layer and execution\end{review} as
 \begin{equation}
     \operatorname{FPM}^{i}_{c}
     =
@@ -1202,8 +1157,7 @@ buy from a downward move. We measure the favorable movement between candidate-la
 Reversion is anchored to each assigned cancellation rather than to the end of the execution. Let $t_o$ denote the
 cancellation timestamp, $t_o^{-}$ the last reconstructed state strictly before its source index, and $H_R=2$ seconds the
 reversion horizon. Let $\mathcal{C}_{c,n}^{i,\mathrm{obs}}$ contain the assigned cancellations for which the relevant
-pre-cancellation and horizon values of $M$ are observed and $w_{c,o}>0$ is finite. The execution-level post-cancellation
-reversion is the quantity-and-delay weighted mean
+pre-cancellation and horizon values of $M$ are observed and $w_{c,o}>0$ is finite. \begin{review}For each execution, reversion after cancellation is measured as a mean weighted by attributed quantity and cancellation delay\end{review}
 \begin{equation}
     \operatorname{REV}^{i}_{c}
     =
@@ -1221,9 +1175,8 @@ with $\tau_w=10$ seconds in the reported run. Here $M(t_o+H_R)$ denotes the last
 target time, provided that the message sequence covers that target. The statistic is undefined when no assigned cancellation
 contributes a finite positive weight with both required price observations.
 A positive $\operatorname{FPM}^{i}_{c}$ means that the price moved in the direction favorable to the execution
-while the candidate layer was present. A positive $\operatorname{REV}^{i}_{c}$ means that the market-price proxy moved
-against the pre-execution favorable direction after the assigned cancellation or cancellations. For quantity-weighted execution
-price $P_c$, we also define the local execution advantage relative to the pre-posture benchmark:
+while the candidate layer was present. A positive $\operatorname{REV}^{i}_{c}$ means that \begin{review}the proxy for the market price\end{review} moved
+against \begin{review}the favorable direction observed before execution\end{review} after the assigned cancellation or cancellations. \begin{review}For execution price $P_c$, weighted by executed quantity\end{review}, we also define the local execution advantage relative to \begin{review}the benchmark measured before the posture\end{review}:
 \begin{equation}
     \operatorname{ADV}^{i}_{c}
     =
@@ -1232,17 +1185,17 @@ price $P_c$, we also define the local execution advantage relative to the pre-po
 \end{equation}
 The execution advantage is positive when a sell executes above the benchmark or a buy executes below it.
 
-We compute each diagnostic with both the midprice and the queue microprice in the event-level records. The reported summary
+We compute each diagnostic with both the midprice and the queue microprice in \begin{review}the records for each event\end{review}. The reported summary
 tables and the event gate use the midprice versions. We report price responses separately from withdrawal counts,
 quantities, and rates instead of multiplying all components into one detector. Withdrawal variables describe the
 reconstructed message sequence. The variables $\operatorname{FPM}$, $\operatorname{REV}$, and $\operatorname{ADV}$
 describe the associated price path. This separation distinguishes repeated conditional withdrawals without a favorable
-price response from episodes that also exhibit favorable pre-execution movement and post-cancellation reversion.
+price response from episodes that also exhibit \begin{review}favorable movement before execution and reversion after cancellation\end{review}.
 
 \subsubsection{Event Reconstruction}
 \label{subsec:event_reconstruction}
 
-We reconstruct events from order-level messages rather than aggregate snapshots. A resting order can change book rank
+We reconstruct events \begin{review}from individual order messages rather than aggregate snapshots\end{review}. A resting order can change book rank
 when the best quote moves even though its owner has neither modified nor cancelled it. Snapshot changes alone can therefore
 confound repricing of the surrounding book with withdrawal by the participant. The reconstruction follows the economic
 sequence from actor identification to execution, withdrawal, and price response:
@@ -1252,37 +1205,31 @@ sequence from actor identification to execution, withdrawal, and price response:
     \item Reconstruct all active orders of actor $i$ immediately before $t_c^{\mathrm{start}}$, assign them to side and
     rank, and compute the unrestricted $L^{i,b}_{n}(t_c^{-})$, $L^{i,a}_{n}(t_c^{-})$, and
     $\operatorname{DWI}^{i}_{n}(t_c^{-})$.
-    \item From the opposite-side top-$n$ orders in this pre-execution state, retain the fixed candidate set
+    \item \begin{review}From the orders on the opposite side among the top $n$ ranks in the state before the execution\end{review}, retain the fixed candidate set
     $\mathcal{P}^{i,\bar{s}_c}_{c,n,\Theta}$ whose first-observed times satisfy the age restriction.
     \item Follow the complete actor state through the structural target $t_c^{\mathrm{end}}+H_S$ and select $t_c^{+}$
-    according to the source-order and event-time rule above.
+    according to \begin{review}the rule based on source order and event time\end{review} above.
     \item Retain every eligible execution--cancellation link. Assign each physical cancellation canonically using
-    \cref{eq:canonical_cancel_assignment}, exclude competing links from metric totals, and cap attributed quantity at the
-    candidate order's pre-execution visible quantity using \cref{eq:attributed_cancel_quantity}.
-    \item Compute SCI, side-specific collapse, and MSCI from the unrestricted resting-profile states at $t_c^{-}$ and
+    \cref{eq:canonical_cancel_assignment}, exclude competing links from metric totals, and cap attributed quantity at \begin{review}the visible quantity of the candidate order before execution\end{review} using \cref{eq:attributed_cancel_quantity}.
+    \item Compute SCI, \begin{review}collapse on each side\end{review}, and MSCI from \begin{review}the states of the unrestricted resting profile\end{review} at $t_c^{-}$ and
     $t_c^{+}$.
-    \item Report assigned withdrawal quantity, withdrawal-to-execution ratio, removed-profile fraction, and WMSCI. Use WMSCI
-    to order event-level candidates for human review without applying it as a strict-gate threshold.
-    \item Compute signed price diagnostics from the first candidate-layer posting, through the execution, to the
-    post-cancellation window.
-    \item Summarize repeated behavior with execution counts and actor-level recurrence diagnostics. Retain raw constituent execution
-    messages as provenance.
+    \item Report assigned withdrawal quantity, \begin{review}ratio of withdrawal to execution\end{review}, \begin{review}fraction of the profile that was removed\end{review}, and WMSCI. Use WMSCI
+    to order \begin{review}candidate events\end{review} for human review without applying it as \begin{review}a threshold for the strict gate\end{review}.
+    \item Compute signed price diagnostics from \begin{review}the first posting in the candidate layer\end{review}, through the execution, to \begin{review}the window after cancellation\end{review}.
+    \item Summarize repeated behavior with execution counts and \begin{review}diagnostics of recurrence for each actor\end{review}. Retain \begin{review}raw constituent execution messages\end{review} as provenance.
 \end{enumerate}
-This procedure is designed to distinguish ordinary book repricing from withdrawal of participant-attributed candidate
-liquidity. Canonical assignment ensures that one physical cancellation does not inflate the metrics of several neighboring
+This procedure is designed to distinguish ordinary book repricing from withdrawal of \begin{review}candidate liquidity attributed to the participant\end{review}. Canonical assignment ensures that one physical cancellation does not inflate the metrics of several neighboring
 executions under the stated eligibility rule.
 
-The event-level \textit{spoofing-compatible sequence} gate passes only when four conditions hold simultaneously:
-(i) at least one eligible opposite-side cancellation is canonically assigned within $2$ seconds of the execution;
-(ii) the finite attributed withdrawal exceeds the positive execution quantity,
-$U^{i}_{c,n}>Q_c$; (iii) the observed midprice $\operatorname{FPM}^{i}_{c}$ is strictly positive; and (iv) the observed
-cancel-anchored midprice $\operatorname{REV}^{i}_{c}$ is strictly positive. A missing or right-censored price diagnostic
+\begin{review}At the event level, the gate for a \textit{sequence compatible with spoofing}\end{review} passes only when four conditions hold simultaneously:
+(i) \begin{review}cancellation of at least one eligible order on the opposite side\end{review} is canonically assigned within $2$ seconds of the execution;
+(ii) the finite attributed withdrawal exceeds \begin{review}the positive quantity executed in the execution\end{review},
+$U^{i}_{c,n}>Q_c$; (iii) the observed midprice $\operatorname{FPM}^{i}_{c}$ is strictly positive; and (iv) \begin{review}the observed midprice $\operatorname{REV}^{i}_{c}$ measured from cancellation\end{review} is strictly positive. \begin{review}A price diagnostic that is missing or right censored\end{review}
 fails the conjunction. This transparent rule supports analyst triage; it is descriptive and is not a statistical test,
 manipulation label, or proof of intent.
 
-The reported specification uses a $10$-second structural window, $2$-second rapid-attribution and cancel-anchored reversion
-windows, and a $90$-second candidate-order age limit. We estimate the empirical top-$10$ kernel separately for each
-instrument. Withdrawal and price-response components remain separate rather than being reduced to a scalar composite score.
+\begin{review}The reported specification uses a $10$-second window for structural reconstruction, a $2$-second window for both rapid attribution and reversion measured from cancellation, and a maximum age of $90$ seconds for candidate orders.\end{review} We estimate the empirical top-$10$ kernel separately for each
+instrument. \begin{review}The components describing withdrawal and the price response\end{review} remain separate rather than being reduced to \begin{review}a single composite score\end{review}.
 
 \section{Results}
 \label{sec:results}
@@ -1290,23 +1237,16 @@ instrument. Withdrawal and price-response components remain separate rather than
 \subsection{Cross-Instrument Detection Summary}
 \label{subsec:cross_instrument_results}
 
-The broad rate in \cref{fig:actor_cancellation_rank} counts any qualifying opposite-side cancellation after an execution.
-The results below narrow that behavior to cancellations of the fixed, age-conditioned candidate set and assign each physical
-cancellation canonically. These matched same-actor withdrawals occur in all three samples and after both passive and
-aggressive executions. The complete
+\begin{review}Rapid withdrawals by the same actor\end{review} occur in all three samples and after both passive and aggressive executions. The complete
 strict sequence is necessarily a smaller subset because, in addition to rapid canonical matching, it requires
-$U^{i}_{c,n}>Q_c$, positive favorable pre-execution movement, and positive cancel-anchored reversion.
-\Cref{tab:empirical_spoofing_diagnostics} reports this narrowing under the same actor-wide top-$10$ state and
-age-conditioned candidate-order reconstruction. Each instrument uses its full-sample empirical kernel from
+$U^{i}_{c,n}>Q_c$, \begin{review}positive favorable movement before execution\end{review}, and \begin{review}positive reversion measured from cancellation\end{review}.
+\begin{review}\Cref{tab:empirical_spoofing_diagnostics} reports this narrowing while using the same top-$10$ state for each actor and the same reconstruction of candidate orders with the age restriction.\end{review} Each instrument uses \begin{review}its empirical kernel estimated on the full sample\end{review} from
 \cref{tab:empirical_depth_kernel_calibration} with kernel horizon $H=10$ seconds.
 
 A matched execution is a passive or aggressive execution followed within $2$ seconds by a canonically assigned cancellation
-of a same-actor, opposite-side candidate order. The separate $10$-second interval is the structural reconstruction horizon.
-The attributed cancellation quantity cannot exceed the candidate order's visible quantity before execution, while the raw
-cancellation-time quantity remains available for audit. The table distinguishes executions from their raw constituent execution
-messages and counts each assigned physical cancellation once. The firm-fallback column records the coarser cases in which the
-original client code is missing. The strict column then retains matched executions that also satisfy the withdrawal-size and two
-price-response conditions. These quantities are descriptive screening diagnostics, not manipulation labels or evidence of
+of \begin{review}a candidate order placed by the same actor on the opposite side\end{review}. The separate $10$-second interval is \begin{review}the horizon used for structural reconstruction\end{review}.
+\begin{review}The quantity attributed to the cancellation\end{review} cannot exceed the candidate order's visible quantity before execution, while \begin{review}the raw quantity observed at cancellation\end{review} remains available for audit. The table distinguishes executions from \begin{review}their raw constituent execution messages\end{review} and counts each assigned physical cancellation once. \begin{review}The column for firm fallback\end{review} records the coarser cases in which the
+original client code is missing. The strict column then retains matched executions that also satisfy \begin{review}the condition on withdrawal size and the two conditions on the price response\end{review}. These quantities are descriptive screening diagnostics, not manipulation labels or evidence of
 intent.
 
 \InputIfFileExists{generated/spoofing_empirical_tables.tex}{}{%
@@ -1320,8 +1260,7 @@ reconstruction identifies \FerrariMatchedClusters{} matched executions for Ferra
 \NexiCompatibleSequences{}, and \RisanamentoCompatibleSequences{}, respectively. Favorable pre-execution movement is
 positive in \FerrariFPMShare{}, \NexiFPMShare{}, and \RisanamentoFPMShare{} of observed matched executions, whereas positive
 reversion occurs in \FerrariREVShare{}, \NexiREVShare{}, and \RisanamentoREVShare{}. Thus, the withdrawal condition is not
-being used as a substitute for the full hypothesized price path. These are marginal shares among observed matched-execution
-diagnostics and do not decompose strict-set attrition across the jointly required conditions.
+being used as a substitute for the full hypothesized price path. These are marginal shares among \begin{review}observed diagnostics for matched executions\end{review} and do not decompose \begin{review}attrition from the strict set\end{review} across the jointly required conditions.
 
 These empirical quantities are direct reconstruction counts and conditional descriptive shares. No counterfactual
 comparison or inferential test is applied. The table therefore does not provide $p$-values, confidence intervals, or evidence
@@ -1329,7 +1268,7 @@ that withdrawal is more likely after the focal actor's own execution than under 
 condition.
 
 \paragraph{Event-accounting denominators.}
-\Cref{tab:empirical_spoofing_diagnostics} reports raw-execution provenance, execution-anchor composition, firm-fallback counts,
+\Cref{tab:empirical_spoofing_diagnostics} reports \begin{review}the provenance of raw executions, the composition of execution anchors, and counts that use firm fallback\end{review},
 and uniquely assigned physical cancellations for each instrument. Raw execution messages provide provenance, whereas
 executions are the analytical unit for all conditional shares.
 
@@ -1339,21 +1278,20 @@ executions are the analytical unit for all conditional shares.
 Risanamento has the smallest matched set, and only \RisanamentoCompatibleSequences{} executions satisfy the strict
 four-condition gate. Favorable pre-execution movement is nevertheless positive in \RisanamentoFPMShare{} of matched executions
 with an observed diagnostic. Among matched executions with an observed reversion diagnostic, \RisanamentoREVShare{} have
-positive cancel-anchored reversion. The strict gate additionally requires positive favorable pre-execution movement and
+\begin{review}positive reversion measured from cancellation\end{review}. The strict gate additionally requires \begin{review}positive favorable movement before execution\end{review} and
 attributed withdrawal exceeding execution quantity, so these marginal shares do not identify which requirement excludes any
 particular matched execution.
 
-For each of the \RisanamentoMatchedClusters{} matched executions, the review record preserves an execution-first dossier and a
-reconstructed top-$10$ event window. These records organize observed facts, counter-evidence, and legitimate alternatives.
+For each of the \RisanamentoMatchedClusters{} matched executions, the review record preserves \begin{review}a dossier organized around the execution and a reconstructed event window covering the top $10$ ranks\end{review}. These records organize observed facts, counter-evidence, and legitimate alternatives.
 They are triage aids, not empirical labels or proof of manipulation.
 
 \subsection{Nexi}
 \label{subsec:nexi_results}
 
-Nexi exhibits matched withdrawals after both execution routes, but the full price-consistent path remains a subset.
+Nexi exhibits matched withdrawals after both execution routes, but \begin{review}the full path consistent with the price conditions\end{review} remains a subset.
 Reconstruction identifies \NexiMatchedClusters{} matched executions, of which \NexiCompatibleSequences{} pass the strict gate.
-Positive favorable pre-execution movement occurs in \NexiFPMShare{} of matched executions with an observed diagnostic, while
-positive cancel-anchored reversion occurs in \NexiREVShare{}.
+Positive \begin{review}favorable movement before execution\end{review} occurs in \NexiFPMShare{} of matched executions with an observed diagnostic, while
+\begin{review}positive reversion measured from cancellation\end{review} occurs in \NexiREVShare{}.
 
 Differences from the other instruments are not causal contrasts because the samples cover different periods and actor
 compositions.
@@ -1363,7 +1301,7 @@ compositions.
 
 Ferrari has the largest matched set, with contributions from both passive and aggressive execution anchors.
 Reconstruction identifies \FerrariMatchedClusters{} matched executions, and \FerrariCompatibleSequences{} pass the strict
-gate. Among observed matched-execution diagnostics, the shares with positive favorable pre-execution movement and positive
+gate. Among \begin{review}observed diagnostics for matched executions\end{review}, the shares with \begin{review}positive favorable movement before execution\end{review} and positive
 reversion are \FerrariFPMShare{} and \FerrariREVShare{}.
 
 These are descriptive screening outcomes, not manipulation labels or prevalence estimates.
@@ -1371,11 +1309,10 @@ These are descriptive screening outcomes, not manipulation labels or prevalence 
 \subsection{Actor-Level Attribution and Interpretation}
 \label{subsec:actor_level_results}
 
-Recurrence is informative only when actor identity and execution role remain explicit. The largest actor--anchor groups differ
-in identity resolution, matched-execution count, withdrawal scale, and price-path composition. \Cref{tab:top_actor_results}
-therefore reports the three largest groups in each instrument by matched-execution count rather than collapsing them into one
+Recurrence is informative only when actor identity and execution role remain explicit. \begin{review}The largest groups defined by actor and execution anchor differ in identity resolution, number of matched executions, withdrawal scale, and composition of the price path.\end{review} \Cref{tab:top_actor_results}
+therefore reports the three largest groups in each instrument \begin{review}by number of matched executions\end{review} rather than collapsing them into one
 actor score. An actor is either an original client code or, only when that code is missing, a firm identifier. W/E maximum is
-the largest matched withdrawal-to-execution ratio within the group; FPM$+$ and REV$+$ are the shares of matched executions with
+the largest matched \begin{review}ratio of withdrawal to execution\end{review} within the group; FPM$+$ and REV$+$ are the shares of matched executions with
 positive midprice favorable movement and reversion.
 
 \InputIfFileExists{generated/spoofing_actor_table.tex}{}{%
@@ -1385,13 +1322,10 @@ positive midprice favorable movement and reversion.
 
 The dispersion of FPM$+$ and REV$+$ across these groups shows why recurrence and price response must remain separate. A group
 can contain many matched withdrawals without exhibiting the same reversion pattern as another group. Because firm fallback
-can combine several clients, a firm-level count has coarser attribution than a client-level count and should not be
-interpreted as a single-account history.
+can combine several clients, \begin{review}a count at firm level has coarser attribution than a count at client level and should not be interpreted as the history of a single account\end{review}.
 
-The primary empirical object is the actor-attributed association between execution and rapid opposite-side withdrawal, with
-client-level attribution when an original client code is observed and coarser firm-level attribution otherwise. We report
-its magnitude and repetition descriptively. WMSCI orders event-level candidates for review; MSCI remains a complete-resting-
-profile context diagnostic; neither metric is a strict-gate threshold or an actor-ranking score. An analyst must also
+\begin{review}The primary empirical object is the association, attributed to each actor, between execution and rapid withdrawal on the opposite side. Attribution is at client level when an original client code is observed and at the coarser firm level otherwise.\end{review} We report
+its magnitude and repetition descriptively. \begin{review}WMSCI orders candidate events for review; MSCI remains a diagnostic that provides context from the complete resting profile; neither metric is a threshold for the strict gate or a score that ranks actors.\end{review} An analyst must also
 consider the withdrawn order's execution risk and distance from the touch, bilateral activity, inventory context, price
 response, and execution advantage. Together, these diagnostics support assessment of consistency with the stylized mechanism
 while retaining legitimate liquidity provision as an alternative explanation. Neither WMSCI nor a dashboard review category
@@ -1400,7 +1334,7 @@ is treated as ground truth.
 \subsection{Coverage of Externally Supplied Surveillance Alerts}
 \label{subsec:external_alert_results}
 
-At the externally reported subject scope, the comparison recovers an execution in every distinct timed interval,
+\begin{review}At the scope of the subject reported externally\end{review}, the comparison recovers an execution in every distinct timed interval,
 but the complete behavioral sequence appears in only four intervals. The $36$ timed source records become $34$ distinct intervals
 after overlapping or endpoint-sharing records for the same instrument and external subject are merged. All $34$ intervals
 contain raw subject activity and at least one recovered execution, while $30$ contain an attributed withdrawal.
@@ -1412,11 +1346,9 @@ contain raw subject activity and at least one recovered execution, while $30$ co
 \centering
 \caption{Coverage of externally supplied timed alert records. Overlapping or endpoint-sharing records are merged only within
 the same instrument and external subject. Execution counts intervals containing at least one execution with a constituent execution message inside
-the closed union interval. Withdrawal and strict-scope columns count intervals containing at least one execution with the
-corresponding event-level diagnostic. Strict subject scope requires at least one execution in the interval to satisfy all four
+the closed union interval. Withdrawal and strict-scope columns count intervals containing at least one execution with \begin{review}the corresponding diagnostic at the event level\end{review}. Strict subject scope requires at least one execution in the interval to satisfy all four
 gate conditions. The final column reports strict overlaps among intervals whose external
-identity maps to one canonical actor at the same granularity; entries report strict intervals divided by identity-aligned
-intervals. The date-only Risanamento record is excluded from all timed denominators.}
+identity maps to one canonical actor at the same granularity; entries report strict intervals divided by \begin{review}intervals with aligned identity granularity\end{review}. The date-only Risanamento record is excluded from all timed denominators.}
 \label{tab:external_alert_overlap}
 \scriptsize
 \setlength{\tabcolsep}{4.2pt}
@@ -1432,20 +1364,17 @@ Total & 36 & 34 & 34 & 30 & 4 & 0/4 \\
 \end{tabular}
 \end{table}
 
-All four strict subject-scope overlaps occur within the $30$ identity-unaligned Ferrari intervals for which the main externally
-reported firm maps to two canonical actor keys. Exact-actor correspondence is therefore not identifiable in those intervals. By contrast,
-the comparison contains four identity-aligned intervals---three for Ferrari and one for Nexi---and none contains a strict
+\begin{review}All four strict overlaps at subject scope occur within the $30$ Ferrari intervals for which identity granularity is not aligned and the main externally reported firm maps to two canonical actor keys.\end{review} \begin{review}Correspondence with an exact actor\end{review} is therefore not identifiable in those intervals. By contrast,
+the comparison contains four \begin{review}intervals with aligned identity granularity\end{review}---three for Ferrari and one for Nexi---and none contains a strict
 sequence. The Nexi interval nevertheless contains one aggressive execution formed from four constituent execution messages, but it has
 no attributed withdrawal under the stated timing rule.
 
 The Risanamento source identifies only one trading date. On that date, the reported subject has $59$ reconstructed
-executions, including one execution with an attributed withdrawal and no strict sequence. These full-day counts establish that the
+executions, including one execution with an attributed withdrawal and no strict sequence. \begin{review}These counts over the full day\end{review} establish that the
 subject is observable, but they cannot identify correspondence with the specific external event.
 
-These results measure recovery relative to externally reported activity. Exact-actor strict recall is identifiable only for
-the four identity-aligned unioned timed intervals, of which none contains a strict sequence. The four strict overlaps among
-the remaining intervals are subject-scope overlaps, not exact-actor recall. Because the source is positive-only and was not
-independently re-adjudicated for manipulative intent, these quantities do not estimate recall or precision against true
+These results measure recovery relative to externally reported activity. \begin{review}Strict recall for an exact actor is identifiable only for the four unioned timed intervals with aligned identity granularity, none of which contains a strict sequence.\end{review} The four strict overlaps among
+the remaining intervals are \begin{review}overlaps at subject scope, not recall for an exact actor\end{review}. Because \begin{review}the source contains only positive cases and was not independently adjudicated again for manipulative intent\end{review}, these quantities do not estimate recall or precision against true
 manipulation. No negative windows are available to estimate false positives. Moreover, the external alert rule and the strict
 four-condition gate need not define the same event population. The sparse strict overlap records limited agreement under two
 operational definitions. It cannot, by itself, identify false negatives, false positives, or the source of disagreement.
@@ -1454,50 +1383,47 @@ operational definitions. It cannot, by itself, identify false negatives, false p
 \section{Discussion and Conclusion}
 \label{sec:discussion_conclusion}
 
-The main empirical finding is that rapid same-actor withdrawal is broader than the complete spoofing-compatible sequence.
+The main empirical finding is that \begin{review}rapid withdrawal by the same actor\end{review} is broader than \begin{review}the complete sequence compatible with spoofing\end{review}.
 Matched episodes occur after both passive and aggressive executions in all three samples. Only a subset also exhibits the
-required withdrawal size, favorable pre-execution movement, and post-cancellation reversion. This distinction matters
+required withdrawal size, \begin{review}favorable movement before execution\end{review}, and \begin{review}reversion after cancellation\end{review}. This distinction matters
 because it prevents a high cancellation rate or a large withdrawal from standing in for the full mechanism.
 
-The external-alert coverage audit reinforces this separation. The reconstruction covers execution in all $34$ distinct timed
+\begin{review}The coverage audit based on external alerts\end{review} reinforces this separation. The reconstruction covers execution in all $34$ distinct timed
 intervals and attributed withdrawal in $30$, whereas only four intervals contain a strict sequence at subject scope. None of
-the four identity-aligned intervals contains a strict sequence, and the four strict subject-scope overlaps cannot be resolved
+the four \begin{review}intervals with aligned identity granularity\end{review} contains a strict sequence, and \begin{review}the four strict overlaps at subject scope\end{review} cannot be resolved
 to one canonical actor. Thus, the strict gate is not a surrogate for the external surveillance rule.
 
 The mathematical construction makes the separation explicit. The quantities $U^{i}_{c,n}$, $R^{i}_{c,n}$, and
-$A^{i}_{c,n}$ describe how much of the pre-execution candidate layer can be attributed to the withdrawal and how its scale
+$A^{i}_{c,n}$ describe how much of \begin{review}the candidate layer observed before execution\end{review} can be attributed to the withdrawal and how its scale
 compares with the execution. The quantities $\operatorname{FPM}^{i}_{c}$ and $\operatorname{REV}^{i}_{c}$ describe the
 associated price path. Requiring both types of evidence produces the strict gate, but the conjunction remains a descriptive
 compatibility rule. It neither estimates spoofing prevalence nor establishes that any retained sequence was manipulative.
-WMSCI separately prioritizes event-level review by combining candidate-layer scale, rapid attributed withdrawal, and the
-removed-profile fraction. Unlike MSCI, it is not a complete-resting-profile collapse measure; unlike the strict gate, it is
+\begin{review}WMSCI separately prioritizes review at the event level by combining the scale of the candidate layer, rapid attributed withdrawal, and the fraction of the profile that was removed.\end{review} Unlike MSCI, it is not \begin{review}a measure of collapse in the complete resting profile\end{review}; unlike the strict gate, it is
 not a pass--fail condition.
-MSCI is a separate resting-profile diagnostic: it uses all active same-actor top-$n$ orders, so long-lived balanced liquidity
+MSCI is \begin{review}a separate diagnostic of the resting profile\end{review}: it uses \begin{review}all active top-$n$ orders of the same actor\end{review}, so \begin{review}balanced liquidity that has been resting for a long time\end{review}
 can attenuate the measured shape change. It therefore does not establish that the recent candidate layer itself collapsed.
 
 The strongest limitation is the absence of a counterfactual comparison and an independently adjudicated label set. The
 analysis does not test whether withdrawal is more likely after the focal actor's execution than after an otherwise comparable
 non-event, and repeated observations from the same actors or trading periods need not be independent. The external alerts add
-positive reference periods but no negative controls. They support source-alert recovery and exact-actor strict-recall
-accounting under the audit's identity-alignment rule, but they cannot identify recall or precision against independently
+positive reference periods but no negative controls. They support \begin{review}recovery relative to the source alerts and accounting of strict recall for an exact actor under the audit's rule for identity alignment\end{review}, but they cannot identify recall or precision against independently
 adjudicated manipulation labels or calibrate detector thresholds. The depth kernels are also calibrated on the same full
-samples to which they are applied, so their displayed-price associations are descriptive rather than out-of-sample evidence.
-Right-censored reversion outcomes fail the event gate, and the reported results do not test sensitivity to the
-$100$-millisecond execution grouping threshold, the $90$-second candidate age, or the reported $2$- and $10$-second
+samples to which they are applied, so their \begin{review}associations with the displayed price\end{review} are descriptive rather than \begin{review}evidence from an out-of-sample evaluation\end{review}.
+\begin{review}Reversion outcomes affected by right censoring\end{review} fail the event gate, and the reported results do not test sensitivity to \begin{review}the $100$-millisecond threshold used to group constituent execution messages\end{review}, the $90$-second candidate age, or the reported $2$- and $10$-second
 windows.
 
-Identity and sampling impose further limits. Firm fallback loses within-firm client resolution and can pool several
-accounts, so firm-level recurrence is not directly comparable with recurrence under a client code. Aggressive execution is
-an execution-role observation, not evidence about the intent of the surrounding resting orders; ordinary liquidity taking
-remains an alternative explanation. External firm-level alerts can also span several internal actor keys, which prevents
-exact-actor evaluation in those intervals. The three instrument samples cover different periods and actor compositions, which
-rules out causal cross-instrument comparisons.
+Identity and sampling impose further limits. Firm fallback loses \begin{review}resolution among clients within a firm\end{review} and can pool several
+accounts, so \begin{review}recurrence measured at firm level\end{review} is not directly comparable with recurrence under a client code. Aggressive execution is
+\begin{review}an observation of execution role\end{review}, not evidence about the intent of the surrounding resting orders; ordinary liquidity taking
+remains an alternative explanation. \begin{review}External alerts reported at firm level\end{review} can also span several internal actor keys, which prevents
+\begin{review}evaluation at the level of an exact actor\end{review} in those intervals. The three instrument samples cover different periods and actor compositions, which
+rules out \begin{review}causal comparisons across instruments\end{review}.
 
 The contribution is therefore an auditable surveillance workflow rather than an enforcement classifier. It preserves raw
-message provenance, separates withdrawal from price-response evidence, and exposes the gate conditions used for triage.
-Prospective use would require a pre-specified counterfactual design and thresholds, kernel calibration on training periods
-only, chronological out-of-sample validation, and evaluation against independently reviewed cases with explicit
-false-positive and false-negative costs.
+message provenance, separates withdrawal from \begin{review}evidence about the price response\end{review}, and exposes the gate conditions used for triage.
+Prospective use would require \begin{review}a counterfactual design and thresholds specified in advance\end{review}, kernel calibration on training periods
+only, \begin{review}out-of-sample validation performed chronologically\end{review}, and evaluation against independently reviewed cases with explicit
+\begin{review}costs of false positives and false negatives\end{review}.
 
 % We propose two agent-specific metrics based on the
 % microprice and the volume-distance correlation. 

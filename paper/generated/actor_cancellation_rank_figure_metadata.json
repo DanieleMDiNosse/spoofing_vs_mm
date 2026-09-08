@@ -1,0 +1,36 @@
+{
+  "actor_rate_artifact_sha256": "c5dc6712508469e11819ea424570336f737d1536ae22a1801067c680c5e5a09e",
+  "figure_pdf_sha256": "9ea52e481e6587fab23e7510f354f3a33674a3850805e0b7576689e8733d7544",
+  "figure_png_sha256": "77dade8c61bdbba64e37916cc81d7ed71af800afbe5dbf530198b5c32440ed7e",
+  "generator": "scripts/generate_actor_cancellation_rank_figure.py",
+  "generator_sha256": "6ce80b6240895ba9f9ba8ee7a38f381cd8bf27d9ad95a264d0a8949f14570a8a",
+  "identity_encoding": "separate client-level and firm-fallback curves with distinct colors and markers",
+  "instrument_counts": {
+    "FERRARI": {
+      "actor_count": 350,
+      "execution_cluster_count": 12997,
+      "qualifying_execution_cluster_count": 4755
+    },
+    "NEXI": {
+      "actor_count": 608,
+      "execution_cluster_count": 10512,
+      "qualifying_execution_cluster_count": 3430
+    },
+    "RISANAMENTO": {
+      "actor_count": 1048,
+      "execution_cluster_count": 24972,
+      "qualifying_execution_cluster_count": 783
+    }
+  },
+  "instrument_order": [
+    "RISANAMENTO",
+    "NEXI",
+    "FERRARI"
+  ],
+  "plot_rank_rule": "separate descending rank within instrument and identity scope",
+  "privacy": "No actor or order identifiers and no local data paths are included in this publication metadata.",
+  "schema_version": "actor_cancellation_rank_figure_v1",
+  "support_encoding": "marker area increases with log(1 + execution_cluster_count)",
+  "window_seconds": 2.0,
+  "x_axis_scale": "logarithmic actor rank"
+}
