@@ -3,9 +3,9 @@ from __future__ import annotations
 import bisect
 import math
 from collections import defaultdict
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 import polars as pl
@@ -24,13 +24,11 @@ from spoofing_detection.lob.execution_clusters import (
     cluster_execution_fills,
 )
 from spoofing_detection.lob.models import ActiveOrder
-from spoofing_detection.lob.normalize import normalize_event
-from spoofing_detection.lob.panel import (
-    _apply_event,
-    _fill_group_key,
-    _flush_pending_aggressive_residuals,
-    _partition_id,
-    sort_events,
+from spoofing_detection.lob.replay_observation import (
+    ReplayObservation,
+    choose_event_timestamp,
+    parse_timestamp,
+    replay_lob,
 )
 BEST_QUOTE_COLUMNS = ("post_best_bid", "post_best_ask")
 VISIBLE_LIMIT_ORDER_TYPES = {"limit", "iceberg"}
@@ -272,30 +270,7 @@ def infer_tick_size_from_best_quotes(panel: pl.DataFrame) -> float:
     return min(positive_diffs)
 
 
-def _parse_ts(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        parsed = value
-    else:
-        text = str(value).strip()
-        if not text or text.lower() in {"nan", "none", "null"}:
-            return None
-        try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(timezone.utc)
-    return parsed.replace(tzinfo=None)
-
-
-def choose_event_timestamp(event: dict[str, Any]) -> datetime | None:
-    for key in ("TRADETIME", "BOOKOUTTIME", "BOOKIN", "SEQUENCETIME"):
-        parsed = _parse_ts(event.get(key))
-        if parsed is not None:
-            return parsed
-    return None
+_parse_ts = parse_timestamp
 
 
 def _visible_qty(order: ActiveOrder) -> float:
@@ -999,21 +974,10 @@ def _stream_metric_inputs(
     state_client_ids: set[str] | None = None,
     execution_anchor_modes: Collection[str] = ("passive", "aggressive"),
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
+    replay_observer: Callable[[ReplayObservation], None] | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     config = LOBConfig(top_n=max(top_n, 1), snapshot_mode="none")
-    sorted_events = sort_events(raw_events)
-    if max_rows is not None:
-        sorted_events = sorted_events.head(max_rows)
-    events = [
-        normalize_event(raw_row, sort_index=idx, config=config)
-        for idx, raw_row in enumerate(sorted_events.iter_rows(named=True), start=1)
-    ]
-
-    active_orders: dict[str, ActiveOrder] = {}
     order_first_seen_ts: dict[str, datetime | None] = {}
-    pending_aggressive_residuals: dict[str, tuple[dict[str, Any], tuple[Any, ...] | None]] = {}
-    non_resting_order_ids: set[str] = set()
-    current_partition_id: str | None = None
     if state_actor_keys is not None and state_client_ids is not None:
         raise ValueError("state_actor_keys and state_client_ids are mutually exclusive")
     selected_actor_keys = (
@@ -1038,24 +1002,31 @@ def _stream_metric_inputs(
     direct_cancel_rows: list[dict[str, Any]] = []
     rejected_rows: list[dict[str, Any]] = []
     cluster_source_rows: list[dict[str, Any]] = []
+    placement_observed_by_sort_index: dict[int, bool] = {}
+    observed_partition_id: str | None = None
 
-    for event_index, event in enumerate(events):
-        partition_id = _partition_id(event)
-        if current_partition_id is None:
-            current_partition_id = partition_id
-        elif partition_id != current_partition_id:
-            _flush_pending_aggressive_residuals(active_orders, pending_aggressive_residuals, keep_group=None)
-            active_orders = {}
+    def observe_replay(observation: ReplayObservation) -> None:
+        nonlocal observed_partition_id, order_first_seen_ts, previous_profile_actor_keys, state_rows
+        if observed_partition_id != observation.partition_id:
             order_first_seen_ts = {}
-            pending_aggressive_residuals = {}
-            non_resting_order_ids = set()
             previous_profile_actor_keys = set()
-            current_partition_id = partition_id
+            observed_partition_id = observation.partition_id
 
+        event = dict(observation.event)
+        placement_observed_by_sort_index[int(event["sort_index"])] = event["event_class"] == "new_order"
+        partition_id = observation.partition_id
         event_ts = choose_event_timestamp(event)
+        pre_active_orders = {
+            order_id: order.to_active_order()
+            for order_id, order in observation.pre_active_orders.items()
+        }
+        post_active_orders = {
+            order_id: order.to_active_order()
+            for order_id, order in observation.post_active_orders.items()
+        }
         execution, rejection = _execution_candidate_or_rejection(
             event,
-            active_orders,
+            pre_active_orders,
             event_ts=event_ts,
             partition_id=partition_id,
             allowed_anchor_modes=execution_anchor_modes,
@@ -1064,7 +1035,7 @@ def _stream_metric_inputs(
             execution.update({"top_n": top_n})
             candidates = _candidate_deceptive_order_rows(
                 execution,
-                active_orders,
+                pre_active_orders,
                 top_n=top_n,
                 tick_size=tick_size,
                 order_first_seen_ts=order_first_seen_ts,
@@ -1073,8 +1044,7 @@ def _stream_metric_inputs(
             )
             for candidate in candidates:
                 first_index = int(candidate["deceptive_order_first_seen_sort_index"])
-                origin = events[first_index - 1]
-                candidate["deceptive_order_placement_observed"] = origin["event_class"] == "new_order"
+                candidate["deceptive_order_placement_observed"] = placement_observed_by_sort_index[first_index]
             execution.update(_candidate_deceptive_order_summary(candidates))
             execution_rows.append(execution)
             candidate_deceptive_rows.extend(candidates)
@@ -1084,17 +1054,25 @@ def _stream_metric_inputs(
 
         direct_cancel = _direct_cancel_row(
             event,
-            active_orders,
+            pre_active_orders,
             event_ts=event_ts,
             partition_id=partition_id,
         )
         if direct_cancel is not None:
             direct_cancel_rows.append(direct_cancel)
 
+        # Clustering needs lifecycle markers for every event, but retaining all
+        # ~200 normalized input fields per event creates multi-gigabyte Python
+        # object graphs on real replays.  Keep only fields consumed by
+        # execution_clusters; ``metric_row`` remains the canonical first-fill
+        # payload used to materialize execution metrics.
         cluster_source = {
-            **event,
+            "event_class": event.get("event_class"),
             "partition_id": partition_id,
+            "sort_index": event.get("sort_index"),
             "event_ts": event_ts,
+            "ORDERID": event.get("ORDERID"),
+            "EVENTID": event.get("EVENTID"),
             "is_passive_fill": execution is not None and execution.get("execution_anchor_mode") == "passive",
             "is_execution_fill": execution is not None,
             "event_price": execution.get("event_price") if execution is not None else event.get("ORDERPX"),
@@ -1102,23 +1080,23 @@ def _stream_metric_inputs(
             "metric_row": execution,
         }
         if execution is not None:
-            cluster_source.update(execution)
+            cluster_source.update(
+                {
+                    **execution,
+                    "PASSIVEORDER": event.get("PASSIVEORDER"),
+                    "AGGRESSIVEORDER": event.get("AGGRESSIVEORDER"),
+                    "LASTSHARES": event.get("LASTSHARES"),
+                    "LASTTRADEDPX": event.get("LASTTRADEDPX"),
+                    "LEAVESQTY": event.get("LEAVESQTY"),
+                    "EXECUTIONID": event.get("EXECUTIONID"),
+                    "TRADEUNIQUEIDENTIFIER": event.get("TRADEUNIQUEIDENTIFIER"),
+                    "side_label": event.get("side_label"),
+                    "execution_sweep_id": event.get("execution_sweep_id"),
+                }
+            )
         cluster_source_rows.append(cluster_source)
 
-        _apply_event(
-            active_orders,
-            event,
-            pending_aggressive_residuals=pending_aggressive_residuals,
-            non_resting_order_ids=non_resting_order_ids,
-        )
-        next_event = events[event_index + 1] if event_index + 1 < len(events) else None
-        next_group = _fill_group_key(next_event) if next_event is not None else None
-        _flush_pending_aggressive_residuals(
-            active_orders,
-            pending_aggressive_residuals,
-            keep_group=next_group,
-        )
-        _sync_order_first_seen_timestamps(active_orders, order_first_seen_ts, event_ts)
+        _sync_order_first_seen_timestamps(post_active_orders, order_first_seen_ts, event_ts)
         current_execution_actor_keys = {
             str(execution["actor_key"])
             for execution in (execution,)
@@ -1127,7 +1105,7 @@ def _stream_metric_inputs(
             and (selected_actor_keys is None or str(execution["actor_key"]) in selected_actor_keys)
         }
         exposure_rows = compute_actor_top_n_exposures(
-            active_orders,
+            post_active_orders,
             top_n=top_n,
             tick_size=tick_size,
             partition_id=partition_id,
@@ -1145,6 +1123,17 @@ def _stream_metric_inputs(
         previous_profile_actor_keys = {
             str(row["actor_key"]) for row in exposure_rows if row["has_active_top_n_profile"]
         }
+
+        if replay_observer is not None:
+            replay_observer(observation)
+
+    replay_lob(
+        raw_events,
+        config=config,
+        max_rows=max_rows,
+        observer=observe_replay,
+        retain_events=False,
+    )
 
     cluster_rows, member_rows = cluster_execution_fills(
         cluster_source_rows,
@@ -1594,16 +1583,10 @@ def assign_cancellations_to_clusters(candidate_links: pl.DataFrame) -> pl.DataFr
         raise ValueError(f"candidate links missing required columns: {', '.join(missing)}")
 
     rows = candidate_links.to_dicts()
-    partition_columns = [
-        column
-        for column in ("actor_key",)
-        if column in candidate_links.columns
-    ]
     groups: dict[tuple[Any, ...], list[int]] = defaultdict(list)
     for index, row in enumerate(rows):
         key = (
             row.get("partition_id"),
-            *(row.get(column) for column in partition_columns),
             int(row["cancel_sort_index"]),
             str(row["candidate_order_id"]),
         )
@@ -2185,6 +2168,7 @@ def compute_exploratory_metrics(
     state_client_ids: set[str] | None = None,
     execution_anchor_modes: Collection[str] = ("passive", "aggressive"),
     empirical_kernel_weights: Mapping[str, Mapping[int, float]] | None = None,
+    replay_observer: Callable[[ReplayObservation], None] | None = None,
 ) -> ExploratoryMetricsResult:
     (
         state_df,
@@ -2205,6 +2189,7 @@ def compute_exploratory_metrics(
         state_client_ids=state_client_ids,
         execution_anchor_modes=execution_anchor_modes,
         empirical_kernel_weights=empirical_kernel_weights,
+        replay_observer=replay_observer,
     )
     execution_df = attach_sci_window_metrics(
         execution_df,

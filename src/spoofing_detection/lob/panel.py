@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import polars as pl
@@ -532,197 +533,173 @@ def _event_identity(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def reconstruct_dataframe(
-    df: pl.DataFrame, *, config: LOBConfig | None = None, max_rows: int | None = None
-) -> ReconstructionResult:
+PreReplayHook = Callable[[dict[str, Any], dict[str, ActiveOrder], str | None], None]
+PostReplayHook = Callable[[dict[str, Any], dict[str, ActiveOrder], str | None, list[str]], None]
+PartitionEndReplayHook = Callable[[dict[str, Any], dict[str, ActiveOrder], str | None], None]
+
+
+@dataclass(frozen=True)
+class ReplayHooks:
+    """Consumers called at canonical replay boundaries.
+
+    Hooks receive the live active-order map and must not retain or mutate it.
+    Exceptions intentionally propagate so consumers cannot silently observe a
+    partial replay.
+    """
+
+    on_pre_event: PreReplayHook | None = None
+    on_post_event: PostReplayHook | None = None
+    on_partition_end: PartitionEndReplayHook | None = None
+
+
+def replay_events(
+    raw_events: pl.DataFrame,
+    *,
+    config: LOBConfig | None = None,
+    max_rows: int | None = None,
+    hooks: ReplayHooks | None = None,
+    retain_events: bool = True,
+) -> tuple[dict[str, Any], ...]:
+    """Run the sole canonical LOB replay loop and optionally retain normalized events.
+
+    Sorting precedes ``max_rows``.  Every consumer sees the same partition
+    boundaries, event application, and one-event look-ahead residual flush
+    ordering. Set ``retain_events=False`` for callback-only consumers.
+    """
     config = config or LOBConfig()
-    sorted_df = sort_events(df)
+    sorted_events = sort_events(raw_events)
     if max_rows is not None:
-        sorted_df = sorted_df.head(max_rows)
-    events = [
-        normalize_event(raw_row, sort_index=idx, config=config)
-        for idx, raw_row in enumerate(sorted_df.iter_rows(named=True), start=1)
-    ]
+        sorted_events = sorted_events.head(max_rows)
+    event_iterator = (
+        normalize_event(raw_row, sort_index=index, config=config)
+        for index, raw_row in enumerate(sorted_events.iter_rows(named=True), start=1)
+    )
+    event = next(event_iterator, None)
+    if event is None:
+        return ()
+
+    hooks = hooks or ReplayHooks()
+    retained_events: list[dict[str, Any]] = []
     active_orders: dict[str, ActiveOrder] = {}
     pending_aggressive_residuals: dict[str, tuple[dict[str, Any], tuple[Any, ...] | None]] = {}
     non_resting_order_ids: set[str] = set()
-    normalized_rows: list[dict[str, Any]] = []
-    panel_rows: list[dict[str, Any]] = []
-    agent_rows: list[dict[str, Any]] = []
-    active_snapshot_rows: list[dict[str, Any]] = []
-    price_depth_rows: list[dict[str, Any]] = []
-    issue_counts: dict[str, int] = {}
-    last_event: dict[str, Any] | None = None
     current_partition_id: str | None = None
-    partitions_processed = 0
-    active_orders_end_total = 0
+    last_event: dict[str, Any] | None = None
 
-    for event_index, event in enumerate(events):
-        event_partition_id = _partition_id(event)
+    while event is not None:
+        next_event = next(event_iterator, None)
+        if retain_events:
+            retained_events.append(event)
+        partition_id = _partition_id(event)
         if current_partition_id is None:
-            current_partition_id = event_partition_id
-            partitions_processed = 1
-        elif event_partition_id != current_partition_id:
-            _flush_pending_aggressive_residuals(
-                active_orders,
-                pending_aggressive_residuals,
-                keep_group=None,
-            )
-            if config.snapshot_mode == "end_of_partition" and last_event is not None:
-                active_snapshot_rows.extend(
-                    active_order_snapshot_rows(
-                        active_orders,
-                        event=last_event,
-                        snapshot_sort_index=last_event["sort_index"],
-                        snapshot_reason="end_of_partition",
-                    )
-                )
-                price_depth_rows.extend(
-                    depth_snapshot_rows(
-                        active_orders,
-                        event=last_event,
-                        snapshot_sort_index=last_event["sort_index"],
-                        snapshot_reason="end_of_partition",
-                    )
-                )
-            active_orders_end_total += len(active_orders)
+            current_partition_id = partition_id
+        elif partition_id != current_partition_id:
+            _flush_pending_aggressive_residuals(active_orders, pending_aggressive_residuals, keep_group=None)
+            if hooks.on_partition_end is not None:
+                assert last_event is not None
+                hooks.on_partition_end(last_event, active_orders, current_partition_id)
             active_orders = {}
             pending_aggressive_residuals = {}
             non_resting_order_ids = set()
-            current_partition_id = event_partition_id
-            partitions_processed += 1
-        last_event = event
-        normalized_rows.append(event)
+            current_partition_id = partition_id
 
-        pre_summary = book_summary(active_orders, prefix="pre", top_n=config.top_n)
-        pre_firm = agent_aggregates(
-            active_orders,
-            dimension="firm",
-            agent_id=event["firm_id"],
-            event_side=event["side_label"],
-            prefix="pre",
-        )
-        pre_client = agent_aggregates(
-            active_orders,
-            dimension="client_original",
-            agent_id=event["client_original_id"],
-            event_side=event["side_label"],
-            prefix="pre",
-        )
-        pre_distance = event_distance(event, pre_summary, prefix="pre")
-
+        if hooks.on_pre_event is not None:
+            hooks.on_pre_event(event, active_orders, partition_id)
         mutation_flags = _apply_event(
             active_orders,
             event,
             pending_aggressive_residuals=pending_aggressive_residuals,
             non_resting_order_ids=non_resting_order_ids,
         )
-        next_event = events[event_index + 1] if event_index + 1 < len(events) else None
-        next_group = _fill_group_key(next_event) if next_event is not None else None
         mutation_flags.extend(
             _flush_pending_aggressive_residuals(
                 active_orders,
                 pending_aggressive_residuals,
-                keep_group=next_group,
+                keep_group=_fill_group_key(next_event) if next_event is not None else None,
             )
         )
+        if hooks.on_post_event is not None:
+            hooks.on_post_event(event, active_orders, partition_id, mutation_flags)
+        last_event = event
+        event = next_event
 
+    _flush_pending_aggressive_residuals(active_orders, pending_aggressive_residuals, keep_group=None)
+    if hooks.on_partition_end is not None:
+        assert last_event is not None
+        hooks.on_partition_end(last_event, active_orders, current_partition_id)
+    return tuple(retained_events)
+
+
+def reconstruct_dataframe(
+    df: pl.DataFrame, *, config: LOBConfig | None = None, max_rows: int | None = None
+) -> ReconstructionResult:
+    config = config or LOBConfig()
+    normalized_rows: list[dict[str, Any]] = []
+    panel_rows: list[dict[str, Any]] = []
+    agent_rows: list[dict[str, Any]] = []
+    active_snapshot_rows: list[dict[str, Any]] = []
+    price_depth_rows: list[dict[str, Any]] = []
+    issue_counts: dict[str, int] = {}
+    partitions_processed = 0
+    active_orders_end_total = 0
+
+    pre_state: dict[str, Any] = {}
+
+    def on_pre_event(event: dict[str, Any], active_orders: dict[str, ActiveOrder], partition_id: str | None) -> None:
+        nonlocal partitions_processed
+        normalized_rows.append(event)
+        if not pre_state or pre_state["partition_id"] != partition_id:
+            partitions_processed += 1
+        pre_summary = book_summary(active_orders, prefix="pre", top_n=config.top_n)
+        pre_firm = agent_aggregates(active_orders, dimension="firm", agent_id=event["firm_id"], event_side=event["side_label"], prefix="pre")
+        pre_client = agent_aggregates(active_orders, dimension="client_original", agent_id=event["client_original_id"], event_side=event["side_label"], prefix="pre")
+        pre_state.clear()
+        pre_state.update(
+            partition_id=partition_id,
+            pre_summary=pre_summary,
+            pre_firm=pre_firm,
+            pre_client=pre_client,
+            pre_distance=event_distance(event, pre_summary, prefix="pre"),
+        )
+
+    def on_post_event(
+        event: dict[str, Any], active_orders: dict[str, ActiveOrder], partition_id: str | None, mutation_flags: list[str]
+    ) -> None:
         post_summary = book_summary(active_orders, prefix="post", top_n=config.top_n)
-        post_firm = agent_aggregates(
-            active_orders,
-            dimension="firm",
-            agent_id=event["firm_id"],
-            event_side=event["side_label"],
-            prefix="post",
-        )
-        post_client = agent_aggregates(
-            active_orders,
-            dimension="client_original",
-            agent_id=event["client_original_id"],
-            event_side=event["side_label"],
-            prefix="post",
-        )
+        post_firm = agent_aggregates(active_orders, dimension="firm", agent_id=event["firm_id"], event_side=event["side_label"], prefix="post")
+        post_client = agent_aggregates(active_orders, dimension="client_original", agent_id=event["client_original_id"], event_side=event["side_label"], prefix="post")
         post_distance = event_distance(event, post_summary, prefix="post")
-
-        all_flags = []
-        if event["normalization_issue_flags"]:
-            all_flags.extend(str(event["normalization_issue_flags"]).split(";"))
+        all_flags = str(event["normalization_issue_flags"] or "").split(";") if event["normalization_issue_flags"] else []
         all_flags.extend(mutation_flags)
         for flag in all_flags:
             issue_counts[flag] = issue_counts.get(flag, 0) + 1
-
         panel_rows.append(
             {
-                **_event_identity(event),
-                **pre_summary,
-                **post_summary,
-                **pre_firm,
-                **post_firm,
-                **pre_client,
-                **post_client,
-                **pre_distance,
-                **post_distance,
-                "lob_issue_flags": join_flags(mutation_flags),
+                **_event_identity(event), **pre_state["pre_summary"], **post_summary,
+                **pre_state["pre_firm"], **post_firm, **pre_state["pre_client"], **post_client,
+                **pre_state["pre_distance"], **post_distance, "lob_issue_flags": join_flags(mutation_flags),
             }
         )
-        agent_rows.extend(
-            agent_long_rows(
-                event,
-                pre_firm=pre_firm,
-                post_firm=post_firm,
-                pre_client=pre_client,
-                post_client=post_client,
-                pre_distance=pre_distance,
-                post_distance=post_distance,
-            )
-        )
-        if config.snapshot_mode == "every_event_for_sample" or (
-            config.snapshot_mode == "issue_rows_only" and mutation_flags
-        ):
+        agent_rows.extend(agent_long_rows(event, pre_firm=pre_state["pre_firm"], post_firm=post_firm, pre_client=pre_state["pre_client"], post_client=post_client, pre_distance=pre_state["pre_distance"], post_distance=post_distance))
+        if config.snapshot_mode == "every_event_for_sample" or (config.snapshot_mode == "issue_rows_only" and mutation_flags):
             reason = "post_event" if config.snapshot_mode == "every_event_for_sample" else "issue_row"
-            active_snapshot_rows.extend(
-                active_order_snapshot_rows(
-                    active_orders,
-                    event=event,
-                    snapshot_sort_index=event["sort_index"],
-                    snapshot_reason=reason,
-                )
-            )
-            price_depth_rows.extend(
-                depth_snapshot_rows(
-                    active_orders,
-                    event=event,
-                    snapshot_sort_index=event["sort_index"],
-                    snapshot_reason=reason,
-                )
-            )
+            active_snapshot_rows.extend(active_order_snapshot_rows(active_orders, event=event, snapshot_sort_index=event["sort_index"], snapshot_reason=reason))
+            price_depth_rows.extend(depth_snapshot_rows(active_orders, event=event, snapshot_sort_index=event["sort_index"], snapshot_reason=reason))
 
-    if last_event is not None:
-        _flush_pending_aggressive_residuals(
-            active_orders,
-            pending_aggressive_residuals,
-            keep_group=None,
-        )
-
-    if config.snapshot_mode == "end_of_partition" and last_event is not None:
-        active_snapshot_rows.extend(
-            active_order_snapshot_rows(
-                active_orders,
-                event=last_event,
-                snapshot_sort_index=last_event["sort_index"],
-                snapshot_reason="end_of_partition",
-            )
-        )
-        price_depth_rows.extend(
-            depth_snapshot_rows(
-                active_orders,
-                event=last_event,
-                snapshot_sort_index=last_event["sort_index"],
-                snapshot_reason="end_of_partition",
-            )
-        )
-    if last_event is not None:
+    def on_partition_end(event: dict[str, Any], active_orders: dict[str, ActiveOrder], partition_id: str | None) -> None:
+        nonlocal active_orders_end_total
+        if config.snapshot_mode == "end_of_partition":
+            active_snapshot_rows.extend(active_order_snapshot_rows(active_orders, event=event, snapshot_sort_index=event["sort_index"], snapshot_reason="end_of_partition"))
+            price_depth_rows.extend(depth_snapshot_rows(active_orders, event=event, snapshot_sort_index=event["sort_index"], snapshot_reason="end_of_partition"))
         active_orders_end_total += len(active_orders)
+
+    replay_events(
+        df,
+        config=config,
+        max_rows=max_rows,
+        hooks=ReplayHooks(on_pre_event=on_pre_event, on_post_event=on_post_event, on_partition_end=on_partition_end),
+        retain_events=False,
+    )
 
     panel = pl.DataFrame(panel_rows, infer_schema_length=None) if panel_rows else pl.DataFrame()
     normalized = pl.DataFrame(normalized_rows, infer_schema_length=None) if normalized_rows else pl.DataFrame()

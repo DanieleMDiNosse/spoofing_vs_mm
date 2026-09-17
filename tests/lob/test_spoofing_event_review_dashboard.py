@@ -1137,6 +1137,9 @@ def test_reconstructed_firm_fallback_review_uses_actor_key_not_client_label():
     review_events = [
         {
             "review_event_id": "S2",
+            "episode_id": "S2",
+            "episode_has_matched_withdrawal": True,
+            "episode_strict_detection": False,
             "sort_index": 2,
             "event_ts": "2024-01-02T09:00:02",
             "event_ts_parsed": datetime.fromisoformat("2024-01-02T09:00:02"),
@@ -1160,6 +1163,15 @@ def test_reconstructed_firm_fallback_review_uses_actor_key_not_client_label():
         queue_snapshot_mode="key-events",
     )
 
+    assert review.select(
+        "episode_id", "episode_has_matched_withdrawal", "episode_strict_detection"
+    ).to_dicts() == [
+        {
+            "episode_id": "S2",
+            "episode_has_matched_withdrawal": True,
+            "episode_strict_detection": False,
+        }
+    ]
     assert review.select("actor_key").item() == "firm:F1"
     assert review.select("execution_anchor_mode").item() == "aggressive"
     execution = event_log.filter(pl.col("is_execution_order"))

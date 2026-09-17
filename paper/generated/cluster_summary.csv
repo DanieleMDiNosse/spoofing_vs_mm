@@ -1,7 +1,7 @@
-instrument,execution_anchor_mode,execution_cluster_count,raw_fill_message_count,matched_cluster_count,firm_fallback_cluster_count,firm_fallback_matched_cluster_count,assigned_cancellation_count,compatible_sequence_count,fpm_positive_count,fpm_observed_count,positive_fpm_mid_share,reversion_positive_count,reversion_observed_count,positive_reversion_mid_share
-FERRARI,aggressive,4333,9335,1153,2727,1131,1760,165,630,1153,0.546400693842151,439,1153,0.38074588031222895
-FERRARI,passive,8664,9329,1322,5926,1147,2009,205,728,1322,0.5506807866868382,450,1322,0.340393343419062
-NEXI,aggressive,3849,7425,620,1942,576,944,100,289,620,0.4661290322580645,333,620,0.5370967741935484
-NEXI,passive,6663,7424,1064,2668,791,1867,131,600,1064,0.5639097744360902,281,1063,0.264346190028222
-RISANAMENTO,aggressive,9956,16029,71,2088,44,84,10,25,71,0.352112676056338,39,70,0.5571428571428572
-RISANAMENTO,passive,15016,15929,134,2162,114,136,2,91,134,0.6791044776119403,5,133,0.03759398496240601
+instrument,execution_anchor_mode,execution_cluster_count,raw_fill_message_count,matched_cluster_count,firm_fallback_cluster_count,firm_fallback_matched_cluster_count,assigned_cancellation_count,compatible_sequence_count,strict_episode_count_total,fpm_positive_count,fpm_observed_count,positive_fpm_mid_share,reversion_positive_count,reversion_observed_count,positive_reversion_mid_share
+FERRARI,aggressive,4333,9335,1153,2727,1131,1760,49,133,262,1150,0.22782608695652173,439,1153,0.38074588031222895
+FERRARI,passive,8664,9329,1322,5926,1147,2009,107,133,489,1320,0.3704545454545455,450,1322,0.340393343419062
+NEXI,aggressive,3849,7425,620,1942,576,944,38,102,161,617,0.26094003241491087,333,620,0.5370967741935484
+NEXI,passive,6663,7424,1064,2668,791,1867,79,102,445,1061,0.4194156456173421,281,1063,0.264346190028222
+RISANAMENTO,aggressive,9956,16029,71,2088,44,84,4,4,14,67,0.208955223880597,39,70,0.5571428571428572
+RISANAMENTO,passive,15016,15929,134,2162,114,136,0,4,88,133,0.6616541353383458,5,133,0.03759398496240601

@@ -1,18 +1,19 @@
 {
   "actor_identity_mode": "client_then_firm",
-  "analytical_unit": "execution_cluster",
-  "created_at_utc": "2026-08-24T10:22:36.425578+00:00",
+  "analytical_unit": "candidate_posture_episode",
+  "created_at_utc": "2026-09-09T00:01:15.615656+00:00",
+  "diagnostic_unit": "execution_cluster",
   "execution_anchor_modes": [
     "passive",
     "aggressive"
   ],
   "external_alert_audit": {
-    "audit_path": "outputs/consob_alert_comparison/20260821_zero_client_sentinel_firm_fallback/external_alert_detector_overlap_audit.json",
-    "audit_sha256": "71a31e15dd31d3b8d4507dbdfa2892cd7758a07b16a3ea03e767987260eb957b",
+    "audit_path": "outputs/consob_alert_comparison/20260908_candidate_posture_episodes/external_alert_detector_overlap_audit.json",
+    "audit_sha256": "04a67022966c3b8a87c5fedf807e4526bb80384e57300948e07723dd45974453",
     "overall_counts": {
       "identity_aligned_union_periods_with_strict_detection": 0,
       "identity_aligned_union_timed_periods": 4,
-      "identity_unaligned_union_periods_with_strict_subject_scope_detection": 4,
+      "identity_unaligned_union_periods_with_strict_subject_scope_detection": 1,
       "identity_unaligned_union_timed_periods": 30,
       "source_date_only_periods": 1,
       "source_external_periods": 37,
@@ -21,7 +22,7 @@
       "union_periods_with_matched_withdrawal": 30,
       "union_periods_with_raw_subject_event": 34,
       "union_periods_with_recovered_execution": 34,
-      "union_periods_with_strict_subject_scope_detection": 4,
+      "union_periods_with_strict_subject_scope_detection": 1,
       "union_timed_periods": 34
     },
     "primary_source": {
@@ -30,8 +31,8 @@
       "source_kind": "primary_pdf"
     },
     "public_summary": {
-      "path": "paper/generated/external_alert_audit_summary.json",
-      "sha256": "fc985b32c5d37e62ef6284084805ad5c5963e338abd1328b1c08b34d180b4440"
+      "path": "outputs/spoofing_metrics/20260908_160831_candidate_posture_episodes/paper_generated_staging/external_alert_audit_summary.json",
+      "sha256": "69cf48b2ebb2d04d25a79fb29214c90549f7d99a7bc7d60ccf00a212925e4db9"
     },
     "recall_unit": "identity-aligned unioned timed external-alert window with at least one strict detector execution",
     "verification_tier": "external_subject_temporal_coverage_execution_recovery_and_strict_detector_overlap"
@@ -42,26 +43,28 @@
     "FERRARI": {
       "input_hashes": {
         "execution_cancel_candidates": "f4875c4143b0d7d43dea234106ec801383019bdede0086b5fb811b4fb2fc6e88",
-        "execution_metrics": "df9e9192ce6fdba13a20be15f5ceb7ebc1b1556a7368874f47c50c249319beae",
-        "run_metadata": "93bef61f53e33108acebf191ef712441ec5930bf5bab3c6c68683d54ea434cc2"
+        "execution_metrics": "df3f8a84afd3f8aac0de5d6c438cdefbb762138b459e5ca3cf1fd07db4b4cacc",
+        "run_metadata": "3ab4b75d9dc5219f18f20307cf6ee8d0a32a379a2978e39f3750aab5b545131d"
       },
-      "run_dir": "outputs/spoofing_metrics/20260821_170856_zero_client_sentinel_firm_fallback/FERRARI_top10_h10_age90_zero_client_firm_fallback"
+      "run_dir": "outputs/spoofing_metrics/20260908_160831_candidate_posture_episodes/FERRARI_top10_h10_age90"
     },
     "NEXI": {
       "input_hashes": {
         "execution_cancel_candidates": "9c93fbaf977ba9550ada1f201569e16d0f6bcbce019c2129b2d680a7b424edd8",
-        "execution_metrics": "2575fc76d981ca6d7550690eb4ce8f87d4c71c3a344250f8671ecad2f12c794c",
-        "run_metadata": "3050966c44fec23f30ca1960826031151e913e57fd27d7b090c333f62e7d77f8"
+        "execution_metrics": "f114dc7cd4ee8f1c991ab263a6325e0484a1d0eb29a3bce2fd4feca5dfd15854",
+        "run_metadata": "2051699f298b882587c5671326b9f185ca9ec36d00f811c6f455320589c33c51"
       },
-      "run_dir": "outputs/spoofing_metrics/20260821_170856_zero_client_sentinel_firm_fallback/NEXI_top10_h10_age90_zero_client_firm_fallback"
+      "run_dir": "outputs/spoofing_metrics/20260908_160831_candidate_posture_episodes/NEXI_top10_h10_age90"
     },
     "RISANAMENTO": {
       "input_hashes": {
         "execution_cancel_candidates": "f44d2222b10fb1b752826a82d5422b0e979e76024d080f11e77c5eb5ae6ac614",
-        "execution_metrics": "4d0094f394f07394efae04031a5801586fa2cf5ef11dcd8fe39e44e402a52b5d",
-        "run_metadata": "ded283af52a11028c1903e93d47fbbfeaea14291956e3b1ad869d8ae91150267"
+        "execution_metrics": "d41c029064a79ffc2e4ceebee62b23fb07a8bbbbb13f2d167ee317a6710b9807",
+        "run_metadata": "69b28dd944ecca6db88332b84728d3e99551c9436e9e5ef853af47fdd87f592d"
       },
-      "run_dir": "outputs/spoofing_metrics/20260821_170856_zero_client_sentinel_firm_fallback/RISANAMENTO_top10_h10_age90_zero_client_firm_fallback"
+      "run_dir": "outputs/spoofing_metrics/20260908_160831_candidate_posture_episodes/RISANAMENTO_top10_h10_age90"
     }
-  }
+  },
+  "strict_branch_policy": "episode_participation_nonadditive_for_mixed_anchor_episodes",
+  "strict_total_policy": "distinct_episode_id"
 }

@@ -1309,7 +1309,7 @@ def test_assign_cancellations_selects_one_winning_execution_anchor_branch():
     assert assigned.get_column("competing_cluster_count").to_list() == [2, 2]
 
 
-def test_assign_cancellations_does_not_compete_across_actor_namespaces():
+def test_assign_cancellations_competes_by_physical_cancel_across_actor_namespaces():
     candidate_links = pl.DataFrame(
         {
             "partition_id": ["P", "P"],
@@ -1328,8 +1328,8 @@ def test_assign_cancellations_does_not_compete_across_actor_namespaces():
 
     assigned = assign_cancellations_to_clusters(candidate_links)
 
-    assert assigned.get_column("assigned_flag").to_list() == [True, True]
-    assert assigned.get_column("competing_cluster_count").to_list() == [1, 1]
+    assert assigned.get_column("assigned_flag").to_list() == [False, True]
+    assert assigned.get_column("competing_cluster_count").to_list() == [2, 2]
 
 
 

@@ -24,7 +24,8 @@ def _write_metadata(run_dir: Path) -> None:
         json.dumps(
             {
                 "output_schema_version": "actor_execution_anchor_v2",
-                "analytical_unit": "execution_cluster",
+                "analytical_unit": "candidate_posture_episode",
+                "episode_semantics": {"primary_unit": "candidate_posture_episode"},
                 "actor_identity_mode": "client_then_firm",
                 "firm_fallback_semantics": "aggregate only when client_original_id is missing",
                 "execution_anchor_modes": ["passive", "aggressive"],
@@ -44,6 +45,8 @@ def _execution_frame() -> pl.DataFrame:
             "client_original_id": ["A", None],
             "firm_id": ["F_1", "F_1"],
             "execution_anchor_mode": ["passive", "aggressive"],
+            "episode_id": ["EP-111111111111111111111111", "EP-111111111111111111111111"],
+            "spoofing_compatible_episode": [True, True],
             "child_fill_count": [3, 1],
             "has_matched_deceptive_cancel_window": [True, False],
             "spoofing_compatible_sequence": [True, False],
@@ -83,6 +86,7 @@ def test_summarize_run_stratifies_anchor_and_firm_fallback(tmp_path: Path):
     assert aggressive["firm_fallback_cluster_count"] == 1
     assert aggressive["firm_fallback_matched_cluster_count"] == 0
     assert aggressive["assigned_cancellation_count"] == 0
+    assert aggressive["compatible_sequence_count"] == 1
     assert passive["execution_cluster_count"] == 1
     assert passive["raw_fill_message_count"] == 3
     assert passive["matched_cluster_count"] == 1
@@ -157,6 +161,18 @@ def test_summarize_run_rejects_non_clustered_and_duplicate_inputs(tmp_path: Path
         load_module().summarize_run("Sample", run_dir)
 
 
+def test_summarize_run_rejects_noncanonical_strict_episode_identifier(tmp_path: Path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _write_metadata(run_dir)
+    _write_candidates(run_dir)
+    invalid = _execution_frame().with_columns(pl.lit("   ").alias("episode_id"))
+    invalid.write_parquet(run_dir / "execution_metrics.parquet")
+
+    with pytest.raises(ValueError, match="canonical episode_id"):
+        load_module().summarize_run("Sample", run_dir)
+
+
 def test_summarize_run_rejects_invalid_firm_fallback_semantics(tmp_path: Path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -211,6 +227,7 @@ def test_render_tex_labels_actor_identity_and_execution_anchor():
             "firm_fallback_matched_cluster_count": [0, 0],
             "assigned_cancellation_count": [0, 1],
             "compatible_sequence_count": [0, 1],
+            "strict_episode_count_total": [1, 1],
             "fpm_positive_count": [0, 1],
             "fpm_observed_count": [0, 1],
             "reversion_positive_count": [0, 1],
@@ -237,12 +254,14 @@ def test_render_tex_labels_actor_identity_and_execution_anchor():
     assert "\\newcommand{\\SampleAggressiveClusters}{1}" in macros
     assert "\\newcommand{\\SamplePassiveClusters}{1}" in macros
     assert "\\newcommand{\\SampleCompatibleSequences}{1}" in macros
-    assert "Execution messages" in summary_table
-    assert "cluster" not in summary_table.lower()
+    assert r"\shortstack{Execution\\messages}" in summary_table
+    assert "candidate-posture episode" in summary_table
+    assert "non-additive" in summary_table
+    assert r"\shortstack{Strict episode\\participation}" in summary_table
     assert "fill" not in summary_table.lower()
-    assert "cluster" not in actor_table.lower()
+    assert "matched clusters" in actor_table.lower()
     assert "fill" not in actor_table.lower()
-    assert "Assigned cancels" in summary_table
+    assert r"\shortstack{Assigned\\cancels}" in summary_table
     assert "Firm fallback" in summary_table
     assert "Aggressive" in summary_table
     assert r"F\_1" in actor_table
@@ -316,7 +335,7 @@ def test_external_alert_artifacts_hash_inputs_and_remove_subject_aliases(tmp_pat
                         "recovered_execution_clusters": 1,
                         "recovered_execution_clusters_by_anchor": {"aggressive": 1},
                         "clusters_with_matched_withdrawal": 0,
-                        "clusters_with_strict_detection": 0,
+                        "episodes_with_strict_detection": 0,
                     }
                 ],
             }
@@ -350,7 +369,7 @@ def test_external_alert_artifacts_hash_inputs_and_remove_subject_aliases(tmp_pat
     ]
     assert public_summary["datasets"]["SAMPLE"]["source_record_totals"] == {
         "clusters_with_matched_withdrawal": 0,
-        "clusters_with_strict_detection": 0,
+        "episodes_with_strict_detection": 0,
         "recovered_child_fill_rows": 4,
         "recovered_child_fill_rows_by_anchor": {"aggressive": 4},
         "recovered_execution_clusters": 1,

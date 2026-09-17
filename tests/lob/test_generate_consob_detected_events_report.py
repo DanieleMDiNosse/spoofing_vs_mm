@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 from copy import deepcopy
 import re
 from datetime import datetime
@@ -8,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import polars as pl
 
 
 SCRIPT_PATH = (
@@ -28,6 +31,33 @@ def load_module():
     return module
 
 
+def test_episode_withdrawal_delay_summary_uses_cluster_end_time():
+    module = load_module()
+    withdrawals = pl.DataFrame(
+        {
+            "episode_id": ["EP-111111111111111111111111"],
+            "execution_cluster_id": ["EC-P-1"],
+            "cancel_event_ts": [datetime.fromisoformat("2024-06-13T10:00:01.250")],
+        }
+    )
+    execution_metrics = pl.DataFrame(
+        {
+            "execution_cluster_id": ["EC-P-1"],
+            "cluster_end_ts": [datetime.fromisoformat("2024-06-13T10:00:00")],
+        }
+    )
+
+    summary = module._episode_withdrawal_delay_summary(withdrawals, execution_metrics)
+
+    assert summary.to_dicts() == [
+        {
+            "episode_id": "EP-111111111111111111111111",
+            "episode_withdrawal_min_delay_seconds": 1.25,
+            "episode_withdrawal_max_delay_seconds": 1.25,
+        }
+    ]
+
+
 def _event(
     timestamp: str,
     *,
@@ -37,7 +67,14 @@ def _event(
     side: str = "bid",
     quantity: float = 20.0,
     price: float = 100.0,
+    episode_id: str | None = None,
 ) -> dict[str, Any]:
+    episode_id = episode_id or (
+        "EP-"
+        + hashlib.sha256(
+            f"{timestamp}|{actor_key}|{cluster_id}".encode("utf-8")
+        ).hexdigest()[:24]
+    )
     return {
         "cluster_start_ts": timestamp,
         "cluster_end_ts": timestamp,
@@ -45,6 +82,28 @@ def _event(
         "identity_level": actor_key.split(":", 1)[0],
         "identity_fallback_flag": actor_key.startswith("firm:"),
         "execution_cluster_id": cluster_id,
+        "episode_id": episode_id,
+        "episode_start_ts": timestamp,
+        "episode_end_ts": timestamp,
+        "episode_total_execution_quantity": quantity,
+        "episode_execution_vwap": price,
+        "episode_cluster_count": 1,
+        "episode_total_child_fill_count": 1,
+        "episode_unique_candidate_order_count": 3,
+        "episode_unique_withdrawal_count": 2,
+        "episode_withdrawal_min_delay_seconds": 0.01,
+        "episode_withdrawal_max_delay_seconds": 0.5,
+        "episode_withdrawn_quantity": 60.0,
+        "episode_withdrawal_to_execution_ratio": 60.0 / quantity,
+        "episode_favorable_mid_move": 0.2,
+        "episode_post_cancel_mid_reversion": 0.1,
+        "episode_price_path_observed": True,
+        "episode_gate_joint_smallness": True,
+        "episode_has_matched_withdrawal": True,
+        "episode_mixed_anchor": False,
+        "spoofing_compatible_episode": True,
+        "episode_strict_detection": True,
+        "episode_representative_cluster_id": cluster_id,
         "execution_anchor_mode": anchor,
         "execution_side": side,
         "deceptive_side": "ask" if side == "bid" else "bid",
@@ -84,6 +143,7 @@ def _audit(
 ) -> dict[str, Any]:
     event = {
         "event_alias": "detector_event_aaaaaaaaaaaa",
+        "analytical_unit": "candidate_posture_episode",
         "cluster_start": strict_timestamp,
         "cluster_end": strict_timestamp,
         "execution_anchor_mode": anchor,
@@ -151,9 +211,9 @@ def _audit(
                         "scope": "date",
                         "start": "2024-09-10T00:00:00",
                         "event_recall_identifiable": False,
-                        "date_level_recovered_execution_clusters": 59,
-                        "date_level_clusters_with_matched_withdrawal": 1,
-                        "date_level_clusters_with_strict_detection": 0,
+                        "date_level_candidate_posture_episodes": 59,
+                        "date_level_episodes_with_matched_withdrawal": 1,
+                        "date_level_episodes_with_strict_detection": 0,
                     }
                 ],
                 "union_timed_results": [],
@@ -212,10 +272,10 @@ def test_build_report_uses_intermediary_and_new_event_tags():
     assert "| FERRARI-E001 | CONSOB_MATCH_INTERMEDIARIO" in report
     assert "FERRARI-union-001" in report
     assert "| FERRARI-E002 | NUOVO_EVENTO" in report
-    assert "| FERRARI | 13/06/2024 | 2 | 2 | 0 | 0 | 1 | 1 | 1 |" in report
+    assert "| FERRARI | 13/06/2024 | 2 | 2 | 0 | 0 | 0 | 1 | 1 | 1 |" in report
     assert "`CONSOB_MATCH_SOGGETTO`" in report
     assert "`CONSOB_MATCH_INTERMEDIARIO`" in report
-    assert "`NUOVO_EVENTO`" in report
+    assert "NUOVO_EVENTO" in report
     assert "CONSOB_MATCH_ESATTO" not in report
     assert "Nessun riscontro CONSOB" not in report
     assert "Tutti i criteri tra quelli con identificazione allineata" in report
@@ -238,9 +298,9 @@ def test_build_report_uses_intermediary_and_new_event_tags():
     assert "Identificativo non attribuibile: `0`" in report
     assert "il valore tecnico non identifica un cliente o un intermediario" in report
     assert "FERRARI-S001" not in report
-    assert "L'operazione comprende una sola esecuzione, a un unico prezzo e dura 0,0 ms" in report
+    assert "L'episodio comprende 1 cluster di esecuzione e dura 0,0 ms" in report
     assert (
-        "Prima dell'esecuzione erano visibili 3 ordini di vendita, per un totale "
+        "Nel cluster rappresentante, prima dell'esecuzione erano visibili 3 ordini di vendita, per un totale "
         "di 80 unità."
     ) in report
     assert (
@@ -252,11 +312,9 @@ def test_build_report_uses_intermediary_and_new_event_tags():
         "Dopo l'esecuzione sono state rilevate, tra gli ordini considerati, 2 "
         "cancellazioni, per un totale di 60 unità."
     ) in report
-    assert (
-        "La quantità cancellata corrisponde al 75,0% della quantità visibile prima "
-        "dell'esecuzione."
-    ) in report
-    assert "Prima dell'acquisto, il midprice è sceso di 0,20" in report
+    assert "Il rapporto tra quantità cancellata ed eseguita è 3,00" in report
+    assert "Dalla pubblicazione osservata della configurazione candidata" in report
+    assert "il midprice è sceso di 0,20" in report
     assert report.count("| FERRARI-E00") == 2
     assert "firm:SECRET_FIRM" not in report
     assert "actor_secret_should_not_render" not in report
@@ -294,12 +352,65 @@ def test_build_report_uses_intermediary_and_new_event_tags():
     assert "le cancellazioni ricevono un peso progressivamente minore" in report
     assert "soltanto quando l'intero intervallo è osservabile" in report
     assert "Non è imposto un tempo minimo di permanenza" in report
-    assert "individuata senza ambiguità" in report
+    assert "collegata senza ambiguità" in report
     assert "In caso di ambiguità, il riscontro non è riportato nel registro." in report
     assert "la relazione non viene prodotta" not in report
     assert "Il riscontro riportato nel registro è classificato a livello di intermediario" in report
     assert "I quattro riscontri" not in report
     assert "lo stesso cluster del registro" not in report
+
+
+def test_build_report_rejects_legacy_cluster_strict_audit_schema():
+    module = load_module()
+    audit = _audit()
+    audit["datasets"]["FERRARI"]["union_timed_results"][0][
+        "clusters_with_strict_detection"
+    ] = 2
+
+    with pytest.raises(ValueError, match="predates candidate-posture episode semantics"):
+        module.build_report(
+            events_by_instrument={
+                "FERRARI": [
+                    _event(
+                        "2024-06-13T10:00:00",
+                        actor_key="firm:SECRET_FIRM",
+                        cluster_id="EC-P-1",
+                    )
+                ]
+            },
+            audit=audit,
+            run_info=_run_info(),
+            report_date="6 agosto 2026",
+        )
+
+
+def test_build_report_rejects_duplicate_strict_episode_rows():
+    module = load_module()
+    episode_id = "EP-222222222222222222222222"
+    events = {
+        "FERRARI": [
+            _event(
+                "2024-06-13T10:00:00",
+                actor_key="firm:SECRET_FIRM",
+                cluster_id="EC-P-1",
+                episode_id=episode_id,
+            ),
+            _event(
+                "2024-06-13T10:00:00",
+                actor_key="firm:SECRET_FIRM",
+                cluster_id="EC-P-2",
+                episode_id=episode_id,
+            ),
+        ]
+    }
+
+    with pytest.raises(ValueError, match="duplicate canonical strict episode"):
+        module.build_report(
+            events_by_instrument=events,
+            audit=_audit(),
+            run_info=_run_info(),
+            report_date="6 agosto 2026",
+        )
 
 
 @pytest.mark.parametrize(
@@ -323,7 +434,7 @@ def test_report_treats_legacy_zero_client_actor_variants_as_unattributable(actor
 
     assert "Identificativo non attribuibile" in report
     assert "In 1 eventi l'unico valore identificativo disponibile" in report
-    assert "| FERRARI | 13/06/2024 | 1 | 1 | 0 | 0 | 0 | 1 | 1 |" in report
+    assert "| FERRARI | 13/06/2024 | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 1 |" in report
 
 
 def test_build_report_uses_subject_tag_for_identity_aligned_match():
@@ -375,9 +486,9 @@ def test_build_report_uses_natural_wording_for_one_cancellation():
         actor_key="firm:SECRET_FIRM",
         cluster_id="EC-P-1",
     )
-    event["matched_deceptive_cancel_count_window"] = 1
-    event["matched_deceptive_cancel_min_delay_seconds"] = 0.01
-    event["matched_deceptive_cancel_max_delay_seconds"] = 0.01
+    event["episode_unique_withdrawal_count"] = 1
+    event["episode_withdrawal_min_delay_seconds"] = 0.01
+    event["episode_withdrawal_max_delay_seconds"] = 0.01
 
     report = module.build_report(
         events_by_instrument={"FERRARI": [event]},
@@ -483,23 +594,20 @@ def test_build_report_uses_plain_italian_instead_of_internal_pipeline_jargon():
 
     assert "Il registro raccoglie" in report
     assert "soddisfano tutti i criteri di selezione descritti di seguito" in report
-    assert "Prima dell'esecuzione" in report
+    assert "prima dell'esecuzione" in report
     assert "Codice cliente non disponibile per l'evento" in report
     assert (
         "Acquisto eseguito mediante un ordine di acquisto già presente nel libro degli ordini"
         in report
     )
-    assert "L'operazione comprende una sola esecuzione, a un unico prezzo e dura 0,0 ms" in report
+    assert "L'episodio comprende 1 cluster di esecuzione e dura 0,0 ms" in report
     assert "ordini di vendita" in report
     assert "migliore proposta di vendita" in report
-    assert "Prima dell'acquisto, il midprice è sceso" in report
+    assert "Dalla pubblicazione osservata della configurazione candidata" in report
+    assert "il midprice è sceso" in report
     assert "dopo le cancellazioni è risalito in media" in report
-    assert (
-        "La quantità cancellata corrisponde al 75,0% della quantità visibile prima "
-        "dell'esecuzione."
-    ) in report
     assert "Il rapporto tra quantità cancellata ed eseguita è 3,00" in report
-    assert "attribuendo un peso minore alle cancellazioni più tardive, quello ponderato è 2,80" in report
+    assert "quello ponderato" not in report
     assert "lato ask" not in report
     assert "esecuzioni parziali" not in report
     assert "stesso livello di dettaglio identificativo" in report
@@ -567,9 +675,10 @@ def test_build_report_describes_aggressive_sale_in_natural_italian():
     )
 
     assert "Vendita contro ordini di acquisto già presenti nel libro degli ordini" in report
-    assert "Prima dell'esecuzione erano visibili 3 ordini di acquisto" in report
+    assert "prima dell'esecuzione erano visibili 3 ordini di acquisto" in report
     assert "migliore proposta di acquisto" in report
-    assert "Prima della vendita, il midprice è salito" in report
+    assert "Dalla pubblicazione osservata della configurazione candidata" in report
+    assert "il midprice è salito" in report
     assert "dopo le cancellazioni è sceso in media" in report
     assert "In 0 eventi" not in report
     assert "Questi casi restano nel registro" not in report
@@ -583,7 +692,7 @@ def test_build_report_rounds_price_movements_to_two_decimal_ticks():
         actor_key="firm:SECRET_FIRM",
         cluster_id="EC-P-1",
     )
-    event["post_cancel_mid_reversion"] = 0.0970004
+    event["episode_post_cancel_mid_reversion"] = 0.0970004
 
     report = module.build_report(
         events_by_instrument={"FERRARI": [event]},
@@ -676,9 +785,9 @@ def test_build_report_derives_date_only_alert_note_from_audit_values():
     date_only.update(
         {
             "start": "2025-01-02T00:00:00",
-            "date_level_recovered_execution_clusters": 7,
-            "date_level_clusters_with_matched_withdrawal": 3,
-            "date_level_clusters_with_strict_detection": 2,
+            "date_level_candidate_posture_episodes": 7,
+            "date_level_episodes_with_matched_withdrawal": 3,
+            "date_level_episodes_with_strict_detection": 2,
         }
     )
 
@@ -698,10 +807,10 @@ def test_build_report_derives_date_only_alert_note_from_audit_values():
     )
 
     assert "La segnalazione RISANAMENTO del 02/01/2025 riporta soltanto la data." in report
-    assert "si osservano 7 gruppi di esecuzioni" in report
+    assert "si osservano 7 episodi con una configurazione candidata" in report
     assert "3 presentano cancellazioni successive" in report
     assert "2 soddisfano tutti i criteri di selezione" in report
-    assert "59 gruppi di esecuzioni" not in report
+    assert "59 episodi con una configurazione candidata" not in report
 
 
 def test_build_report_rejects_rows_that_do_not_pass_every_strict_gate():
@@ -711,7 +820,7 @@ def test_build_report_rejects_rows_that_do_not_pass_every_strict_gate():
         actor_key="firm:SECRET_FIRM",
         cluster_id="EC-P-1",
     )
-    invalid["gate_cancel_anchored_reversion"] = False
+    invalid["episode_strict_detection"] = False
 
     with pytest.raises(ValueError, match="strict-event register contains a failed gate"):
         module.build_report(
@@ -789,10 +898,9 @@ def test_build_report_rejects_unsafe_audit_period_identifiers(
     [
         ("deceptive_side", "bid", "opposite"),
         ("identity_fallback_flag", False, "identity fallback"),
-        ("child_fill_count", 0, "positive integer"),
-        ("matched_deceptive_cancel_fraction_window", 1.1, "cancellation fraction"),
-        ("matched_deceptive_cancel_min_delay_seconds", -0.1, "cancellation delays"),
-        ("matched_deceptive_cancel_max_delay_seconds", 2.1, "withdrawal window"),
+        ("episode_withdrawal_to_execution_ratio", 1.1, "withdrawal ratio"),
+        ("episode_withdrawal_min_delay_seconds", -0.1, "cancellation delays"),
+        ("episode_withdrawal_max_delay_seconds", 2.1, "withdrawal window"),
     ],
 )
 def test_build_report_rejects_semantically_inconsistent_strict_rows(
@@ -964,6 +1072,20 @@ def test_canonical_report_snapshot_when_inputs_are_available():
     if not run_root.is_dir() or not audit_path.is_file() or not report_path.is_file():
         pytest.skip("canonical private CONSOB artifacts are not available")
 
+    metadata_paths = sorted(run_root.glob("*_*/metadata.json"))
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    if (
+        len(metadata_paths) != 3
+        or any(
+            json.loads(path.read_text(encoding="utf-8"))
+            .get("episode_semantics", {})
+            .get("primary_unit")
+            != "candidate_posture_episode"
+            for path in metadata_paths
+        )
+        or "date_level_clusters_with_strict_detection" in json.dumps(audit)
+    ):
+        pytest.skip("canonical snapshot predates candidate-posture episode semantics")
     events, audit, run_info = module.load_canonical_inputs(run_root, audit_path)
     report = module.build_report(
         events_by_instrument=events,

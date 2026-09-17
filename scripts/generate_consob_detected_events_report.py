@@ -32,39 +32,39 @@ MAR_ARTICLE_15_URL = (
     "https://eur-lex.europa.eu/legal-content/IT/TXT/?uri=CELEX:32014R0596"
 )
 STRICT_GATE_FIELDS = (
-    "gate_rapid_matched_withdrawal",
-    "gate_small_fill_relative_to_withdrawal",
-    "gate_favorable_pre_fill_move",
-    "gate_cancel_anchored_reversion",
-    "spoofing_compatible_sequence",
+    "episode_has_matched_withdrawal",
+    "episode_gate_joint_smallness",
+    "episode_price_path_observed",
+    "spoofing_compatible_episode",
+    "episode_strict_detection",
 )
 REQUIRED_EVENT_FIELDS = (
-    "cluster_start_ts",
-    "cluster_end_ts",
+    "episode_id",
+    "episode_start_ts",
+    "episode_end_ts",
     "actor_key",
     "identity_level",
     "identity_fallback_flag",
     "execution_cluster_id",
+    "episode_representative_cluster_id",
+    "episode_cluster_count",
+    "episode_mixed_anchor",
     "execution_anchor_mode",
     "execution_side",
     "deceptive_side",
-    "execution_quantity",
-    "execution_vwap",
-    "child_fill_count",
-    "execution_price_level_count",
+    "episode_total_execution_quantity",
+    "episode_execution_vwap",
+    "episode_unique_withdrawal_count",
+    "episode_withdrawal_min_delay_seconds",
+    "episode_withdrawal_max_delay_seconds",
+    "episode_withdrawn_quantity",
+    "episode_withdrawal_to_execution_ratio",
+    "episode_favorable_mid_move",
+    "episode_post_cancel_mid_reversion",
     "candidate_deceptive_order_count_pre",
     "candidate_deceptive_visible_qty_pre",
     "candidate_deceptive_min_age_seconds_pre",
     "candidate_deceptive_qty_weighted_depth_distance_ticks_pre",
-    "matched_deceptive_cancel_count_window",
-    "matched_deceptive_cancel_visible_qty_window",
-    "matched_deceptive_cancel_fraction_window",
-    "matched_deceptive_cancel_min_delay_seconds",
-    "matched_deceptive_cancel_max_delay_seconds",
-    "withdrawal_to_execution_ratio",
-    "weighted_withdrawal_to_execution_ratio",
-    "favorable_mid_move_pre_fill",
-    "post_cancel_mid_reversion",
     "MSCI_resting_profile",
     "withdrawal_profile_scale_event",
     *STRICT_GATE_FIELDS,
@@ -84,6 +84,40 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"expected a JSON object: {path}")
     return value
+
+
+def _episode_withdrawal_delay_summary(
+    withdrawals: pl.DataFrame,
+    execution_metrics: pl.DataFrame,
+) -> pl.DataFrame:
+    cluster_times = execution_metrics.select(
+        "execution_cluster_id", "cluster_end_ts"
+    ).unique()
+    if cluster_times["execution_cluster_id"].n_unique() != cluster_times.height:
+        raise ValueError("execution metrics contain conflicting cluster end times")
+    delays = withdrawals.join(
+        cluster_times,
+        on="execution_cluster_id",
+        how="left",
+        validate="m:1",
+    ).with_columns(
+        (
+            (pl.col("cancel_event_ts") - pl.col("cluster_end_ts")).dt.total_microseconds()
+            / 1_000_000.0
+        ).alias("cancel_delay_seconds")
+    )
+    if delays["cluster_end_ts"].null_count() or delays["cancel_delay_seconds"].null_count():
+        raise ValueError("episode withdrawal lacks its execution-cluster end time")
+    if delays.filter(pl.col("cancel_delay_seconds") < 0).height:
+        raise ValueError("episode withdrawal precedes its execution cluster")
+    return delays.group_by("episode_id").agg(
+        pl.col("cancel_delay_seconds").min().alias(
+            "episode_withdrawal_min_delay_seconds"
+        ),
+        pl.col("cancel_delay_seconds").max().alias(
+            "episode_withdrawal_max_delay_seconds"
+        ),
+    )
 
 
 def _as_bool(value: object, *, field: str) -> bool:
@@ -171,7 +205,7 @@ def _validate_strict_events(
 ) -> None:
     if not math.isfinite(withdrawal_window_seconds) or withdrawal_window_seconds <= 0:
         raise ValueError("withdrawal window must be positive and finite")
-    seen_keys: set[tuple[str, str, str]] = set()
+    seen_keys: set[tuple[str, str]] = set()
     for instrument, events in events_by_instrument.items():
         for event in events:
             missing = [field for field in REQUIRED_EVENT_FIELDS if field not in event]
@@ -181,36 +215,46 @@ def _validate_strict_events(
                 )
             if not all(_as_bool(event[field], field=field) for field in STRICT_GATE_FIELDS):
                 raise ValueError("strict-event register contains a failed gate")
+            episode_id = str(event["episode_id"])
+            if re.fullmatch(r"EP-[0-9a-f]{24}", episode_id) is None:
+                raise ValueError("strict-event row has noncanonical episode_id")
             execution_quantity = _as_float(
-                event["execution_quantity"], field="execution_quantity"
+                event["episode_total_execution_quantity"],
+                field="episode_total_execution_quantity",
             )
-            execution_vwap = _as_float(event["execution_vwap"], field="execution_vwap")
+            execution_vwap = _as_float(
+                event["episode_execution_vwap"], field="episode_execution_vwap"
+            )
             withdrawn_quantity = _as_float(
-                event["matched_deceptive_cancel_visible_qty_window"],
-                field="matched_deceptive_cancel_visible_qty_window",
+                event["episode_withdrawn_quantity"],
+                field="episode_withdrawn_quantity",
             )
             favorable_move = _as_float(
-                event["favorable_mid_move_pre_fill"],
-                field="favorable_mid_move_pre_fill",
+                event["episode_favorable_mid_move"],
+                field="episode_favorable_mid_move",
             )
             reversion = _as_float(
-                event["post_cancel_mid_reversion"],
-                field="post_cancel_mid_reversion",
+                event["episode_post_cancel_mid_reversion"],
+                field="episode_post_cancel_mid_reversion",
             )
             if execution_quantity <= 0 or execution_vwap <= 0:
                 raise ValueError("strict-event execution quantity and VWAP must be positive")
             if not withdrawn_quantity > execution_quantity:
                 raise ValueError("strict-event row violates withdrawn quantity > execution quantity")
             if not favorable_move > 0.0:
-                raise ValueError("strict-event row has non-positive favorable pre-fill move")
+                raise ValueError("strict episode has non-positive favorable post-publication move")
             if not reversion > 0.0:
                 raise ValueError("strict-event row has non-positive cancel-anchored reversion")
-            cluster_start = _parse_timestamp(
-                event["cluster_start_ts"], field="cluster_start_ts"
+            episode_start = _parse_timestamp(
+                event["episode_start_ts"], field="episode_start_ts"
             )
-            cluster_end = _parse_timestamp(event["cluster_end_ts"], field="cluster_end_ts")
-            if cluster_end < cluster_start:
-                raise ValueError("strict-event row has a cluster end before its start")
+            episode_end = _parse_timestamp(event["episode_end_ts"], field="episode_end_ts")
+            if episode_end < episode_start:
+                raise ValueError("strict-event row has an episode end before its start")
+            _as_bool(event["episode_mixed_anchor"], field="episode_mixed_anchor")
+            anchor = str(event["execution_anchor_mode"])
+            if anchor not in {"passive", "aggressive"}:
+                raise ValueError(f"unsupported representative anchor: {anchor!r}")
             execution_side = str(event["execution_side"]).lower()
             deceptive_side = str(event["deceptive_side"]).lower()
             expected_deceptive_side = {"bid": "ask", "ask": "bid"}.get(execution_side)
@@ -230,38 +274,41 @@ def _validate_strict_events(
             if re.fullmatch(r"[A-Za-z0-9_.-]+", original_identifier) is None:
                 raise ValueError("strict-event original actor identifier is not safe to render")
             for count_field in (
-                "child_fill_count",
-                "execution_price_level_count",
-                "candidate_deceptive_order_count_pre",
-                "matched_deceptive_cancel_count_window",
+                "episode_cluster_count",
+                "episode_unique_withdrawal_count",
             ):
                 if _as_int(event[count_field], field=count_field) <= 0:
                     raise ValueError(f"{count_field} must be a positive integer")
-            cancellation_fraction = _as_float(
-                event["matched_deceptive_cancel_fraction_window"],
-                field="matched_deceptive_cancel_fraction_window",
-            )
-            if not 0.0 < cancellation_fraction <= 1.0:
-                raise ValueError("strict-event cancellation fraction must be in (0, 1]")
             min_delay = _as_float(
-                event["matched_deceptive_cancel_min_delay_seconds"],
-                field="matched_deceptive_cancel_min_delay_seconds",
+                event["episode_withdrawal_min_delay_seconds"],
+                field="episode_withdrawal_min_delay_seconds",
             )
             max_delay = _as_float(
-                event["matched_deceptive_cancel_max_delay_seconds"],
-                field="matched_deceptive_cancel_max_delay_seconds",
+                event["episode_withdrawal_max_delay_seconds"],
+                field="episode_withdrawal_max_delay_seconds",
             )
             if min_delay < 0 or max_delay < min_delay:
                 raise ValueError("strict-event cancellation delays must satisfy 0 <= min <= max")
             if max_delay > withdrawal_window_seconds + 1e-9:
                 raise ValueError("strict-event cancellation delay exceeds the withdrawal window")
-            key = (
-                instrument,
-                str(event["actor_key"]),
-                str(event["execution_cluster_id"]),
+            reported_ratio = _as_float(
+                event["episode_withdrawal_to_execution_ratio"],
+                field="episode_withdrawal_to_execution_ratio",
             )
+            if not math.isclose(
+                reported_ratio,
+                withdrawn_quantity / execution_quantity,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            ):
+                raise ValueError("strict episode withdrawal ratio is inconsistent")
+            if str(event["episode_representative_cluster_id"]) != str(
+                event["execution_cluster_id"]
+            ):
+                raise ValueError("strict episode row is not its representative cluster")
+            key = (instrument, episode_id)
             if key in seen_keys:
-                raise ValueError(f"duplicate canonical strict event: {key!r}")
+                raise ValueError(f"duplicate canonical strict episode: {key!r}")
             seen_keys.add(key)
 
 
@@ -274,17 +321,25 @@ def _same_number(left: object, right: object) -> bool:
     )
 
 
+def _episode_anchor_mode(event: dict[str, Any]) -> str:
+    if _as_bool(event["episode_mixed_anchor"], field="episode_mixed_anchor"):
+        return "mixed"
+    return str(event["execution_anchor_mode"])
+
+
 def _event_matches_audit(event: dict[str, Any], audit_event: dict[str, Any]) -> bool:
     return (
-        _parse_timestamp(event["cluster_start_ts"], field="cluster_start_ts")
+        _parse_timestamp(event["episode_start_ts"], field="episode_start_ts")
         == _parse_timestamp(audit_event["cluster_start"], field="cluster_start")
-        and _parse_timestamp(event["cluster_end_ts"], field="cluster_end_ts")
+        and _parse_timestamp(event["episode_end_ts"], field="episode_end_ts")
         == _parse_timestamp(audit_event["cluster_end"], field="cluster_end")
-        and str(event["execution_anchor_mode"])
-        == str(audit_event["execution_anchor_mode"])
+        and _episode_anchor_mode(event) == str(audit_event["execution_anchor_mode"])
         and str(event["execution_side"]) == str(audit_event["execution_side"])
-        and _same_number(event["execution_quantity"], audit_event["execution_quantity"])
-        and _same_number(event["execution_vwap"], audit_event["execution_vwap"])
+        and _same_number(
+            event["episode_total_execution_quantity"],
+            audit_event["execution_quantity"],
+        )
+        and _same_number(event["episode_execution_vwap"], audit_event["execution_vwap"])
     )
 
 
@@ -415,10 +470,10 @@ def _instrument_sort_key(instrument: str) -> tuple[int, str]:
 
 def _event_sort_key(event: dict[str, Any]) -> tuple[datetime, datetime, str, str, str]:
     return (
-        _parse_timestamp(event["cluster_start_ts"], field="cluster_start_ts"),
-        _parse_timestamp(event["cluster_end_ts"], field="cluster_end_ts"),
-        str(event["execution_anchor_mode"]),
-        str(event["execution_cluster_id"]),
+        _parse_timestamp(event["episode_start_ts"], field="episode_start_ts"),
+        _parse_timestamp(event["episode_end_ts"], field="episode_end_ts"),
+        _episode_anchor_mode(event),
+        str(event["episode_id"]),
         str(event["actor_key"]),
     )
 
@@ -561,7 +616,7 @@ def _dataset_counts(dataset: dict[str, Any]) -> dict[str, int]:
         "strict_scope": int(
             dataset.get(
                 "union_periods_with_strict_subject_scope_detection",
-                sum((row.get("clusters_with_strict_detection") or 0) > 0 for row in union_rows),
+                sum((row.get("episodes_with_strict_detection") or 0) > 0 for row in union_rows),
             )
         ),
         "aligned": int(
@@ -575,7 +630,7 @@ def _dataset_counts(dataset: dict[str, Any]) -> dict[str, int]:
                 "identity_aligned_union_periods_with_strict_detection",
                 sum(
                     bool(row.get("identity_granularity_aligned"))
-                    and (row.get("clusters_with_strict_detection") or 0) > 0
+                    and (row.get("episodes_with_strict_detection") or 0) > 0
                     for row in union_rows
                 ),
             )
@@ -600,27 +655,27 @@ def _date_only_alert_notes(datasets: dict[str, Any]) -> list[str]:
             )
             counts = {
                 "execution": _as_int(
-                    row.get("date_level_recovered_execution_clusters"),
-                    field="date_level_recovered_execution_clusters",
+                    row.get("date_level_candidate_posture_episodes"),
+                    field="date_level_candidate_posture_episodes",
                 ),
                 "withdrawal": _as_int(
-                    row.get("date_level_clusters_with_matched_withdrawal"),
-                    field="date_level_clusters_with_matched_withdrawal",
+                    row.get("date_level_episodes_with_matched_withdrawal"),
+                    field="date_level_episodes_with_matched_withdrawal",
                 ),
                 "strict": _as_int(
-                    row.get("date_level_clusters_with_strict_detection"),
-                    field="date_level_clusters_with_strict_detection",
+                    row.get("date_level_episodes_with_strict_detection"),
+                    field="date_level_episodes_with_strict_detection",
                 ),
             }
             if any(value < 0 for value in counts.values()):
                 raise ValueError("date-only alert counts must be nonnegative")
             execution_text = (
-                "non si osservano gruppi di esecuzioni"
+                "non si osservano episodi con una configurazione candidata"
                 if counts["execution"] == 0
                 else (
-                    "si osserva un gruppo di esecuzioni"
+                    "si osserva un episodio con una configurazione candidata"
                     if counts["execution"] == 1
-                    else f"si osservano {counts['execution']} gruppi di esecuzioni"
+                    else f"si osservano {counts['execution']} episodi con una configurazione candidata"
                 )
             )
             withdrawal_text = (
@@ -704,6 +759,22 @@ def _safe_report_check(
                 raise ValueError("distributable report contains an upstream actor alias")
 
 
+def _reject_legacy_cluster_strict_audit(value: object) -> None:
+    if isinstance(value, dict):
+        if any(
+            key in {"clusters_with_strict_detection", "date_level_clusters_with_strict_detection"}
+            for key in value
+        ):
+            raise ValueError(
+                "external audit predates candidate-posture episode semantics"
+            )
+        for child in value.values():
+            _reject_legacy_cluster_strict_audit(child)
+    elif isinstance(value, list):
+        for child in value:
+            _reject_legacy_cluster_strict_audit(child)
+
+
 def build_report(
     *,
     events_by_instrument: dict[str, list[dict[str, Any]]],
@@ -713,6 +784,7 @@ def build_report(
 ) -> str:
     """Render the complete restricted strict-event register."""
     report_date = _validate_report_date(report_date)
+    _reject_legacy_cluster_strict_audit(audit)
     total_events = sum(len(events) for events in events_by_instrument.values())
     if total_events == 0:
         raise ValueError("the strict-event register is empty")
@@ -803,8 +875,8 @@ def build_report(
         "",
         (
             f"Il registro raccoglie **{total_events}** sequenze che soddisfano tutti i criteri di selezione "
-            "descritti di seguito. Ogni sequenza riunisce le esecuzioni "
-            "ravvicinate dello stesso ordine; non coincide quindi con un singolo messaggio di mercato. "
+            "descritti di seguito. Ogni sequenza è un episodio costruito attorno a una stessa configurazione candidata "
+            "e può comprendere più cluster di esecuzioni; non coincide quindi con un singolo messaggio di mercato. "
             "La selezione serve a indirizzare la revisione umana e, da sola, non dimostra né un intento "
             "manipolativo né una violazione."
         ),
@@ -821,7 +893,7 @@ def build_report(
         ),
         (
             "2. **Ritiro successivo:** almeno una parte di tali ordini viene cancellata entro "
-            f"{_seconds_label(withdrawal_window_seconds)} dalla fine del gruppo di esecuzioni."
+            f"{_seconds_label(withdrawal_window_seconds)} dal cluster di esecuzioni al quale la cancellazione è attribuita."
         ),
         (
             "3. **Dimensione del ritiro:** la quantità complessivamente cancellata supera quella eseguita."
@@ -898,21 +970,24 @@ def build_report(
         "",
         "## 2. Quadro sintetico degli eventi",
         "",
-        "| Titolo | Periodo osservato | Eventi | Esecuzioni di ordini già presenti | Esecuzioni contro ordini già presenti | Attribuzione tramite codice cliente | Attribuzione tramite codice intermediario | Identificativo tecnico 0 | Riscontri CONSOB |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Titolo | Periodo osservato | Episodi | Solo passivi | Solo aggressivi | Misti | Attribuzione tramite codice cliente | Attribuzione tramite codice intermediario | Identificativo tecnico 0 | Riscontri CONSOB |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
 
     for instrument in sorted(sorted_events, key=_instrument_sort_key):
         events = [event for _, event in sorted_events[instrument]]
         dates = sorted(
-            {_parse_timestamp(event["cluster_start_ts"], field="cluster_start_ts").date() for event in events}
+            {
+                _parse_timestamp(event["episode_start_ts"], field="episode_start_ts").date()
+                for event in events
+            }
         )
         period = (
             dates[0].strftime("%d/%m/%Y")
             if len(dates) == 1
             else f"{dates[0].strftime('%d/%m/%Y')}–{dates[-1].strftime('%d/%m/%Y')} ({len(dates)} sedute con eventi)"
         )
-        anchor_counts = Counter(str(event["execution_anchor_mode"]) for event in events)
+        anchor_counts = Counter(_episode_anchor_mode(event) for event in events)
         identity_counts = Counter(str(event["identity_level"]) for event in events)
         sentinel_count = sum(_is_zero_client_actor_key(event["actor_key"]) for event in events)
         client_attribution_count = identity_counts["client_original"] - sentinel_count
@@ -926,6 +1001,7 @@ def build_report(
                     str(len(events)),
                     str(anchor_counts["passive"]),
                     str(anchor_counts["aggressive"]),
+                    str(anchor_counts["mixed"]),
                     str(client_attribution_count),
                     str(identity_counts["firm"]),
                     str(sentinel_count),
@@ -942,7 +1018,7 @@ def build_report(
             "",
             "La tabella riporta, per ciascun titolo, le mediane dei singoli indicatori. I valori di una stessa riga non descrivono necessariamente un unico evento osservato. I movimenti di prezzo sono espressi in tick, ossia in multipli del passo minimo di quotazione.",
             "",
-            "| Titolo | Quantità eseguita | Quantità visibile negli ordini opposti | Rapporto cancellato/eseguito | Ritardo massimo delle cancellazioni | Variazione prima dell'esecuzione | Inversione dopo le cancellazioni | WMSCI | MSCI |",
+            "| Titolo | Quantità eseguita nell'episodio | Quantità visibile nel cluster rappresentante | Rapporto cancellato/eseguito | Ritardo massimo delle cancellazioni | Variazione dalla pubblicazione | Inversione dopo le cancellazioni | WMSCI del cluster rappresentante | MSCI del cluster rappresentante |",
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
@@ -954,7 +1030,15 @@ def build_report(
         tick_size = _as_float(info.get("tick_size"), field=f"{instrument} tick_size")
         values = [
             instrument,
-            _fmt_quantity(_median(_as_float(e["execution_quantity"], field="execution_quantity") for e in events)),
+            _fmt_quantity(
+                _median(
+                    _as_float(
+                        e["episode_total_execution_quantity"],
+                        field="episode_total_execution_quantity",
+                    )
+                    for e in events
+                )
+            ),
             _fmt_quantity(
                 _median(
                     _as_float(
@@ -966,7 +1050,10 @@ def build_report(
             ),
             _it_number(
                 _median(
-                    _as_float(e["withdrawal_to_execution_ratio"], field="withdrawal_to_execution_ratio")
+                    _as_float(
+                        e["episode_withdrawal_to_execution_ratio"],
+                        field="episode_withdrawal_to_execution_ratio",
+                    )
                     for e in events
                 ),
                 2,
@@ -975,8 +1062,8 @@ def build_report(
                 1000.0
                 * _median(
                     _as_float(
-                        e["matched_deceptive_cancel_max_delay_seconds"],
-                        field="matched_deceptive_cancel_max_delay_seconds",
+                        e["episode_withdrawal_max_delay_seconds"],
+                        field="episode_withdrawal_max_delay_seconds",
                     )
                     for e in events
                 ),
@@ -985,7 +1072,10 @@ def build_report(
             + " ms",
             _it_number(
                 _median(
-                    _as_float(e["favorable_mid_move_pre_fill"], field="favorable_mid_move_pre_fill")
+                    _as_float(
+                        e["episode_favorable_mid_move"],
+                        field="episode_favorable_mid_move",
+                    )
                     / tick_size
                     for e in events
                 ),
@@ -994,7 +1084,10 @@ def build_report(
             + " tick",
             _it_number(
                 _median(
-                    _as_float(e["post_cancel_mid_reversion"], field="post_cancel_mid_reversion")
+                    _as_float(
+                        e["episode_post_cancel_mid_reversion"],
+                        field="episode_post_cancel_mid_reversion",
+                    )
                     / tick_size
                     for e in events
                 ),
@@ -1153,10 +1246,10 @@ def build_report(
             (
                 "Due intervalli riferiti allo stesso soggetto e titolo vengono uniti quando si sovrappongono o si "
                 "toccano, estremi compresi. Il registro riporta un riscontro soltanto quando la sequenza interna è "
-                "individuata senza ambiguità tramite l'inizio e la fine del gruppo di esecuzioni, il tipo di "
+                "collegata senza ambiguità al cluster rappresentante tramite l'inizio e la fine del cluster, il tipo di "
                 "esecuzione, la direzione dell'ordine (acquisto o vendita), la quantità e il prezzo. In caso di "
-                "ambiguità, il riscontro non è riportato nel registro. Questa riconciliazione identifica senza "
-                "ambiguità la stessa sequenza nei due artefatti interni usati per il confronto; non è una conferma "
+                "ambiguità, il riscontro non è riportato nel registro. Questa riconciliazione collega il cluster "
+                "rappresentante dell'episodio ai due artefatti interni usati per il confronto; non è una conferma "
                 "indipendente dell'evento segnalato da CONSOB. "
                 "I codici degli intervalli sono riferimenti della relazione e non identificano persone."
             ),
@@ -1235,9 +1328,9 @@ def build_report(
             event_id = event_ids[(instrument, original_index)]
             interval_and_sequence = (
                 f"Intervallo: {tag['union_period_id']}<br>Fonte: {source_periods}<br>"
-                f"Sequenza interna: {_fmt_timestamp(event['cluster_start_ts'])}; "
+                f"Episodio interno: {_fmt_timestamp(event['episode_start_ts'])}; "
                 f"{_transaction_label(_book_side(event['execution_side'])).lower()} di "
-                f"{_fmt_quantity(event['execution_quantity'])} unità."
+                f"{_fmt_quantity(event['episode_total_execution_quantity'])} unità."
             )
             lines.append(
                 "| "
@@ -1365,13 +1458,13 @@ def build_report(
                 f"Fonte: {source_periods}"
             )
         context_cell = (
-            f"{tag_text}<br>{_fmt_timestamp(event['cluster_start_ts'])}<br>"
+            f"{tag_text}<br>{_fmt_timestamp(event['episode_start_ts'])}<br>"
             f"{_identity_label(event)}"
         )
         execution_side = _book_side(event["execution_side"])
         deceptive_side = _book_side(event["deceptive_side"])
         transaction = _transaction_label(execution_side)
-        anchor_mode = str(event["execution_anchor_mode"])
+        anchor_mode = _episode_anchor_mode(event)
         if anchor_mode == "passive":
             executed = "eseguito" if execution_side == "bid" else "eseguita"
             execution_intro = (
@@ -1383,36 +1476,27 @@ def build_report(
                 f"{transaction.capitalize()} contro {_orders_label(deceptive_side)} già presenti "
                 "nel libro degli ordini"
             )
+        elif anchor_mode == "mixed":
+            execution_intro = (
+                f"Episodio di {transaction.lower()} composto da cluster passivi e aggressivi"
+            )
         else:
             raise ValueError(f"unsupported execution anchor mode: {anchor_mode!r}")
-        cluster_duration_ms = 1000.0 * (
-            _parse_timestamp(event["cluster_end_ts"], field="cluster_end_ts")
-            - _parse_timestamp(event["cluster_start_ts"], field="cluster_start_ts")
+        episode_duration_ms = 1000.0 * (
+            _parse_timestamp(event["episode_end_ts"], field="episode_end_ts")
+            - _parse_timestamp(event["episode_start_ts"], field="episode_start_ts")
         ).total_seconds()
-        fill_count = _as_int(event["child_fill_count"], field="child_fill_count")
-        price_level_count = _as_int(
-            event["execution_price_level_count"],
-            field="execution_price_level_count",
-        )
-        if fill_count == 1 and price_level_count == 1:
-            fill_description = "L'operazione comprende una sola esecuzione, a un unico prezzo"
-        elif price_level_count == 1:
-            fill_description = (
-                f"L'operazione comprende {fill_count} esecuzioni, tutte allo stesso prezzo"
-            )
-        else:
-            fill_description = (
-                f"L'operazione comprende {fill_count} esecuzioni, distribuite su "
-                f"{price_level_count} prezzi distinti"
-            )
+        cluster_count = _as_int(event["episode_cluster_count"], field="episode_cluster_count")
+        cluster_noun = "cluster di esecuzione" if cluster_count == 1 else "cluster di esecuzioni"
+        fill_description = f"L'episodio comprende {cluster_count} {cluster_noun}"
         execution_cell = (
             f"{execution_intro}: "
-            f"{_fmt_quantity(event['execution_quantity'])} unità al prezzo medio ponderato di "
-            f"{_it_number(_as_float(event['execution_vwap'], field='execution_vwap'), price_decimals)}. "
-            f"{fill_description} e dura {_it_number(cluster_duration_ms, 1)} ms."
+            f"{_fmt_quantity(event['episode_total_execution_quantity'])} unità al prezzo medio ponderato di "
+            f"{_it_number(_as_float(event['episode_execution_vwap'], field='episode_execution_vwap'), price_decimals)}. "
+            f"{fill_description} e dura {_it_number(episode_duration_ms, 1)} ms."
         )
         profile_cell = (
-            "Prima dell'esecuzione erano visibili "
+            "Nel cluster rappresentante, prima dell'esecuzione erano visibili "
             f"{_count_label(event['candidate_deceptive_order_count_pre'], field='candidate_deceptive_order_count_pre', singular='ordine', plural='ordini')} "
             f"di {'acquisto' if deceptive_side == 'bid' else 'vendita'}, "
             f"per un totale di {_fmt_quantity(event['candidate_deceptive_visible_qty_pre'])} unità. "
@@ -1422,22 +1506,22 @@ def build_report(
             f"{_it_number(_as_float(event['candidate_deceptive_qty_weighted_depth_distance_ticks_pre'], field='candidate_deceptive_qty_weighted_depth_distance_ticks_pre'), 2)} tick."
         )
         cancel_count = _as_int(
-            event["matched_deceptive_cancel_count_window"],
-            field="matched_deceptive_cancel_count_window",
+            event["episode_unique_withdrawal_count"],
+            field="episode_unique_withdrawal_count",
         )
         min_delay_text = _it_number(
             1000.0
             * _as_float(
-                event["matched_deceptive_cancel_min_delay_seconds"],
-                field="matched_deceptive_cancel_min_delay_seconds",
+                event["episode_withdrawal_min_delay_seconds"],
+                field="episode_withdrawal_min_delay_seconds",
             ),
             1,
         )
         max_delay_text = _it_number(
             1000.0
             * _as_float(
-                event["matched_deceptive_cancel_max_delay_seconds"],
-                field="matched_deceptive_cancel_max_delay_seconds",
+                event["episode_withdrawal_max_delay_seconds"],
+                field="episode_withdrawal_max_delay_seconds",
             ),
             1,
         )
@@ -1463,20 +1547,17 @@ def build_report(
             )
         withdrawal_cell = (
             f"{cancel_observation}, per un totale di "
-            f"{_fmt_quantity(event['matched_deceptive_cancel_visible_qty_window'])} unità. "
-            "La quantità cancellata corrisponde al "
-            f"{_it_number(100.0 * _as_float(event['matched_deceptive_cancel_fraction_window'], field='matched_deceptive_cancel_fraction_window'), 1)}% "
-            f"della quantità visibile prima dell'esecuzione. {delay_text} "
+            f"{_fmt_quantity(event['episode_withdrawn_quantity'])} unità. "
+            f"{delay_text} "
             "Il rapporto tra quantità cancellata ed eseguita è "
-            f"{_it_number(_as_float(event['withdrawal_to_execution_ratio'], field='withdrawal_to_execution_ratio'), 2)}; "
-            f"attribuendo un peso minore alle cancellazioni più tardive, quello ponderato è "
-            f"{_it_number(_as_float(event['weighted_withdrawal_to_execution_ratio'], field='weighted_withdrawal_to_execution_ratio'), 2)}."
+            f"{_it_number(_as_float(event['episode_withdrawal_to_execution_ratio'], field='episode_withdrawal_to_execution_ratio'), 2)}."
         )
         favorable = _as_float(
-            event["favorable_mid_move_pre_fill"], field="favorable_mid_move_pre_fill"
+            event["episode_favorable_mid_move"], field="episode_favorable_mid_move"
         )
         reversion = _as_float(
-            event["post_cancel_mid_reversion"], field="post_cancel_mid_reversion"
+            event["episode_post_cancel_mid_reversion"],
+            field="episode_post_cancel_mid_reversion",
         )
         if execution_side == "bid":
             transaction_context = "dell'acquisto"
@@ -1487,7 +1568,8 @@ def build_report(
             favorable_verb = "è salito"
             reverse_verb = "è sceso"
         price_cell = (
-            f"Prima {transaction_context}, il midprice {favorable_verb} di "
+            f"Dalla pubblicazione osservata della configurazione candidata alle relative esecuzioni, "
+            f"il midprice {favorable_verb} di "
             f"{_it_compact_number(favorable, min_decimals=price_decimals)} "
             f"({_it_number(favorable / tick_size, 2)} tick); dopo le cancellazioni "
             f"{reverse_verb} in media di "
@@ -1495,8 +1577,8 @@ def build_report(
             f"({_it_number(reversion / tick_size, 2)} tick)."
         )
         diagnostic_cell = (
-            f"**WMSCI:** {_it_number(_as_float(event['withdrawal_profile_scale_event'], field='withdrawal_profile_scale_event'), 3)}<br>"
-            f"**MSCI:** {_it_number(_as_float(event['MSCI_resting_profile'], field='MSCI_resting_profile'), 3)}"
+            f"**WMSCI del cluster rappresentante:** {_it_number(_as_float(event['withdrawal_profile_scale_event'], field='withdrawal_profile_scale_event'), 3)}<br>"
+            f"**MSCI del cluster rappresentante:** {_it_number(_as_float(event['MSCI_resting_profile'], field='MSCI_resting_profile'), 3)}"
         )
         cells = [
             event_ids[key],
@@ -1631,6 +1713,9 @@ def load_canonical_inputs(
             raise ValueError(f"expected exactly one {instrument} run directory, found {len(run_dirs)}")
         run_dir = run_dirs[0]
         metadata = _read_json(run_dir / "metadata.json")
+        episode_semantics = metadata.get("episode_semantics", {})
+        if episode_semantics.get("primary_unit") != "candidate_posture_episode":
+            raise ValueError(f"{instrument} metadata do not declare episode semantics")
         parquet_path = run_dir / "spoofing_compatible_events.parquet"
         expected_hash = metadata.get("artifact_hashes", {}).get("spoofing_compatible_events")
         observed_hash = _sha256(parquet_path)
@@ -1640,7 +1725,79 @@ def load_canonical_inputs(
         expected_rows = metadata.get("row_counts", {}).get("spoofing_compatible_events")
         if frame.height != expected_rows:
             raise ValueError(f"{instrument} compatible-event row-count mismatch")
-        events_by_instrument[instrument] = frame.to_dicts()
+        episode_path = run_dir / "candidate_episodes.parquet"
+        withdrawal_path = run_dir / "episode_withdrawals.parquet"
+        execution_metrics_path = run_dir / "execution_metrics.parquet"
+        for artifact_name, artifact_path in (
+            ("candidate_episodes", episode_path),
+            ("episode_withdrawals", withdrawal_path),
+            ("execution_metrics", execution_metrics_path),
+        ):
+            expected_artifact_hash = metadata.get("artifact_hashes", {}).get(artifact_name)
+            if expected_artifact_hash != _sha256(artifact_path):
+                raise ValueError(f"{instrument} {artifact_name} artifact hash mismatch")
+        episodes = pl.read_parquet(episode_path).filter("spoofing_compatible_episode")
+        withdrawals = pl.read_parquet(withdrawal_path)
+        execution_metrics = pl.read_parquet(execution_metrics_path)
+        expected_episode_rows = metadata.get("row_counts", {}).get("candidate_episodes")
+        expected_withdrawal_rows = metadata.get("row_counts", {}).get("episode_withdrawals")
+        if pl.read_parquet(episode_path).height != expected_episode_rows:
+            raise ValueError(f"{instrument} candidate-episode row-count mismatch")
+        if withdrawals.height != expected_withdrawal_rows:
+            raise ValueError(f"{instrument} episode-withdrawal row-count mismatch")
+        if frame.height != episodes.height:
+            raise ValueError(f"{instrument} strict-event and strict-episode counts disagree")
+        episode_fields = episodes.select(
+            "episode_id",
+            pl.col("episode_start_ts").alias("episode_start_ts"),
+            pl.col("episode_end_ts").alias("episode_end_ts"),
+            "actor_key",
+            pl.col("cluster_count").alias("episode_cluster_count"),
+            pl.col("unique_withdrawal_count").alias("episode_unique_withdrawal_count"),
+            pl.col("total_execution_quantity").alias("episode_total_execution_quantity"),
+            pl.col("execution_vwap").alias("episode_execution_vwap"),
+            pl.col("withdrawn_quantity").alias("episode_withdrawn_quantity"),
+            pl.col("withdrawal_to_execution_ratio").alias(
+                "episode_withdrawal_to_execution_ratio"
+            ),
+            pl.col("favorable_mid_move").alias("episode_favorable_mid_move"),
+            pl.col("post_cancel_mid_reversion").alias(
+                "episode_post_cancel_mid_reversion"
+            ),
+            pl.col("price_path_observed").alias("episode_price_path_observed"),
+            (pl.col("unique_withdrawal_count") > 0).alias(
+                "episode_has_matched_withdrawal"
+            ),
+            pl.col("gate_joint_smallness").alias("episode_gate_joint_smallness"),
+            "spoofing_compatible_episode",
+            pl.col("mixed_anchor").alias("episode_mixed_anchor"),
+        )
+        delay_summary = _episode_withdrawal_delay_summary(
+            withdrawals, execution_metrics
+        )
+        diagnostic_fields = frame.select(
+            "episode_id",
+            "identity_level",
+            "identity_fallback_flag",
+            "execution_side",
+            "deceptive_side",
+            "execution_cluster_id",
+            "episode_representative_cluster_id",
+            "execution_anchor_mode",
+            "candidate_deceptive_order_count_pre",
+            "candidate_deceptive_visible_qty_pre",
+            "candidate_deceptive_min_age_seconds_pre",
+            "candidate_deceptive_qty_weighted_depth_distance_ticks_pre",
+            "MSCI_resting_profile",
+            "withdrawal_profile_scale_event",
+            pl.col("episode_strict_detection"),
+        )
+        authoritative = episode_fields.join(
+            diagnostic_fields, on="episode_id", how="inner", validate="1:1"
+        ).join(delay_summary, on="episode_id", how="inner", validate="1:1")
+        if authoritative.height != episodes.height:
+            raise ValueError(f"{instrument} strict episodes lack authoritative detail")
+        events_by_instrument[instrument] = authoritative.to_dicts()
         instruments[instrument] = {
             "artifact_sha256": observed_hash,
             "tick_size": metadata.get("tick_size"),

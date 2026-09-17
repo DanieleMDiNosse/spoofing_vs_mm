@@ -53,18 +53,24 @@ PUBLIC_SUBJECT_FIELDS = (
 PUBLIC_PERIOD_SCALAR_FIELDS = (
     "recovered_child_fill_rows",
     "recovered_execution_clusters",
+    "candidate_posture_episodes",
     "clusters_with_matched_withdrawal",
-    "clusters_with_strict_detection",
+    "episodes_with_matched_withdrawal",
+    "episodes_with_strict_detection",
     "date_level_recovered_child_fill_rows",
     "date_level_recovered_execution_clusters",
+    "date_level_candidate_posture_episodes",
     "date_level_clusters_with_matched_withdrawal",
-    "date_level_clusters_with_strict_detection",
+    "date_level_episodes_with_matched_withdrawal",
+    "date_level_episodes_with_strict_detection",
 )
 PUBLIC_PERIOD_COUNT_MAP_FIELDS = (
     "recovered_child_fill_rows_by_anchor",
     "recovered_execution_clusters_by_anchor",
+    "candidate_posture_episodes_by_anchor",
     "date_level_recovered_child_fill_rows_by_anchor",
     "date_level_recovered_execution_clusters_by_anchor",
+    "date_level_candidate_posture_episodes_by_anchor",
 )
 EXPECTED_IDENTITY_LEVELS = frozenset({"client_original", "firm"})
 MISSING_IDENTIFIER_TOKENS = frozenset({"", "null", "none", "nan"})
@@ -98,13 +104,18 @@ def _load_contract_metadata(run_dir: Path) -> tuple[dict[str, Any], Path]:
     metadata = json.loads(metadata_path.read_text())
     expected = {
         "output_schema_version": EXPECTED_SCHEMA_VERSION,
-        "analytical_unit": "execution_cluster",
+        "analytical_unit": "candidate_posture_episode",
         "actor_identity_mode": "client_then_firm",
         "firm_fallback_semantics": "aggregate only when client_original_id is missing",
     }
     for key, value in expected.items():
         if metadata.get(key) != value:
             raise ValueError(f"{metadata_path} has {key}={metadata.get(key)!r}; expected {value!r}")
+    episode_semantics = metadata.get("episode_semantics")
+    if not isinstance(episode_semantics, dict) or episode_semantics.get("primary_unit") != (
+        "candidate_posture_episode"
+    ):
+        raise ValueError(f"{metadata_path} lacks candidate-posture episode semantics")
     modes = {str(mode).strip().lower() for mode in metadata.get("execution_anchor_modes", [])}
     if modes != EXPECTED_ANCHOR_MODES:
         raise ValueError(
@@ -227,6 +238,8 @@ def summarize_run(instrument: str, run_dir: Path) -> tuple[pl.DataFrame, pl.Data
         "client_original_id",
         "firm_id",
         "execution_anchor_mode",
+        "episode_id",
+        "spoofing_compatible_episode",
         "child_fill_count",
         "has_matched_deceptive_cancel_window",
         "spoofing_compatible_sequence",
@@ -236,6 +249,23 @@ def summarize_run(instrument: str, run_dir: Path) -> tuple[pl.DataFrame, pl.Data
     }
     _require_columns(executions, required_execution_columns, path=execution_path)
     _validate_actor_contract(executions, path=execution_path)
+    strict_rows = pl.col("spoofing_compatible_episode").fill_null(False)
+    canonical_episode_id = (
+        pl.col("episode_id")
+        .cast(pl.String, strict=False)
+        .str.contains(r"^EP-[0-9a-f]{24}$")
+        .fill_null(False)
+    )
+    if executions.filter(strict_rows & ~canonical_episode_id).height:
+        raise ValueError(
+            f"{execution_path}: strict episode rows require canonical episode_id"
+        )
+    strict_episode_count = (
+        executions.filter(pl.col("spoofing_compatible_episode").fill_null(False))
+        .select("episode_id")
+        .unique()
+        .height
+    )
 
     assigned, candidates_path = _assigned_candidates(run_dir)
     if not assigned.is_empty() and "execution_anchor_mode" not in assigned.columns:
@@ -261,8 +291,12 @@ def summarize_run(instrument: str, run_dir: Path) -> tuple[pl.DataFrame, pl.Data
                 "firm_fallback_matched_cluster_count": matched.filter(pl.col("identity_level") == "firm").height,
                 "assigned_cancellation_count": assigned_count,
                 "compatible_sequence_count": int(
-                    anchor_frame.get_column("spoofing_compatible_sequence").fill_null(False).sum() or 0
+                    anchor_frame.filter(pl.col("spoofing_compatible_episode").fill_null(False))
+                    .select("episode_id")
+                    .unique()
+                    .height
                 ),
+                "strict_episode_count_total": strict_episode_count,
                 "fpm_positive_count": fpm_positive,
                 "fpm_observed_count": fpm_observed,
                 "positive_fpm_mid_share": fpm_positive / fpm_observed if fpm_observed else None,
@@ -353,13 +387,16 @@ def _instrument_totals(frame: pl.DataFrame) -> dict[str, object]:
         "firm_fallback_cluster_count",
         "firm_fallback_matched_cluster_count",
         "assigned_cancellation_count",
-        "compatible_sequence_count",
         "fpm_positive_count",
         "fpm_observed_count",
         "reversion_positive_count",
         "reversion_observed_count",
     ):
         totals[column] = sum(int(row[column]) for row in anchor_rows.values())
+    strict_totals = {int(row["strict_episode_count_total"]) for row in anchor_rows.values()}
+    if len(strict_totals) != 1:
+        raise ValueError("anchor rows disagree on the distinct strict-episode total")
+    totals["compatible_sequence_count"] = strict_totals.pop()
     totals["positive_fpm_mid_share"] = _ratio(
         int(totals["fpm_positive_count"]), int(totals["fpm_observed_count"])
     )
@@ -400,13 +437,16 @@ def render_tex(summary: pl.DataFrame, top_actors: pl.DataFrame) -> tuple[str, st
         "% Generated by scripts/generate_spoofing_paper_tables.py; do not edit manually.",
         "\\begin{table}[htbp]",
         "\\centering",
-        "\\caption{Actor-attributed execution populations and reconstructed withdrawals by execution anchor. Individual execution messages provide provenance; executions are the analytical unit. Firm fallback counts matched executions for which the client code is missing and the firm identifier defines the actor. Assigned cancellations are counted once. Strict is the four-condition spoofing-compatible sequence gate.}",
+        "\\caption{Actor-attributed execution-cluster diagnostics and reconstructed withdrawals by execution anchor. Individual execution messages provide provenance; the candidate-posture episode is the primary detection unit. Firm fallback counts matched clusters for which the client code is missing and the firm identifier defines the actor. Assigned cancellations are counted once. Strict reports episode participation by anchor and is therefore non-additive when an episode contains both passive and aggressive executions.}",
         "\\label{tab:empirical_spoofing_diagnostics}",
         "\\scriptsize",
         "\\setlength{\\tabcolsep}{2.1pt}",
         "\\begin{tabular}{@{}llrrrrrr@{}}",
         "\\toprule",
-        "Instrument & Anchor & Executions & Execution messages & Matched & Firm fallback & Assigned cancels & Strict \\\\",
+        "Instrument & Anchor & \\shortstack{Execution\\\\clusters} & "
+        "\\shortstack{Execution\\\\messages} & \\shortstack{Matched\\\\clusters} & "
+        "\\shortstack{Firm\\\\fallback} & \\shortstack{Assigned\\\\cancels} & "
+        "\\shortstack{Strict episode\\\\participation} \\\\",
         "\\midrule",
     ]
     for row in summary.iter_rows(named=True):
@@ -424,13 +464,13 @@ def render_tex(summary: pl.DataFrame, top_actors: pl.DataFrame) -> tuple[str, st
         "% Generated by scripts/generate_spoofing_paper_tables.py; do not edit manually.",
         "\\begin{table}[htbp]",
         "\\centering",
-        "\\caption{Largest actor--anchor rapid-withdrawal groups by matched-execution count. Client denotes the original client code. Firm fallback denotes aggregation by firm only when that client code is missing. W/E max is the largest assigned withdrawal-to-execution ratio in the group. FPM$+$ and REV$+$ are descriptive shares among matched executions with finite midprice diagnostics.}",
+        "\\caption{Largest actor--anchor rapid-withdrawal groups by matched-cluster count. Client denotes the original client code. Firm fallback denotes aggregation by firm only when that client code is missing. W/E max is the largest assigned withdrawal-to-execution ratio in the group. FPM$+$ and REV$+$ are descriptive shares among matched execution clusters with finite midprice diagnostics.}",
         "\\label{tab:top_actor_results}",
         "\\scriptsize",
         "\\setlength{\\tabcolsep}{2.0pt}",
         "\\begin{tabular}{@{}llllrrrr@{}}",
         "\\toprule",
-        "Instrument & Actor & Identity & Anchor & Matched & W/E max & FPM$+$ & REV$+$ \\\\",
+        "Instrument & Actor & Identity & Anchor & Matched clusters & W/E max & FPM$+$ & REV$+$ \\\\",
         "\\midrule",
     ]
     identity_labels = {"client_original": "Client", "firm": "Firm fallback"}
@@ -625,7 +665,10 @@ def main(argv: list[str] | None = None) -> None:
     }
     metadata = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "analytical_unit": "execution_cluster",
+        "analytical_unit": "candidate_posture_episode",
+        "diagnostic_unit": "execution_cluster",
+        "strict_total_policy": "distinct_episode_id",
+        "strict_branch_policy": "episode_participation_nonadditive_for_mixed_anchor_episodes",
         "actor_identity_mode": "client_then_firm",
         "execution_anchor_modes": ["passive", "aggressive"],
         "firm_fallback_semantics": "aggregate only when client_original_id is missing",

@@ -201,7 +201,7 @@ def build_candidate_episodes(
             raise ValueError('withdrawal provenance is not causally after execution on same day')
         if not link['assigned_flag']:
             continue
-        physical=(link['partition_id'],link['actor_key'],int(link['cancel_sort_index']),str(link['candidate_order_id']))
+        physical=(link['partition_id'],int(link['cancel_sort_index']),str(link['candidate_order_id']))
         if physical in physical_assignments:
             raise ValueError('physical cancellation assigned more than once')
         physical_assignments.add(physical)

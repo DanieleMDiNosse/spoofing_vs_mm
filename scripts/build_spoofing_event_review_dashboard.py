@@ -683,6 +683,13 @@ def reconstruct_review_windows(
             review_summary_rows.append(
                 {
                     "review_event_id": review["review_event_id"],
+                    "episode_id": review.get("episode_id"),
+                    "episode_has_matched_withdrawal": review.get(
+                        "episode_has_matched_withdrawal"
+                    ),
+                    "episode_strict_detection": review.get(
+                        "episode_strict_detection"
+                    ),
                     "execution_cluster_id": review.get("execution_cluster_id"),
                     "cluster_first_sort_index": review.get("cluster_first_sort_index", review["sort_index"]),
                     "cluster_last_sort_index": review.get("cluster_last_sort_index", review["sort_index"]),

@@ -57,17 +57,17 @@
 \begin{abstract}
 How can surveillance data isolate order-book sequences that are compatible with spoofing without treating ordinary
 liquidity provision as manipulation? We address this question with an auditable microstructure framework that reconstructs
-the visible limit order book and groups related execution messages into a single analytical execution. An execution is anchored either by the
+the visible limit order book and groups related execution messages into an execution cluster. A cluster is anchored either by the
 actor's passive resting-order execution or by the actor's aggressive execution. We attribute orders through the original
-client code when it is available and otherwise through the firm identifier, while preserving the identity level. For each
-execution, the candidate set comprises the same actor's opposite-side orders that are active in the top $10$ ranks immediately
-before the first execution and were first observed no more than $90$ seconds earlier. The strict gate passes only when four
-conditions hold simultaneously: cancellation of at least one candidate order is canonically assigned within $2$ seconds; attributed
-withdrawal exceeds execution quantity; observed favorable pre-execution midprice movement is positive; and
+client code when it is available and otherwise through the firm identifier, while preserving the identity level. For each execution cluster, the candidate set comprises the same actor's opposite-side orders that are active in the top $10$ ranks immediately
+before the first execution and were first observed no more than $90$ seconds earlier. Clusters of the same actor, side, trading
+partition, and date that share a candidate-order lifecycle form one candidate-posture episode. The strict gate passes only when four
+conditions hold jointly at episode level: at least one unique candidate-order cancellation is canonically assigned within $2$ seconds; attributed
+withdrawal exceeds total episode execution quantity; observed favorable post-publication midprice movement is positive; and
 observed cancel-anchored midprice reversion is positive over a $2$-second horizon. An empirical depth kernel weights visible
 liquidity by book rank. In the Risanamento, Nexi, and Ferrari samples, respectively, the reconstruction identifies
-\RisanamentoMatchedClusters{}, \NexiMatchedClusters{}, and \FerrariMatchedClusters{} matched executions, of which
-\RisanamentoCompatibleSequences{}, \NexiCompatibleSequences{}, and \FerrariCompatibleSequences{} satisfy the strict gate.
+\RisanamentoMatchedClusters{}, \NexiMatchedClusters{}, and \FerrariMatchedClusters{} matched execution clusters, while
+\RisanamentoCompatibleSequences{}, \NexiCompatibleSequences{}, and \FerrariCompatibleSequences{} distinct episodes satisfy the strict gate.
 Both passive and aggressive execution routes contribute to these sets. An exploratory comparison with $36$ timed external
 alert records yields $34$ distinct subject--instrument intervals after overlapping or endpoint-sharing records are merged.
 Every interval contains a recovered execution, $30$ contain an attributed withdrawal, and four contain a strict
@@ -132,13 +132,14 @@ which rapid cancellations also belong to the more specific sequence implied by t
 This paper asks whether the observable conjunction implied by the hypothesized mechanism can be reconstructed from
 participant-level messages without treating frequent cancellation itself as evidence of spoofing. Complete top-$10$
 resting-profile measures first describe the shape of an actor's displayed liquidity; these diagnostics do not determine
-eligibility. For each passive or aggressive execution, we then fix a candidate set of same-actor, opposite-side
-orders that are active in the top $10$ ranks and no more than $90$ seconds old. A matched execution has at least one cancellation
-of a candidate order canonically assigned within $2$ seconds. The strict four-condition gate additionally requires the
-attributed withdrawal to exceed execution quantity, observed favorable pre-execution midprice movement to be
+eligibility. For each passive or aggressive execution cluster, we then fix a candidate set of same-actor, opposite-side
+orders that are active in the top $10$ ranks and no more than $90$ seconds old. A matched cluster has at least one cancellation
+of a candidate order canonically assigned within $2$ seconds. Clusters connected through a shared candidate-order lifecycle
+form one candidate-posture episode. The strict four-condition gate additionally requires the episode's unique attributed
+withdrawal to exceed its total execution quantity, observed favorable post-publication midprice movement to be
 positive, and observed cancel-anchored midprice reversion to be positive over the $2$-second reversion horizon. Actor identity
 is a separate data problem, so we use the original client code when present and the firm identifier only as a fallback. Each
-physical cancellation is assigned to at most one execution.
+physical cancellation is assigned to at most one episode.
 
 The empirical reconstruction identifies rapid same-actor withdrawals in all three samples and after both execution routes.
 The full four-condition sequence is less common because it additionally requires attributed withdrawal to exceed
@@ -361,8 +362,8 @@ denominator.
 For timed records, we parse the source bounds at millisecond precision and include both endpoints. To place raw events on a
 common event-time axis, we use the first nonmissing timestamp in the source-field priority order \texttt{TRADETIME},
 \texttt{BOOKOUTTIME}, \texttt{BOOKIN}, and \texttt{SEQUENCETIME}. We recover an execution when at least one of its
-constituent execution messages lies inside the closed union interval; matched-withdrawal and strict status are then read from that
-execution's event-level diagnostics. The union interval, rather than each potentially overlapping source record, is therefore
+constituent execution messages lies inside the closed union interval. Matched-withdrawal status is read from the cluster
+diagnostics, whereas strict status is deduplicated by candidate-posture episode. The union interval, rather than each potentially overlapping source record, is therefore
 the observational unit for timed counts.
 
 We match each external subject in the identity namespace reported by the source. Consequently, an external firm can cover
@@ -394,8 +395,9 @@ well as canonical actor, order identifier, execution role, and side. Passive exe
 aggressive executions can span several traded prices under the same order and sweep. Consecutive constituent execution messages must be no more than
 $100$ milliseconds apart, with no intervening cancellation, modification, or new-order lifecycle event for the same order.
 The $100$-millisecond threshold is an operational choice, and the reported findings are conditional on it; sensitivity to
-alternative inter-execution-message gaps is not reported here. Raw-message identifiers and the constituent messages assigned to each execution remain available as
-provenance, while executions form the analytical unit for event metrics and actor--partition aggregation. The
+alternative inter-execution-message gaps is not reported here. Raw-message identifiers and the constituent messages assigned to each execution cluster remain available as
+provenance. Cluster-level quantities remain diagnostic; connected clusters that share a candidate-order lifecycle are evaluated
+jointly as one candidate-posture episode, and actor--day recurrence counts distinct episodes. The
 resulting surveillance dossiers support analyst review and are not enforcement labels.
 
 \section{Model}
@@ -537,8 +539,9 @@ evidence of spoofing, just as a passive anchor is not evidence of legitimate mar
 
 These three states illustrate the hypothesized mechanism; their qualitative descriptors do not define strict-set
 membership. For either execution route, the candidate set consists of same-actor, opposite-side orders observed in the top
-$10$ ranks before the execution and satisfying the $90$-second age limit. A cancellation within $2$ seconds supplies rapid
-matched-withdrawal evidence. The strict gate then requires attributed withdrawal to exceed execution quantity and both
+$10$ ranks before an execution cluster and satisfying the $90$-second age limit. A cancellation within $2$ seconds supplies rapid
+matched-withdrawal evidence. Clusters sharing a candidate posture are evaluated jointly; the strict gate then requires unique
+attributed withdrawal to exceed total episode execution quantity and both
 midprice response diagnostics to be positive. The detector observes these conditions, not the participant's intent or the
 profile's causal effect on other traders. The recency restriction prevents long-lived liquidity from entering a candidate
 episode solely because it was already resting in the book.
@@ -1237,7 +1240,7 @@ tables and the event gate use the midprice versions. We report price responses s
 quantities, and rates instead of multiplying all components into one detector. Withdrawal variables describe the
 reconstructed message sequence. The variables $\operatorname{FPM}$, $\operatorname{REV}$, and $\operatorname{ADV}$
 describe the associated price path. This separation distinguishes repeated conditional withdrawals without a favorable
-price response from episodes that also exhibit favorable pre-execution movement and post-cancellation reversion.
+price response from episodes that also exhibit favorable post-publication movement and post-cancellation reversion.
 
 \subsubsection{Event Reconstruction}
 \label{subsec:event_reconstruction}
@@ -1247,7 +1250,7 @@ when the best quote moves even though its owner has neither modified nor cancell
 confound repricing of the surrounding book with withdrawal by the participant. The reconstruction follows the economic
 sequence from actor identification to execution, withdrawal, and price response:
 \begin{enumerate}
-    \item Resolve the canonical actor and classify each execution message as exclusively passive or aggressive. Construct execution $c$
+    \item Resolve the canonical actor and classify each execution message as exclusively passive or aggressive. Construct execution cluster $c$
     from compatible constituent execution messages while preserving the ordered mapping to raw messages.
     \item Reconstruct all active orders of actor $i$ immediately before $t_c^{\mathrm{start}}$, assign them to side and
     rank, and compute the unrestricted $L^{i,b}_{n}(t_c^{-})$, $L^{i,a}_{n}(t_c^{-})$, and
@@ -1261,22 +1264,28 @@ sequence from actor identification to execution, withdrawal, and price response:
     candidate order's pre-execution visible quantity using \cref{eq:attributed_cancel_quantity}.
     \item Compute SCI, side-specific collapse, and MSCI from the unrestricted resting-profile states at $t_c^{-}$ and
     $t_c^{+}$.
-    \item Report assigned withdrawal quantity, withdrawal-to-execution ratio, removed-profile fraction, and WMSCI. Use WMSCI
-    to order event-level candidates for human review without applying it as a strict-gate threshold.
+    \item Report cluster-level assigned withdrawal quantity, withdrawal-to-execution ratio, removed-profile fraction, and WMSCI. Use WMSCI
+    to order cluster diagnostics for human review without applying it as a strict-gate threshold.
     \item Compute signed price diagnostics from the first candidate-layer posting, through the execution, to the
     post-cancellation window.
-    \item Summarize repeated behavior with execution counts and actor-level recurrence diagnostics. Retain raw constituent execution
-    messages as provenance.
+    \item Within one actor, execution side, trading partition, and recorded event date, connect clusters that share at least one
+    candidate-order lifecycle. Each connected component is one candidate-posture episode $e$; passive and aggressive cluster
+    membership remains explicit, and a physical cancellation contributes once.
+    \item Summarize repeated behavior with distinct episode counts at actor--day level. Retain clusters and their raw constituent
+    execution messages as provenance.
 \end{enumerate}
 This procedure is designed to distinguish ordinary book repricing from withdrawal of participant-attributed candidate
-liquidity. Canonical assignment ensures that one physical cancellation does not inflate the metrics of several neighboring
-executions under the stated eligibility rule.
+liquidity. Canonical assignment and episode-level deduplication ensure that one physical cancellation does not inflate the metrics of
+several neighboring clusters under the stated eligibility rule.
 
-The event-level \textit{spoofing-compatible sequence} gate passes only when four conditions hold simultaneously:
-(i) at least one eligible opposite-side cancellation is canonically assigned within $2$ seconds of the execution;
-(ii) the finite attributed withdrawal exceeds the positive execution quantity,
-$U^{i}_{c,n}>Q_c$; (iii) the observed midprice $\operatorname{FPM}^{i}_{c}$ is strictly positive; and (iv) the observed
-cancel-anchored midprice $\operatorname{REV}^{i}_{c}$ is strictly positive. A missing or right-censored price diagnostic
+For episode $e$, let $\mathcal{C}_e$ be its cluster set, $Q_e=\sum_{c\in\mathcal{C}_e}Q_c$ its total execution quantity,
+and $U_e$ the sum of unique attributed physical cancellations. We aggregate $\operatorname{FPM}_e$ across all member clusters
+with execution-quantity weights and $\operatorname{REV}_e$ across unique withdrawals with the stated quantity-and-delay
+weights. These episode diagnostics are available only when every required member observation is covered. The
+\textit{spoofing-compatible sequence} gate passes only when four conditions hold simultaneously:
+(i) at least one eligible opposite-side cancellation is canonically assigned within $2$ seconds of a member execution;
+(ii) $U_e>Q_e>0$; (iii) the observed midprice $\operatorname{FPM}_e$ is strictly positive; and (iv) the observed
+cancel-anchored midprice $\operatorname{REV}_e$ is strictly positive. A missing or right-censored price diagnostic
 fails the conjunction. This transparent rule supports analyst triage; it is descriptive and is not a statistical test,
 manipulation label, or proof of intent.
 
@@ -1293,9 +1302,9 @@ instrument. Withdrawal and price-response components remain separate rather than
 The broad rate in \cref{fig:actor_cancellation_rank} counts any qualifying opposite-side cancellation after an execution.
 The results below narrow that behavior to cancellations of the fixed, age-conditioned candidate set and assign each physical
 cancellation canonically. These matched same-actor withdrawals occur in all three samples and after both passive and
-aggressive executions. The complete
-strict sequence is necessarily a smaller subset because, in addition to rapid canonical matching, it requires
-$U^{i}_{c,n}>Q_c$, positive favorable pre-execution movement, and positive cancel-anchored reversion.
+aggressive execution clusters. Clusters sharing a candidate-order lifecycle are then evaluated jointly. The complete
+strict episode is necessarily a smaller subset because, in addition to rapid canonical matching, it requires
+$U_e>Q_e$, positive favorable post-publication movement, and positive cancel-anchored reversion.
 \Cref{tab:empirical_spoofing_diagnostics} reports this narrowing under the same actor-wide top-$10$ state and
 age-conditioned candidate-order reconstruction. Each instrument uses its full-sample empirical kernel from
 \cref{tab:empirical_depth_kernel_calibration} with kernel horizon $H=10$ seconds.
@@ -1305,23 +1314,24 @@ of a same-actor, opposite-side candidate order. The separate $10$-second interva
 The attributed cancellation quantity cannot exceed the candidate order's visible quantity before execution, while the raw
 cancellation-time quantity remains available for audit. The table distinguishes executions from their raw constituent execution
 messages and counts each assigned physical cancellation once. The firm-fallback column records the coarser cases in which the
-original client code is missing. The strict column then retains matched executions that also satisfy the withdrawal-size and two
-price-response conditions. These quantities are descriptive screening diagnostics, not manipulation labels or evidence of
-intent.
+original client code is missing. The strict column reports episode participation in each anchor branch; mixed-anchor episodes therefore appear in both branch
+rows but are counted once in instrument-level strict totals. These quantities are descriptive screening diagnostics, not
+manipulation labels or evidence of intent.
 
 \InputIfFileExists{generated/spoofing_empirical_tables.tex}{}{%
     \fbox{\parbox{0.9\textwidth}{Run \texttt{scripts/generate\_spoofing\_paper\_tables.py} to generate the empirical tables.}}%
 }
 \FloatBarrier
 
-The main empirical pattern is a gap between mechanical matching and the complete price-consistent sequence. The
-reconstruction identifies \FerrariMatchedClusters{} matched executions for Ferrari, \NexiMatchedClusters{} for Nexi, and
+The main empirical pattern is a gap between mechanical matching and the complete price-consistent episode. The
+reconstruction identifies \FerrariMatchedClusters{} matched execution clusters for Ferrari, \NexiMatchedClusters{} for Nexi, and
 \RisanamentoMatchedClusters{} for Risanamento. The strict gate retains \FerrariCompatibleSequences{},
-\NexiCompatibleSequences{}, and \RisanamentoCompatibleSequences{}, respectively. Favorable pre-execution movement is
-positive in \FerrariFPMShare{}, \NexiFPMShare{}, and \RisanamentoFPMShare{} of observed matched executions, whereas positive
+\NexiCompatibleSequences{}, and \RisanamentoCompatibleSequences{} distinct episodes, respectively. Favorable
+post-publication movement is
+positive in \FerrariFPMShare{}, \NexiFPMShare{}, and \RisanamentoFPMShare{} of observed matched clusters, whereas positive
 reversion occurs in \FerrariREVShare{}, \NexiREVShare{}, and \RisanamentoREVShare{}. Thus, the withdrawal condition is not
 being used as a substitute for the full hypothesized price path. These are marginal shares among observed matched-execution
-diagnostics and do not decompose strict-set attrition across the jointly required conditions.
+diagnostics and do not decompose episode-level strict-set attrition across the jointly required conditions.
 
 These empirical quantities are direct reconstruction counts and conditional descriptive shares. No counterfactual
 comparison or inferential test is applied. The table therefore does not provide $p$-values, confidence intervals, or evidence
@@ -1329,21 +1339,21 @@ that withdrawal is more likely after the focal actor's own execution than under 
 condition.
 
 \paragraph{Event-accounting denominators.}
-\Cref{tab:empirical_spoofing_diagnostics} reports raw-execution provenance, execution-anchor composition, firm-fallback counts,
-and uniquely assigned physical cancellations for each instrument. Raw execution messages provide provenance, whereas
-executions are the analytical unit for all conditional shares.
+\Cref{tab:empirical_spoofing_diagnostics} reports raw-execution provenance, execution-cluster composition, firm-fallback counts,
+and uniquely assigned physical cancellations for each instrument. Cluster rows provide branch-specific diagnostics; distinct
+candidate-posture episodes are the strict detection and actor--day recurrence unit.
 
 \subsection{Risanamento}
 \label{subsec:risanamento_results}
 
-Risanamento has the smallest matched set, and only \RisanamentoCompatibleSequences{} executions satisfy the strict
-four-condition gate. Favorable pre-execution movement is nevertheless positive in \RisanamentoFPMShare{} of matched executions
-with an observed diagnostic. Among matched executions with an observed reversion diagnostic, \RisanamentoREVShare{} have
-positive cancel-anchored reversion. The strict gate additionally requires positive favorable pre-execution movement and
-attributed withdrawal exceeding execution quantity, so these marginal shares do not identify which requirement excludes any
-particular matched execution.
+Risanamento has the smallest matched set, and only \RisanamentoCompatibleSequences{} distinct episodes satisfy the strict
+four-condition gate. Favorable post-publication movement is nevertheless positive in \RisanamentoFPMShare{} of matched clusters
+with an observed diagnostic. Among matched clusters with an observed reversion diagnostic, \RisanamentoREVShare{} have
+positive cancel-anchored reversion. The strict gate additionally requires positive favorable post-publication movement and
+unique attributed withdrawal exceeding total episode execution quantity, so these marginal shares do not identify which requirement excludes any
+particular matched episode.
 
-For each of the \RisanamentoMatchedClusters{} matched executions, the review record preserves an execution-first dossier and a
+For each of the \RisanamentoMatchedClusters{} matched clusters, the review record preserves an episode-first dossier and a
 reconstructed top-$10$ event window. These records organize observed facts, counter-evidence, and legitimate alternatives.
 They are triage aids, not empirical labels or proof of manipulation.
 
@@ -1351,8 +1361,8 @@ They are triage aids, not empirical labels or proof of manipulation.
 \label{subsec:nexi_results}
 
 Nexi exhibits matched withdrawals after both execution routes, but the full price-consistent path remains a subset.
-Reconstruction identifies \NexiMatchedClusters{} matched executions, of which \NexiCompatibleSequences{} pass the strict gate.
-Positive favorable pre-execution movement occurs in \NexiFPMShare{} of matched executions with an observed diagnostic, while
+Reconstruction identifies \NexiMatchedClusters{} matched execution clusters, while \NexiCompatibleSequences{} distinct episodes pass the strict gate.
+Positive favorable post-publication movement occurs in \NexiFPMShare{} of matched clusters with an observed diagnostic, while
 positive cancel-anchored reversion occurs in \NexiREVShare{}.
 
 Differences from the other instruments are not causal contrasts because the samples cover different periods and actor
@@ -1362,8 +1372,8 @@ compositions.
 \label{subsec:ferrari_results}
 
 Ferrari has the largest matched set, with contributions from both passive and aggressive execution anchors.
-Reconstruction identifies \FerrariMatchedClusters{} matched executions, and \FerrariCompatibleSequences{} pass the strict
-gate. Among observed matched-execution diagnostics, the shares with positive favorable pre-execution movement and positive
+Reconstruction identifies \FerrariMatchedClusters{} matched execution clusters, and \FerrariCompatibleSequences{} distinct episodes pass the strict
+gate. Among observed matched-cluster diagnostics, the shares with positive favorable post-publication movement and positive
 reversion are \FerrariFPMShare{} and \FerrariREVShare{}.
 
 These are descriptive screening outcomes, not manipulation labels or prevalence estimates.
@@ -1375,7 +1385,7 @@ Recurrence is informative only when actor identity and execution role remain exp
 in identity resolution, matched-execution count, withdrawal scale, and price-path composition. \Cref{tab:top_actor_results}
 therefore reports the three largest groups in each instrument by matched-execution count rather than collapsing them into one
 actor score. An actor is either an original client code or, only when that code is missing, a firm identifier. W/E maximum is
-the largest matched withdrawal-to-execution ratio within the group; FPM$+$ and REV$+$ are the shares of matched executions with
+the largest matched withdrawal-to-execution ratio within the group; FPM$+$ and REV$+$ are the shares of matched clusters with
 positive midprice favorable movement and reversion.
 
 \InputIfFileExists{generated/spoofing_actor_table.tex}{}{%
@@ -1412,8 +1422,8 @@ contain raw subject activity and at least one recovered execution, while $30$ co
 \centering
 \caption{Coverage of externally supplied timed alert records. Overlapping or endpoint-sharing records are merged only within
 the same instrument and external subject. Execution counts intervals containing at least one execution with a constituent execution message inside
-the closed union interval. Withdrawal and strict-scope columns count intervals containing at least one execution with the
-corresponding event-level diagnostic. Strict subject scope requires at least one execution in the interval to satisfy all four
+the closed union interval. Withdrawal columns count intervals containing at least one matched execution cluster, while strict-scope columns count intervals
+containing at least one strict candidate-posture episode. Strict subject scope requires at least one episode in the interval to satisfy all four
 gate conditions. The final column reports strict overlaps among intervals whose external
 identity maps to one canonical actor at the same granularity; entries report strict intervals divided by identity-aligned
 intervals. The date-only Risanamento record is excluded from all timed denominators.}
@@ -1455,8 +1465,8 @@ operational definitions. It cannot, by itself, identify false negatives, false p
 \label{sec:discussion_conclusion}
 
 The main empirical finding is that rapid same-actor withdrawal is broader than the complete spoofing-compatible sequence.
-Matched episodes occur after both passive and aggressive executions in all three samples. Only a subset also exhibits the
-required withdrawal size, favorable pre-execution movement, and post-cancellation reversion. This distinction matters
+Matched episodes occur after both passive and aggressive execution clusters in all three samples. Only a subset also exhibits the
+required withdrawal size, favorable post-publication movement, and post-cancellation reversion. This distinction matters
 because it prevents a high cancellation rate or a large withdrawal from standing in for the full mechanism.
 
 The external-alert coverage audit reinforces this separation. The reconstruction covers execution in all $34$ distinct timed
