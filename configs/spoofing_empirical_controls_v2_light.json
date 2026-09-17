@@ -1,0 +1,19 @@
+{
+  "design_version": "empirical_controls_v2_light",
+  "output_root": null,
+  "clock": {
+    "event_timestamp_precedence": ["TRADETIME", "BOOKOUTTIME", "BOOKIN", "SEQUENCETIME"],
+    "stable_sort_columns": ["TRADEDATE", "MIC", "MARKETCODE", "SYMBOLINDEX", "EMM (*)", "SEQUENCETIME", "HDR_APPLKEYSEQUENCENUMBER", "HDR_HWMSEQUENCENUMBER", "HDR_OFFSETID", "BOOKIN", "BOOKOUTTIME", "TRADETIME", "ROW_NUMBER"],
+    "partition_columns": ["TRADEDATE", "MIC", "MARKETCODE", "SYMBOLINDEX", "EMM (*)"],
+    "risk_clock_regression_policy": "quarantine_until_prior_accepted_high_watermark_never_reorder_or_clamp",
+    "timezone": "source_clock_timezone_unknown"
+  },
+  "eligibility": {"top_n": 10, "max_order_age_seconds": 90.0, "outcome_selection": "forbidden"},
+  "window_seconds": 2.0,
+  "time_band_seconds": 1800,
+  "offset_seconds": [-60, -30, 0, 30, 60],
+  "identity_mode": "client_then_firm",
+  "execution_anchor_modes": ["passive", "aggressive"],
+  "resources": {"buffer_rows": null, "max_rss_mb": null, "timeout_seconds": null},
+  "baseline_runs": {}
+}

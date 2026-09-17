@@ -1,0 +1,219 @@
+{
+  "design_version": "empirical_controls_v1",
+  "output_root": "outputs/spoofing_empirical_controls/20260909_empirical_controls_v1",
+  "clock": {
+    "event_timestamp_precedence": ["TRADETIME", "BOOKOUTTIME", "BOOKIN", "SEQUENCETIME"],
+    "partition_columns": ["TRADEDATE", "MIC", "MARKETCODE", "SYMBOLINDEX", "EMM (*)"],
+    "stable_sort_columns": [
+      "TRADEDATE", "MIC", "MARKETCODE", "SYMBOLINDEX", "EMM (*)", "SEQUENCETIME",
+      "HDR_APPLKEYSEQUENCENUMBER", "HDR_HWMSEQUENCENUMBER", "HDR_OFFSETID", "BOOKIN",
+      "BOOKOUTTIME", "TRADETIME", "ROW_NUMBER"
+    ],
+    "sort_index_policy": "sort_index_is_derived_after_canonical_stable_sort",
+    "risk_clock_regression_policy": "quarantine_until_prior_accepted_high_watermark_never_reorder_or_clamp"
+  },
+  "horizons": {
+    "anchor": "execution_cluster_end",
+    "withdrawal_window_seconds": 2.0,
+    "reversion_horizon_seconds": 2.0,
+    "inclusive_upper_bound": true,
+    "boundary_policy": "no_cross_instrument_partition_or_day_horizons"
+  },
+  "eligibility_policy": {
+    "active_visible_only": true,
+    "state_timing": "pre_event",
+    "top_n": 10,
+    "max_order_age_seconds": 90.0,
+    "outcome_or_gate_selection": "forbidden"
+  },
+  "strata": {
+    "block_columns": [
+      "instrument",
+      "HDR_PARTITIONID",
+      "TRADEDATE",
+      "actor_key",
+      "posture_side"
+    ],
+    "allow_cross_boundary": false,
+    "execution_anchor_modes": ["passive", "aggressive"],
+    "identity_mode": "client_then_firm",
+    "activity_bands": [
+      {"name": "opening", "start_time": "09:00:00", "end_time": "10:00:00"},
+      {"name": "continuous", "start_time": "10:00:00", "end_time": "16:30:00"},
+      {"name": "closing", "start_time": "16:30:00", "end_time": "17:35:00"}
+    ]
+  },
+  "seed": 20260909,
+  "placebo_draws": 1000,
+  "comparability": {
+    "version": "pre_anchor_covariates_v1",
+    "anchor": "exposure_contrast_start",
+    "quote_boundary_policy": "latest_same_partition_at_or_before_anchor_pre_state_canonical_sort_tiebreak",
+    "history_window_seconds": 60.0,
+    "history_interval": "[anchor-60s,anchor)",
+    "outcomes_used": false,
+    "matching": "forbidden",
+    "adjusted_effect": "forbidden"
+  },
+  "output_schema": {
+    "risk_spells": [
+      "risk_spell_id",
+      "instrument",
+      "partition_id",
+      "event_date",
+      "actor_key",
+      "posture_side"
+    ],
+    "risk_intervals": [
+      "risk_interval_id",
+      "risk_spell_id",
+      "execution_anchor_mode",
+      "duration_seconds"
+    ],
+    "exposure_intervals": [
+      "execution_anchor_mode",
+      "exposure_mask",
+      "duration_seconds"
+    ],
+    "risk_membership": [
+      "risk_membership_id", "physical_order_key", "duration_seconds"
+    ],
+    "withdrawal_events": [
+      "withdrawal_event_id", "physical_order_key", "visible_qty_removed"
+    ],
+    "episode_risk_links": [
+      "instrument", "episode_id", "execution_cluster_id", "risk_spell_id",
+      "risk_interval_id", "physical_order_key"
+    ],
+    "placebo_schedules": [
+      "draw_id", "schedule_block_id", "accepted", "rejection_reason"
+    ],
+    "placebo_support": [
+      "draw_id", "schedule_block_id", "accepted", "rejection_reason"
+    ],
+    "placebo_statistics": [
+      "draw_id", "row_kind", "time_at_risk_seconds", "withdrawal_count"
+    ],
+    "coverage_and_balance": [
+      "instrument", "event_date", "time_at_risk_seconds", "withdrawal_count"
+    ],
+    "clock_coverage_audit": [
+      "instrument",
+      "partition_id",
+      "event_date",
+      "total_event_count",
+      "accepted_event_count",
+      "missing_timestamp_event_count",
+      "clock_regression_event_count",
+      "quarantined_event_count",
+      "quarantine_episode_count",
+      "recovered_quarantine_episode_count",
+      "recovered_quarantine_duration_seconds",
+      "unquantified_quarantine_event_count",
+      "open_quarantine_at_end_flag",
+      "first_accepted_ts",
+      "last_accepted_ts",
+      "observed_accepted_span_seconds",
+      "time_at_risk_seconds",
+      "coverage_loss_fraction",
+      "terminal_right_censored_spell_count",
+      "partition_boundary_censored_spell_count",
+      "clock_ambiguous_censored_spell_count"
+    ],
+    "pre_event_covariates": [
+      "risk_interval_id", "contrast_label", "anchor_ts", "eligible_visible_qty",
+      "member_count", "mean_member_age_seconds", "oldest_member_age_seconds",
+      "pre_spread_ticks", "pre_total_depth", "prior_event_count_60s",
+      "pre_mid_log_return_sd_60s", "activity_band", "snapshot_sort_index",
+      "anchor_sort_index", "missing_reasons"
+    ],
+    "common_support_audit": [
+      "instrument", "event_date", "identity_level", "side", "comparison_label",
+      "covariate", "total_seconds", "supported_seconds", "outside_support_seconds",
+      "support_established", "supported", "null_fraction"
+    ],
+    "stratum_statistics": [
+      "instrument", "contrast_label", "time_at_risk_seconds", "withdrawal_count"
+    ]
+  },
+  "baseline_runs": {
+    "FERRARI": {
+      "baseline_metadata": "outputs/spoofing_metrics/20260908_160831_candidate_posture_episodes/FERRARI_top10_h10_age90/metadata.json",
+      "source_paths": {
+        "raw_events": "data/ExportGridData_2026-05-19_130707032_FERRARI_13062024_FG.parquet",
+        "quote_panel": "outputs/lob_reconstruction/20260618_105229_all_files_validation_post_warning_fix/ExportGridData_2026-05-19_130707032_FERRARI_13062024_FG/lob_event_state_panel.parquet",
+        "empirical_depth_kernel": "outputs/depth_kernel_calibration/20260717_145624_rank_pooled_top10_h10/FERRARI_top10_h10/empirical_depth_kernel.parquet",
+        "baseline_config": "outputs/spoofing_metrics/20260908_160831_candidate_posture_episodes/configs/FERRARI_spoofing_parameters.json"
+      },
+      "source_hashes": {
+        "baseline_metadata_sha256": "3ab4b75d9dc5219f18f20307cf6ee8d0a32a379a2978e39f3750aab5b545131d",
+        "raw_events_sha256": "7f75917dd40ea51601e107863e4d21605f84d42975d9c2a5721633f62e747de9",
+        "quote_panel_sha256": "7bc7e2c20787f6c3235576bd84cdcd79c308297d79c9e837998de84eba91e0e1",
+        "empirical_depth_kernel_sha256": "fc34ec33f33ec3c3c7f8b4b21c0c278e9ef57a602b62e0c75d99c4f78330a500",
+        "baseline_config_sha256": "47154e00dc5ff285d10d164fe675fceb19d40c22a4213c768edb040b9d0aad38"
+      },
+      "selected_event_dates": ["2024-06-13"]
+    },
+    "NEXI": {
+      "baseline_metadata": "outputs/spoofing_metrics/20260908_160831_candidate_posture_episodes/NEXI_top10_h10_age90/metadata.json",
+      "source_paths": {
+        "raw_events": "data/ExportGridData_2026-05-20_102249466_NEXI_23042024_FG.parquet",
+        "quote_panel": "outputs/lob_reconstruction/20260618_105229_all_files_validation_post_warning_fix/ExportGridData_2026-05-20_102249466_NEXI_23042024_FG/lob_event_state_panel.parquet",
+        "empirical_depth_kernel": "outputs/depth_kernel_calibration/20260717_145624_rank_pooled_top10_h10/NEXI_top10_h10/empirical_depth_kernel.parquet",
+        "baseline_config": "outputs/spoofing_metrics/20260908_160831_candidate_posture_episodes/configs/NEXI_spoofing_parameters.json"
+      },
+      "source_hashes": {
+        "baseline_metadata_sha256": "2051699f298b882587c5671326b9f185ca9ec36d00f811c6f455320589c33c51",
+        "raw_events_sha256": "59825fdb47079d96cb83cec1de495f4d4f0243fcef2086aa343613f92cdd47b1",
+        "quote_panel_sha256": "7fc6633835199e5662152cfd8a598738f69afe2334266944bac7f519ab6cf577",
+        "empirical_depth_kernel_sha256": "3451dc0cc4495737f67d119ba1f8b20c4d18ac60f3f01959a37746757a562ef3",
+        "baseline_config_sha256": "218d4e00b2ac28933f353e93414bc08947e37baa6588df82eaf3252b731bda1b"
+      },
+      "selected_event_dates": ["2024-04-23"]
+    },
+    "RISANAMENTO": {
+      "baseline_metadata": "outputs/spoofing_metrics/20260908_160831_candidate_posture_episodes/RISANAMENTO_top10_h10_age90/metadata.json",
+      "source_paths": {
+        "raw_events": "data/ExportGridData_2026-05-20_090247703_RISANAMENTO_01062024_30112024_FG.parquet",
+        "quote_panel": "outputs/lob_reconstruction/20260618_105229_all_files_validation_post_warning_fix/ExportGridData_2026-05-20_090247703_RISANAMENTO_01062024_30112024_FG/lob_event_state_panel.parquet",
+        "empirical_depth_kernel": "outputs/depth_kernel_calibration/20260717_145624_rank_pooled_top10_h10/RISANAMENTO_top10_h10/empirical_depth_kernel.parquet",
+        "baseline_config": "outputs/spoofing_metrics/20260908_160831_candidate_posture_episodes/configs/RISANAMENTO_spoofing_parameters.json"
+      },
+      "source_hashes": {
+        "baseline_metadata_sha256": "69b28dd944ecca6db88332b84728d3e99551c9436e9e5ef853af47fdd87f592d",
+        "raw_events_sha256": "ea01a6894ca71dd81e88946cfd4f1e76a945badad16a2ce3e047f75b78f673c1",
+        "quote_panel_sha256": "0b0ed6c151d92d5cc310e37df53caa6a5ce682163e9653d8068fe3ea7e4a4fda",
+        "empirical_depth_kernel_sha256": "c9c5acfb910b37eba889957bdd4704e8adf2184adafb5e3938f94418fa1e7746",
+        "baseline_config_sha256": "eb25d80f00f832fee1d510fa023be999c428abcfbda4085f70e562b46527f8ce"
+      },
+      "selected_event_dates": [
+        "2024-06-03", "2024-06-04", "2024-06-05", "2024-06-06", "2024-06-07",
+        "2024-06-10", "2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14",
+        "2024-06-17", "2024-06-18", "2024-06-19", "2024-06-20", "2024-06-21",
+        "2024-06-24", "2024-06-25", "2024-06-26", "2024-06-27", "2024-06-28",
+        "2024-07-01", "2024-07-02", "2024-07-03", "2024-07-04", "2024-07-05",
+        "2024-07-08", "2024-07-09", "2024-07-10", "2024-07-11", "2024-07-12",
+        "2024-07-15", "2024-07-16", "2024-07-17", "2024-07-18", "2024-07-19",
+        "2024-07-22", "2024-07-23", "2024-07-24", "2024-07-25", "2024-07-26",
+        "2024-07-29", "2024-07-30", "2024-07-31", "2024-08-01", "2024-08-02",
+        "2024-08-05", "2024-08-06", "2024-08-07", "2024-08-08", "2024-08-09",
+        "2024-08-12", "2024-08-13", "2024-08-14", "2024-08-15", "2024-08-16",
+        "2024-08-19", "2024-08-20", "2024-08-21", "2024-08-22", "2024-08-23",
+        "2024-08-26", "2024-08-27", "2024-08-28", "2024-08-29", "2024-08-30",
+        "2024-09-02", "2024-09-03", "2024-09-04", "2024-09-05", "2024-09-06",
+        "2024-09-09", "2024-09-10", "2024-09-11", "2024-09-12", "2024-09-13",
+        "2024-09-16", "2024-09-17", "2024-09-18", "2024-09-19", "2024-09-20",
+        "2024-09-23", "2024-09-24", "2024-09-25", "2024-09-26", "2024-09-27",
+        "2024-09-30", "2024-10-01", "2024-10-02", "2024-10-03", "2024-10-04",
+        "2024-10-07", "2024-10-08", "2024-10-09", "2024-10-10", "2024-10-11",
+        "2024-10-14", "2024-10-15", "2024-10-16", "2024-10-17", "2024-10-18",
+        "2024-10-21", "2024-10-22", "2024-10-23", "2024-10-24", "2024-10-25",
+        "2024-10-28", "2024-10-29", "2024-10-30", "2024-10-31", "2024-11-01",
+        "2024-11-04", "2024-11-05", "2024-11-06", "2024-11-07", "2024-11-08",
+        "2024-11-11", "2024-11-12", "2024-11-13", "2024-11-14", "2024-11-15",
+        "2024-11-18", "2024-11-19", "2024-11-20", "2024-11-21", "2024-11-22",
+        "2024-11-25", "2024-11-26", "2024-11-27", "2024-11-28", "2024-11-29"
+      ]
+    }
+  }
+}
