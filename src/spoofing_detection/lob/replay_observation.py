@@ -14,6 +14,7 @@ from spoofing_detection.lob.panel import (
     ReplayHooks,
     replay_events,
 )
+from spoofing_detection.lob.spoofing_clock import resolve_spoofing_clocks
 
 EVENT_TIMESTAMP_PRECEDENCE = ("TRADETIME", "BOOKOUTTIME", "BOOKIN", "SEQUENCETIME")
 
@@ -85,6 +86,9 @@ class ReplayObservation:
 
     partition_id: str | None
     sort_index: int
+    replay_time_ns: int | None
+    fill_anchor_ns: int | None
+    cancellation_removal_ns: int | None
     event_ts: datetime | None
     event: Mapping[str, Any]
     pre_active_orders: Mapping[str, ReplayOrder]
@@ -136,6 +140,7 @@ def replay_lob(
     max_rows: int | None = None,
     observer: ReplayObserver | None = None,
     retain_events: bool = True,
+    require_v3_clocks: bool = False,
 ) -> tuple[dict[str, Any], ...]:
     """Replay canonical LOB state and optionally observe immutable event boundaries.
 
@@ -144,7 +149,7 @@ def replay_lob(
     Observations are emitted after the event's post-flush boundary; their pre and
     post order maps contain frozen value copies, never the live active-order map.
     """
-    if observer is None:
+    if observer is None and not require_v3_clocks:
         return replay_events(
             raw_events,
             config=config,
@@ -153,20 +158,32 @@ def replay_lob(
         )
 
     pre_active_orders: Mapping[str, ReplayOrder] = MappingProxyType({})
+    observer = observer or (lambda observation: None)
 
     def on_pre_event(
         event: dict[str, Any], active_orders: dict[str, ActiveOrder], partition_id: str | None
     ) -> None:
         nonlocal pre_active_orders
+        if require_v3_clocks:
+            incompatibilities = resolve_spoofing_clocks(event).incompatibilities
+            if incompatibilities:
+                raise ValueError(
+                    "v3 clock incompatibilities before book mutation: "
+                    + ", ".join(incompatibilities)
+                )
         pre_active_orders = _immutable_active_orders(active_orders)
 
     def on_post_event(
         event: dict[str, Any], active_orders: dict[str, ActiveOrder], partition_id: str | None, mutation_flags: list[str]
     ) -> None:
+        clocks = resolve_spoofing_clocks(event)
         observer(
             ReplayObservation(
                 partition_id=partition_id,
                 sort_index=int(event["sort_index"]),
+                replay_time_ns=clocks.replay_time_ns,
+                fill_anchor_ns=clocks.fill_anchor_ns,
+                cancellation_removal_ns=clocks.cancellation_removal_ns,
                 event_ts=choose_event_timestamp(event),
                 event=MappingProxyType(dict(event)),
                 pre_active_orders=pre_active_orders,

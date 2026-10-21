@@ -40,6 +40,10 @@ class PendingExecutionCluster:
     last_sort_index: int
     start_ts: datetime
     end_ts: datetime
+    start_fill_anchor_ns: int | None = None
+    end_fill_anchor_ns: int | None = None
+    start_replay_time_ns: int | None = None
+    end_replay_time_ns: int | None = None
     first_event_id: Any = None
     last_event_id: Any = None
     weighted_price_notional: float = 0.0
@@ -64,6 +68,8 @@ class _FillDetails:
     price_source: str
     qty: float
     timestamp: datetime
+    fill_anchor_ns: int | None
+    replay_time_ns: int | None
     sort_index: int
 
 
@@ -80,6 +86,17 @@ def _as_sort_index(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _as_epoch_ns(value: Any) -> int | None:
+    """Accept only integral epoch nanoseconds for the explicit v3 fill clock."""
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _finite_positive(value: Any) -> float | None:
@@ -167,6 +184,8 @@ def _fill_details(fill: Mapping[str, Any], *, allowed_anchor_modes: frozenset[st
     order_id = _normalized_text(fill.get("ORDERID"))
     qty = _finite_positive(fill.get("LASTSHARES") if anchor == "aggressive" else fill.get("fill_qty"))
     timestamp = _as_datetime(fill.get("event_ts"))
+    fill_anchor_ns = _as_epoch_ns(fill.get("fill_anchor_ns"))
+    replay_time_ns = _as_epoch_ns(fill.get("replay_time_ns"))
     sort_index = _as_sort_index(fill.get("sort_index"))
     price_and_source = _fill_price(fill, anchor)
     if actor is None or side not in {"bid", "ask"} or order_id is None or qty is None or timestamp is None or sort_index is None or price_and_source is None:
@@ -183,6 +202,8 @@ def _fill_details(fill: Mapping[str, Any], *, allowed_anchor_modes: frozenset[st
         price_source=price_source,
         qty=qty,
         timestamp=timestamp,
+        fill_anchor_ns=fill_anchor_ns,
+        replay_time_ns=replay_time_ns,
         sort_index=sort_index,
     )
 
@@ -230,7 +251,14 @@ def can_extend_execution_cluster(
         return False
     if details.timestamp.date() != cluster.start_ts.date():
         return False
-    gap_ms = (details.timestamp - cluster.end_ts).total_seconds() * 1_000.0
+    if (details.fill_anchor_ns is None) != (cluster.end_fill_anchor_ns is None):
+        # Do not silently mix legacy timestamps and explicit v3 fill anchors.
+        return False
+    if details.fill_anchor_ns is not None:
+        assert cluster.end_fill_anchor_ns is not None
+        gap_ms = (details.fill_anchor_ns - cluster.end_fill_anchor_ns) / 1_000_000.0
+    else:
+        gap_ms = (details.timestamp - cluster.end_ts).total_seconds() * 1_000.0
     return 0 <= gap_ms <= max_gap_ms
 
 
@@ -252,6 +280,10 @@ def _start_cluster(fill: Mapping[str, Any], details: _FillDetails, *, legacy_clu
         last_sort_index=details.sort_index,
         start_ts=details.timestamp,
         end_ts=details.timestamp,
+        start_fill_anchor_ns=details.fill_anchor_ns,
+        end_fill_anchor_ns=details.fill_anchor_ns,
+        start_replay_time_ns=details.replay_time_ns,
+        end_replay_time_ns=details.replay_time_ns,
         first_event_id=fill.get("EVENTID"),
         last_event_id=fill.get("EVENTID"),
         weighted_price_notional=details.qty * details.price,
@@ -269,6 +301,8 @@ def _start_cluster(fill: Mapping[str, Any], details: _FillDetails, *, legacy_clu
 def _append_child(cluster: PendingExecutionCluster, fill: Mapping[str, Any], details: _FillDetails) -> None:
     cluster.last_sort_index = details.sort_index
     cluster.end_ts = details.timestamp
+    cluster.end_fill_anchor_ns = details.fill_anchor_ns
+    cluster.end_replay_time_ns = details.replay_time_ns
     cluster.last_event_id = fill.get("EVENTID")
     cluster.weighted_price_notional += details.qty * details.price
     cluster.fill_qty += details.qty
@@ -295,6 +329,8 @@ def _member_row(cluster_id: str, cluster: PendingExecutionCluster, fill: Mapping
         "child_fill_qty": fill["_cluster_qty"],
         "child_fill_price": fill["_cluster_price"],
         "child_event_ts": fill["_cluster_ts"],
+        "child_fill_anchor_ns": fill.get("fill_anchor_ns"),
+        "child_replay_time_ns": fill.get("replay_time_ns"),
         "child_execution_anchor_mode": cluster.execution_anchor_mode,
         "child_execution_price_source": fill["_cluster_price_source"],
         "child_execution_sweep_id": fill.get("execution_sweep_id"),
@@ -349,6 +385,10 @@ def finalize_execution_cluster(cluster: PendingExecutionCluster, *, gap_ms: int)
         "cluster_last_sort_index": cluster.last_sort_index,
         "cluster_start_ts": cluster.start_ts,
         "cluster_end_ts": cluster.end_ts,
+        "cluster_start_fill_anchor_ns": cluster.start_fill_anchor_ns,
+        "cluster_end_fill_anchor_ns": cluster.end_fill_anchor_ns,
+        "cluster_start_replay_time_ns": cluster.start_replay_time_ns,
+        "cluster_end_replay_time_ns": cluster.end_replay_time_ns,
         "child_fill_count": cluster.child_fill_count,
         "event_order_id": cluster.order_id,
         "event_side": cluster.side,

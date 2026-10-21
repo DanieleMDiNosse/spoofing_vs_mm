@@ -1,0 +1,29 @@
+{
+  "assignment_rule": "latest_prior_cluster_sort_index",
+  "candidate_age_seconds": 30.0,
+  "episode_role": "recomputed_shared_order_reporting_only_not_a_selection_gate",
+  "profile_window_seconds": 1.0,
+  "quantity_gate": "execution_level_U_over_Q_gt_1",
+  "reversion_coverage": "all_assigned_positive_quantity_cancellations_must_have_finite_REV",
+  "reversion_horizon_seconds": 2.0,
+  "schema": "h1_age30_withdrawal1_wmsci_price_pipeline_v2_complete_finite_rev",
+  "selection_order": [
+    "positive_W_exact_top_5pct",
+    "U_over_Q_gt_1",
+    "FPM_gt_0",
+    "REV_gt_0"
+  ],
+  "source_clock_contract": {
+    "cancellation_removal_clock": "SEQUENCETIME",
+    "duration_clock": "SEQUENCETIME",
+    "fill_anchor_clock": "TRADETIME",
+    "interval_convention": "left_closed_right_open",
+    "replay_clock": "SEQUENCETIME",
+    "semantic_fallback": "forbidden",
+    "timestamp_representation": "UTC epoch nanoseconds"
+  },
+  "source_clock_policy_id": "spoofing_detection_sequence_replay_trade_fill_sequence_cancel_v3_utc_provisional",
+  "source_output_schema_version": "actor_execution_anchor_v3_clocked",
+  "top_positive_w_fraction": 0.05,
+  "withdrawal_window_seconds": 1.0
+}

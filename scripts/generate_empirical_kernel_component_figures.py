@@ -299,7 +299,7 @@ def _render_visibility_figure(profile: pl.DataFrame, provenance: dict[str, Any])
                 y_unit_cm=y_unit_cm,
                 multiplier_exponent=exponent,
                 show_y_title=panel_index == 0,
-                y_title="visibility proxy $\\nu_k^{i,s}$",
+                y_title="visibility component $\\widetilde\\nu_k^{m,s}(H)$",
             )
         )
         lines.append(
@@ -333,9 +333,9 @@ def _render_visibility_figure(profile: pl.DataFrame, provenance: dict[str, Any])
             "(8.1,3.85) -- (8.8,3.85) node[right,font=\\footnotesize] {Bid};",
             "\\end{tikzpicture}%",
             "}",
-            "\\caption{Side-specific empirical visibility proxy by book rank. Each panel shows the stored "
-            "\\texttt{visibility\\_component} values from the full-sample top-$"
-            f"{top_n}$, $h={horizon}$-second calibration. Separate axis multipliers preserve the "
+            "\\caption{Side-specific empirical visibility component by book rank. Each panel shows the floored absolute covariance "
+            "$\\widetilde\\nu_k^{m,s}(H)$ from the full-sample top-$"
+            f"{top_n}$, $H={horizon}$-second calibration. Separate axis multipliers preserve the "
             "instrument-specific price units; vertical magnitudes should not be compared across instruments.}",
             "\\label{fig:empirical_topn_visibility_profiles}",
             "\\end{figure}",
@@ -370,7 +370,7 @@ def _render_execution_risk_figure(profile: pl.DataFrame, provenance: dict[str, A
                 y_unit_cm=y_unit_cm,
                 multiplier_exponent=None,
                 show_y_title=panel_index == 0,
-                y_title="execution-risk proxy $p_k^{i,s}$",
+                y_title="hit frequency $\\widehat p_k^{m,s}(H)$",
             )
         )
         lines.append(
@@ -404,10 +404,10 @@ def _render_execution_risk_figure(profile: pl.DataFrame, provenance: dict[str, A
             "(8.1,3.85) -- (8.8,3.85) node[right,font=\\footnotesize] {Bid};",
             "\\end{tikzpicture}%",
             "}",
-            "\\caption{Side-specific empirical execution-risk proxy by book rank. The plotted quantity is the "
-            "stored $h$-second reach probability $p_k^{i,s}$ (\\texttt{hit\\_probability}) from the "
-            f"full-sample top-${top_n}$, $h={horizon}$-second calibration. The empirical kernel uses its "
-            "protection complement $\\rho_k^{i,s}=1-p_k^{i,s}$.}",
+            "\\caption{Side-specific empirical hit frequency by book rank. The plotted quantity is the "
+            "$H$-second hit frequency $\\widehat p_k^{m,s}(H)$ from the "
+            f"full-sample top-${top_n}$, $H={horizon}$-second calibration. The empirical kernel uses its "
+            "protection complement $\\widehat\\rho_k^{m,s}(H)=1-\\widehat p_k^{m,s}(H)$.}",
             "\\label{fig:empirical_topn_execution_risk_profiles}",
             "\\end{figure}",
             "",

@@ -33,3 +33,35 @@ notebooks/sample.csv
 data/
 outputs/
 results/
+
+# Archived analyses and superseded material; retained locally, not versioned.
+/history/
+
+# Restricted CONSOB inputs, identity mappings, audits and empirical artifacts.
+# Publish source only; keep these local even when a historical commit tracked them.
+/.hermes/
+/astra_metric_audit/
+/reports/
+/paper/reviews/
+/paper/generated/
+*.csv
+*.tsv
+*.parquet
+*.arrow
+*.feather
+*.xlsx
+*.xls
+*.h5
+*.hdf5
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.pdf
+**/private_*
+
+# Credentials and signing material must never enter a publication snapshot.
+.env.*
+*.pem
+*.key
+credentials*.json

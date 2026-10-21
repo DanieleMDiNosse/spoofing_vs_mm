@@ -72,6 +72,7 @@ CANONICAL_BASELINE_ARTIFACTS = {
     "candidate_episodes": "candidate_episodes",
     "episode_cluster_members": "episode_cluster_members",
     "episode_withdrawals": "episode_withdrawals",
+    "candidate_lifecycles": "candidate_lifecycles",
     "episode_anchor_summary": "episode_anchor_summary",
     "actor_day_episode_summary": "actor_day_episode_summary",
 }
@@ -565,8 +566,8 @@ def validate_preflight(config_path: Path) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise ValueError(f"empirical controls config is not valid JSON: {config_path}") from exc
     if config.get("design_version") == "empirical_controls_v2_light":
-        from spoofing_detection.lob.empirical_controls_v2_io import validate_preflight_v2
-        return validate_preflight_v2(config_path)
+        from spoofing_detection.lob.empirical_controls_v2_runner import validate_preflight_supervised
+        return validate_preflight_supervised(config_path)
     output_root, clock_columns, expected_parameters = _validate_design_contract(config)
     baseline_runs = _mapping(config.get("baseline_runs"), name="baseline_runs")
     if not baseline_runs:
@@ -1655,8 +1656,12 @@ def _write_bundle_artifacts(
 
 def run_empirical_controls(config_path: Path) -> Path:
     """Run the frozen empirical design and atomically publish a validated bundle."""
-    validated = validate_preflight(config_path)
     config = _mapping(json.loads(config_path.read_text()), name="empirical controls config")
+    if config.get("design_version") == "empirical_controls_v2_light":
+        from spoofing_detection.lob.empirical_controls_v2_runner import execute_v2
+
+        return execute_v2(config_path)
+    validated = validate_preflight(config_path)
     live_canonical_runs, canonical_equivalence = _recompute_and_verify_canonical_runs(
         config, validated["effective_parameters"]
     )

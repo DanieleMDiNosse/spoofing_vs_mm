@@ -6,6 +6,7 @@ OS memory reservation/cgroup and does not exempt jobs from desktop protections.
 from __future__ import annotations
 
 import math
+import json
 import os
 from pathlib import Path
 import signal
@@ -13,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Sequence
+from typing import BinaryIO, Sequence
 
 
 def _group_rss_bytes(pgid: int) -> int:
@@ -48,15 +49,30 @@ def _terminate_group(process: subprocess.Popen) -> None:
     process.wait()
 
 
+def _output_tail(stream: BinaryIO) -> str:
+    stream.seek(0, os.SEEK_END)
+    stream.seek(max(0, stream.tell() - 16384))
+    return stream.read().decode('utf-8', errors='replace')
+
+
+def _write_diagnostics(path: Path, value: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
+    os.replace(temporary, path)
+
+
 def supervise(command: Sequence[str], *, max_rss_mb: float, timeout_seconds: float,
-              cwd: Path | None = None, env: dict[str, str] | None = None) -> dict:
-    """Run one isolated worker, cap sampled group RSS/time, preserve bounded output."""
+              cwd: Path | None = None, env: dict[str, str] | None = None,
+              diagnostics_path: Path | None = None) -> dict:
+    """Run one isolated worker and persist bounded terminal supervision evidence."""
     if not sys.platform.startswith('linux') or not Path('/proc/self/stat').is_file():
         raise RuntimeError('v2 resource supervision requires Linux /proc; no unguarded fallback')
     for value in (max_rss_mb, timeout_seconds):
         if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
             raise ValueError('positive finite resource budget required')
     start, peak = time.monotonic(), 0
+    failure: BaseException | None = None
     with tempfile.TemporaryFile() as stream:
         process = subprocess.Popen(list(command), cwd=cwd, env=env, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
         try:
@@ -70,13 +86,26 @@ def supervise(command: Sequence[str], *, max_rss_mb: float, timeout_seconds: flo
             # A worker must not detach running descendants and report success.
             if _group_rss_bytes(process.pid):
                 raise RuntimeError('worker left active descendants')
-            stream.seek(0, os.SEEK_END)
-            stream.seek(max(0, stream.tell() - 16384))
-            output = stream.read().decode('utf-8', errors='replace')
+            output = _output_tail(stream)
             if process.returncode:
                 raise RuntimeError(f'worker exited {process.returncode}: {output}')
             return {'returncode': process.returncode, 'output': output,
                     'peak_rss_mb': peak / 1024 ** 2, 'wall_seconds': time.monotonic() - start}
+        except BaseException as error:
+            failure = error
+            raise
         finally:
             if process.poll() is None or _group_rss_bytes(process.pid):
                 _terminate_group(process)
+            if diagnostics_path is not None:
+                _write_diagnostics(Path(diagnostics_path), {
+                    'command': list(command),
+                    'failure': None if failure is None else str(failure),
+                    'failure_type': None if failure is None else type(failure).__name__,
+                    'output_tail': _output_tail(stream),
+                    'peak_rss_mb': peak / 1024 ** 2,
+                    'returncode': process.returncode,
+                    'status': 'complete' if failure is None else 'failed',
+                    'timeout_seconds': timeout_seconds,
+                    'wall_seconds': time.monotonic() - start,
+                })

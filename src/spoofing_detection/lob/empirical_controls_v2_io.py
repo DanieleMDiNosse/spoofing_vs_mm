@@ -9,7 +9,7 @@ import hashlib
 import json
 import math
 import os
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 import tempfile
 from typing import Any, Mapping
@@ -17,17 +17,34 @@ from typing import Any, Mapping
 import polars as pl
 
 from .panel import SORT_COLUMNS, _partition_id
+from .empirical_clock import CLOCK_POLICY_ID
 from .replay_observation import EVENT_TIMESTAMP_PRECEDENCE
 from .withdrawal_risk import CLOCK_REGRESSION_POLICY, canonical_execution_cluster_rows, ACTOR_SCHEMA
 
 VERSION = "empirical_controls_v2_light"
-SCHEMA_VERSION = "compact_risk_v2_1"
+SCHEMA_VERSION = "compact_risk_v2_2_ns_clock"
+EMPIRICAL_POLICY_CONTRACT = {
+    "replay_duration_clock": "SEQUENCETIME",
+    "fill_anchor_clock": "TRADETIME",
+    "cancellation_removal_clock": "SEQUENCETIME",
+    "semantic_fallback": "forbidden",
+    "timestamp_representation": (
+        "SEQUENCETIME/BOOKIN/BOOKOUTTIME: documented UTC epoch nanoseconds; "
+        "TRADETIME: Matching Engine IN time in ns, empirically UTC-aligned to SEQUENCETIME on audited fills"
+    ),
+}
+RISK_PRODUCER_FILES = (
+    "actor_identity.py", "config.py", "empirical_clock.py", "enums.py", "models.py", "normalize.py", "panel.py",
+    "replay_observation.py", "withdrawal_risk_v2.py", "empirical_controls_v2_io.py",
+    "empirical_controls_v2_partition.py", "empirical_controls_v2_runner.py",
+)
 
 
 def config_template() -> dict[str, Any]:
     """Intentionally non-runnable until budgets and certificates are supplied."""
     return {
         "design_version": VERSION,
+        "clock_policy_id": None,
         "output_root": None,
         "clock": {
             "event_timestamp_precedence": list(EVENT_TIMESTAMP_PRECEDENCE),
@@ -49,9 +66,19 @@ def config_template() -> dict[str, Any]:
 
 def validate_config(config: Mapping[str, Any]) -> None:
     template = config_template()
-    if not isinstance(config, Mapping) or set(config) != set(template):
+    legacy_keys = set(template) - {"clock_policy_id"}
+    if not isinstance(config, Mapping) or (set(config) != set(template) and set(config) != legacy_keys):
         raise ValueError("v2 config requires exactly the versioned keys; legacy/draw/seed options forbidden")
-    for key in ("design_version", "clock", "eligibility", "window_seconds", "time_band_seconds", "offset_seconds", "identity_mode", "execution_anchor_modes"):
+    if config.get("clock_policy_id") not in {None, CLOCK_POLICY_ID}:
+        raise ValueError("unknown clock_policy_id")
+    expected_clock = dict(template["clock"])
+    if config.get("clock_policy_id") == CLOCK_POLICY_ID:
+        expected_clock["event_timestamp_precedence"] = ["SEQUENCETIME"]
+        expected_clock["timezone"] = "UTC"
+        expected_clock["empirical_policy_contract"] = EMPIRICAL_POLICY_CONTRACT
+    if json.dumps(config["clock"], sort_keys=True) != json.dumps(expected_clock, sort_keys=True):
+        raise ValueError("incompatible v2 clock")
+    for key in ("design_version", "eligibility", "window_seconds", "time_band_seconds", "offset_seconds", "identity_mode", "execution_anchor_modes"):
         # JSON equality alone treats True as 1; typed serialized comparisons do not.
         if json.dumps(config[key], sort_keys=True) != json.dumps(template[key], sort_keys=True):
             # Permit equivalent finite numeric duration spelling, not booleans.
@@ -80,10 +107,18 @@ def value_hash(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
+def risk_producer_identity() -> dict[str, str]:
+    """Hash the explicit behavior-defining source closure for compact replay."""
+    directory = Path(__file__).resolve().parent
+    return {name: file_hash(directory / name) for name in RISK_PRODUCER_FILES}
+
+
 def risk_cache_key(config: Mapping[str, Any], input_identities: Mapping[str, str], source_identity: str) -> str:
     return value_hash({
         'schema': SCHEMA_VERSION, 'inputs': dict(input_identities), 'source': source_identity,
-        'clock': config['clock'], 'eligibility': config['eligibility'], 'identity_mode': config['identity_mode'],
+        'clock': config['clock'], 'clock_policy_id': config.get('clock_policy_id'),
+        'eligibility': config['eligibility'], 'identity_mode': config['identity_mode'],
+        'risk_producer': risk_producer_identity(),
     })
 
 
@@ -92,6 +127,18 @@ def _json(path: Path) -> dict:
     if not isinstance(data, dict):
         raise ValueError(f'JSON object required: {path}')
     return data
+
+
+def require_v3_detector_metadata(metadata: Mapping[str, Any], config: Mapping[str, Any]) -> None:
+    if config.get('clock_policy_id') != CLOCK_POLICY_ID:
+        return
+    from scripts.validate_spoofing_detection_bundle import (
+        V3_CLOCK_CONTRACT, V3_CLOCK_POLICY_ID, V3_OUTPUT_SCHEMA_VERSION,
+    )
+    if (metadata.get('output_schema_version') != V3_OUTPUT_SCHEMA_VERSION
+            or metadata.get('clock_policy_id') != V3_CLOCK_POLICY_ID
+            or metadata.get('clock_contract') != V3_CLOCK_CONTRACT):
+        raise ValueError('v3 detector metadata/clock contract required')
 
 
 def validate_preflight_v2(config_path: Path, *, resume: bool = False) -> dict[str, Any]:
@@ -153,8 +200,10 @@ def validate_certificate(path: Path, run: Mapping, config: Mapping, output: Path
             or evidence.get('artifact_hashes') != {k: v['sha256'] for k, v in artifacts.items()}):
         raise ValueError('insufficient baseline certification evidence')
     metadata = _json(sources['baseline_metadata'])
+    require_v3_detector_metadata(metadata, config)
     expected = {'parameter_source': 'json_config_only', 'config_section': 'metrics',
-                'output_schema_version': 'actor_execution_anchor_v2', 'actor_identity_mode': 'client_then_firm',
+                'output_schema_version': ('actor_execution_anchor_v3_clocked' if config.get('clock_policy_id') == CLOCK_POLICY_ID
+                                          else 'actor_execution_anchor_v2'), 'actor_identity_mode': 'client_then_firm',
                 'execution_anchor_modes': ['passive', 'aggressive']}
     if any(metadata.get(k) != v for k, v in expected.items()):
         raise ValueError('incompatible baseline metadata')
@@ -178,14 +227,21 @@ def validate_certificate(path: Path, run: Mapping, config: Mapping, output: Path
     if (not required_raw <= raw_columns or not {'ORDEREVENTTYPE (*)', 'ORDEREVENTTYPE'} & raw_columns
             or not {'ORDERSIDE (*)', 'ORDERSIDE'} & raw_columns):
         raise ValueError('raw_events schema incompatible')
-    if raw.collect_schema()['TRADEDATE'] not in (pl.Date, pl.String):
-        raise ValueError('TRADEDATE must be Date or ISO String')
+    trade_date_dtype = raw.collect_schema()['TRADEDATE']
+    if trade_date_dtype not in (pl.Date, pl.String) and not isinstance(trade_date_dtype, pl.Datetime):
+        raise ValueError('TRADEDATE must be Date, midnight Datetime, or ISO String')
     # Only the tiny partition catalog is materialized. Counts include unselected
     # days to preserve original global canonical one-based sort indices.
     partitions = raw.group_by(SORT_COLUMNS[:5]).agg(pl.len().alias('rows')).sort(SORT_COLUMNS[:5], nulls_last=True).collect()
     offset, catalog = 0, []
     for row in partitions.iter_rows(named=True):
-        day = str(row['TRADEDATE'])
+        raw_day = row['TRADEDATE']
+        if isinstance(raw_day, datetime):
+            if raw_day.time() != datetime.min.time():
+                raise ValueError('Datetime TRADEDATE must be normalized to midnight')
+            day = raw_day.date().isoformat()
+        else:
+            day = str(raw_day)
         if date.fromisoformat(day).isoformat() != day:
             raise ValueError('non-ISO raw partition date')
         catalog.append({**row, 'partition_id': _partition_id(row), 'event_date': day, 'index_offset': offset})
@@ -197,6 +253,16 @@ def validate_certificate(path: Path, run: Mapping, config: Mapping, output: Path
     for key, columns in [('execution_metrics', cluster_required), ('execution_cluster_members', member_required)]:
         if not columns <= set(pl.read_parquet_schema(sources[key])):
             raise ValueError(f'{key} schema incompatible')
+    if config.get('clock_policy_id') == CLOCK_POLICY_ID:
+        for key, fields in [('execution_metrics', ('replay_time_ns', 'fill_anchor_ns')),
+                            ('execution_cluster_members', ('child_replay_time_ns', 'child_fill_anchor_ns'))]:
+            schema = pl.read_parquet_schema(sources[key])
+            for field in fields:
+                if schema.get(field) != pl.Int64:
+                    raise ValueError(f'v3 detector {key}.{field} must be Int64')
+            nulls = pl.scan_parquet(sources[key]).select([pl.col(field).null_count() for field in fields]).collect()
+            if any(nulls.row(0)):
+                raise ValueError(f'v3 detector {key} timestamps must be non-null')
     # Validate partition-wise, not the full multi-month member table in RAM.
     known_ids = {r['partition_id'] for r in catalog}
     for key in ('execution_metrics', 'execution_cluster_members'):
@@ -251,7 +317,8 @@ def validate_cluster_members(clusters: pl.DataFrame, members: pl.DataFrame, part
 class PartitionWriter:
     """Bounded table chunks; incomplete work remains inspectable but never reusable."""
 
-    def __init__(self, path: Path, *, cache_key: str, schemas: Mapping[str, Mapping], buffer_rows: int):
+    def __init__(self, path: Path, *, cache_key: str, schemas: Mapping[str, Mapping], buffer_rows: int,
+                 provenance: Mapping[str, Any] | None = None):
         if path.exists():
             raise FileExistsError(path)
         if type(buffer_rows) is not int or buffer_rows <= 0:
@@ -259,6 +326,7 @@ class PartitionWriter:
         if not schemas or any(not name.isidentifier() for name in schemas):
             raise ValueError('nonempty safe schema table names required')
         self.path, self.cache_key = path, cache_key
+        self.provenance = dict(provenance or {})
         self.schemas = dict(schemas)
         self.buffer_rows = buffer_rows
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -293,16 +361,20 @@ class PartitionWriter:
         for name, entries in self.artifacts.items():
             if not entries:
                 self._write(name, pl.DataFrame(schema=self.schemas[name]))
-        manifest = {'schema_version': SCHEMA_VERSION, 'cache_key': self.cache_key, 'complete': True, 'tables': self.artifacts}
+        manifest = {
+            'schema_version': SCHEMA_VERSION, 'cache_key': self.cache_key,
+            'provenance': self.provenance, 'complete': True, 'tables': self.artifacts,
+        }
         (self.temporary / 'manifest.json').write_text(json.dumps(manifest, indent=2))
         # Read back all hashes, schemas and counts before publishing the marker.
-        scan_checkpoint(self.temporary, cache_key=self.cache_key, schemas=self.schemas)
+        scan_checkpoint(self.temporary, cache_key=self.cache_key, schemas=self.schemas, provenance=self.provenance)
         os.rename(self.temporary, self.path)
         self.completed = True
 
 
 def scan_checkpoint(
     path: Path, *, cache_key: str, schemas: Mapping[str, Mapping] | None = None,
+    provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, pl.LazyFrame]:
     """Verify chunks individually and return disk-backed tables without collecting.
 
@@ -316,7 +388,11 @@ def scan_checkpoint(
     if manifest.get('complete') is not True or manifest.get('schema_version') != SCHEMA_VERSION:
         raise ValueError('incomplete or incompatible checkpoint')
     if manifest.get('cache_key') != cache_key:
-        raise ValueError('checkpoint cache key mismatch')
+        raise ValueError('checkpoint cache identity mismatch')
+    if provenance is None and manifest.get('provenance') not in (None, {}):
+        raise ValueError('checkpoint provenance required')
+    if provenance is not None and manifest.get('provenance') != dict(provenance):
+        raise ValueError('checkpoint provenance mismatch')
     tables = manifest.get('tables')
     if not isinstance(tables, dict) or not tables:
         raise ValueError('checkpoint tables missing')

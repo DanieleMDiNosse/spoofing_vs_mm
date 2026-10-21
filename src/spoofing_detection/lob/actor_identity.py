@@ -6,9 +6,13 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from functools import lru_cache
+from typing import Any, TYPE_CHECKING
 
 from .models import ActiveOrder
+
+if TYPE_CHECKING:
+    from .replay_observation import ReplayOrder
 
 
 @dataclass(frozen=True)
@@ -18,6 +22,30 @@ class ActorIdentity:
     identity_level: str
     identity_source: str
     identity_fallback_flag: bool
+
+
+_CacheableIdentityValue = tuple[type[object], object]
+
+
+def _cacheable_identity_value(value: Any) -> _CacheableIdentityValue | None:
+    """Return a type-tagged cache key only for immutable scalar identity values."""
+    value_type = type(value)
+    if value_type not in {type(None), bool, int, float, str}:
+        return None
+    if value_type is float and math.isnan(value):
+        return None
+    return value_type, value
+
+
+@lru_cache(maxsize=4096)
+def _resolve_cacheable_order_identity(
+    client_original_id: _CacheableIdentityValue,
+    firm_id: _CacheableIdentityValue,
+) -> ActorIdentity | None:
+    return resolve_actor_identity(
+        client_original_id=client_original_id[1],
+        firm_id=firm_id[1],
+    )
 
 
 def normalize_identity_value(value: Any) -> str | None:
@@ -85,11 +113,17 @@ def actor_identity_from_event(event: Mapping[str, Any]) -> ActorIdentity | None:
     )
 
 
-def actor_identity_from_order(order: ActiveOrder) -> ActorIdentity | None:
-    """Resolve identity from an active resting order."""
+def actor_identity_from_order(order: ActiveOrder | ReplayOrder) -> ActorIdentity | None:
+    """Resolve identity from a resting order or its immutable captured value."""
+    client_original_id = order.client_original_id
+    firm_id = order.firm_id
+    cacheable_client = _cacheable_identity_value(client_original_id)
+    cacheable_firm = _cacheable_identity_value(firm_id)
+    if cacheable_client is not None and cacheable_firm is not None:
+        return _resolve_cacheable_order_identity(cacheable_client, cacheable_firm)
     return resolve_actor_identity(
-        client_original_id=order.client_original_id,
-        firm_id=order.firm_id,
+        client_original_id=client_original_id,
+        firm_id=firm_id,
     )
 
 

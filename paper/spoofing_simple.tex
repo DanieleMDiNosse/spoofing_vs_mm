@@ -1,0 +1,489 @@
+\documentclass[11pt]{article}
+
+\usepackage{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm,amsfonts}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{siunitx}
+\usepackage[numbers]{natbib}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\usepackage{setspace}
+\usepackage{subcaption}
+\usepackage{placeins}
+\geometry{a4paper,margin=2.5cm}
+\usepackage{changepage}
+\usepackage[normalem]{ulem}
+\usepackage{authblk}
+\usepackage{array}
+\usepackage[table]{xcolor}
+\newenvironment{review}{\begingroup\color{blue}}{\endgroup}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{tikz}
+\usepackage{verbatim}
+\usetikzlibrary{arrows.meta,positioning,plotmarks}
+
+
+
+
+\onehalfspacing
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\textfraction}{0.1}
+\renewcommand{\floatpagefraction}{0.75}
+\setcounter{topnumber}{5}
+\setcounter{totalnumber}{8}
+\clubpenalty=10000
+\widowpenalty=10000
+\brokenpenalty=10000
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue,
+    pdftitle={Detecting Possible Spoofing through Changes in Displayed Liquidity},
+    pdfauthor={Daniele Maria Di Nosse, Francesco Gigante, Antonio Russo, Fabrizio Lillo}
+}
+
+
+\title{Detecting Possible Spoofing through Changes in Displayed Liquidity}
+\author[1]{Daniele Maria Di Nosse\textsuperscript{\dag}}
+\author[2]{Francesco Gigante}
+\author[2]{Antonio Russo}
+\author[1]{Fabrizio Lillo}
+
+\affil[1]{Scuola Normale Superiore, Pisa, Italy}
+\affil[2]{Consob, Rome, Italy}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\begin{center}
+  \footnotesize
+  \dag Corresponding author. Email: \texttt{daniele.dinosse@sns.it}
+\end{center}
+
+\begin{abstract}
+\begin{review}
+Visible orders convey information about buying and selling interest, but their subsequent cancellation can reflect either legitimate liquidity management or a deceptive display. We propose a method for investigating possible spoofing by connecting a participant's displayed liquidity, an opposite-side execution, and the withdrawal that follows. The method measures removal relative to available market depth and examines whether the participant's liquidity profile recedes or is maintained through replacement. It gives recent orders greater weight without discarding older visible orders. Applied to Ferrari, Nexi, and Risanamento, the main specification identifies 6,914 candidate executions among 48,481 executions. Extending observation beyond the first second retains additional executions with assigned withdrawal in all three samples. Associated prices distinguish sequences with favorable movement and subsequent reversion from those supporting only parts of the hypothesized strategy. These findings motivate examining timing, market scale, and profile behavior together rather than treating rapid cancellation as sufficient evidence. For surveillance, the method provides an inspectable priority list while retaining candidates whose profile or price evidence is incomplete. Independent validation is still needed to establish how well that ordering distinguishes spoofing from legitimate activity.
+\end{review}
+
+\end{abstract}
+
+\paragraph{Keywords.} Spoofing; limit order book; market surveillance; order cancellation; market microstructure.
+
+\section{Introduction}
+\label{sec:introduction}
+
+
+\begin{review}
+Trading in an order-driven market depends on both completed transactions and offers that have not yet traded. The order book records visible offers to buy and sell a security, specifying their prices and quantities. These offers provide liquidity: they show the terms on which participants currently offer to trade. They also convey information that other participants can use to assess buying and selling pressure.
+
+This informational role creates an opportunity for deception. A participant can display interest on one side while seeking to trade on the other. If others respond to that display, the participant may obtain more favorable terms without executing the displayed orders. The relevant hypothesis therefore concerns the relationship between displayed interest and a subsequent trade, not simply the presence of a large order.
+\end{review}
+
+Consider a trader who wants to sell. The trader first places large buy orders. If other participants interpret those orders as genuine demand, they may raise their prices. The trader can then sell at a better price and cancel the buy orders. This is the basic idea behind the spoofing strategy studied here. The same reasoning applies with the sides reversed to a trader who wants to buy. The Market Abuse Regulation prohibits orders and behavior that create false or misleading signals about supply, demand, or prices \cite{EU5962014}.
+
+\begin{review}
+The difficulty for surveillance is that the observable actions are not unique to deception. A trader may withdraw an order because the market price has changed, because another trade has altered its inventory, or because leaving the order exposed has become too risky. Participants that regularly offer liquidity must cancel and replace orders as these conditions change. Even a large cancellation immediately after a trade is therefore ambiguous.
+
+The scientific problem is to reconstruct the surrounding sequence and identify what makes it economically informative. How much liquidity was displayed, how important was it relative to the market, and did it disappear after the participant traded on the other side? Following individual orders establishes actual withdrawal; following the whole displayed profile reveals whether replacement or rebalancing maintained the participant's liquidity. These complementary observations provide a basis for investigating the sequence without assuming that the records reveal its motive.
+\end{review}
+
+Our objective is to detect possible spoofing episodes without treating ordinary market-making activity as manipulation. The key idea is to examine changes in the shape of a participant's displayed liquidity: how much is offered on each side, where it is placed across price levels, and what happens to that arrangement after an opposite-side execution. A cancellation count alone discards this structure. Looking at the changing book makes it possible to ask whether a large one-sided display disappears after a smaller trade, or whether the participant is maintaining and adjusting its liquidity.
+
+Under the spoofing hypothesis, a participant builds an asymmetric display, trades on the other side, and rapidly removes the displayed liquidity. \begin{review}The market-making benchmark is instead characterized by the rebalancing of the quoted position.\end{review} These are economic reference patterns, not universal rules: a legitimate trader can also change quotes abruptly. We therefore combine the profile comparison with order-level reconstruction and price observations, rather than classify a trader from the appearance of a curve alone.
+
+Our contribution is to connect this economic contrast with participant-level measurements that can be inspected in the order records. We follow the orders responsible for withdrawal, distinguishing cancellation from execution or a change in book rank. We then ask how much of the participant's earlier display was removed and how much that removal represents relative to available market depth. A participant can cancel nearly all of a small display without removing much of the market's visible liquidity. These are different descriptions of the same withdrawal, so we retain both. Changes in the participant's relative liquidity profile add a third question: does the displayed support actually recede, or is it maintained through replacement and rebalancing?
+
+Timing is part of that comparison. A display need not be newly submitted to matter, and removal need not finish in the first second after a trade. Our main specification therefore follows withdrawal and profile changes for ten seconds and discounts order age gradually. Older visible orders remain eligible; recency changes their weight rather than imposing an exclusion boundary. We retain every execution with eligible display and assigned withdrawal as a candidate. The withdrawal score $W$ orders this full population for review, while the rapid profile diagnostic $J$ and price observations accompany each execution. They help interpret its evidence without creating further selection stages. Shorter horizons reveal timing sensitivity; alternative age treatments are reported in the appendix.
+
+Across the three samples, 6,914 of 48,481 executions are candidates in the main specification. Longer observation reveals additional executions with assigned withdrawal compared with the first-second window. The price comparisons show which candidates combine favorable movement, complete reversion, and nonnegative execution advantage. The results strengthen the description of the observed activity by making its scale, timing, and accompanying prices explicit, rather than by treating a high score as a verdict.
+
+The method is designed to address false positives from legitimate liquidity management, but the available samples do not identify market makers independently or provide adjudicated manipulation labels. We can therefore evaluate the reconstructed mechanisms and candidate sequences, not yet measure a false-positive rate or claim that those errors have been eliminated. Section~\ref{sec:existing_approaches} places the method in the literature. Sections~\ref{sec:data} and~\ref{sec:model} develop the economic reasoning, data, and measurements. Section~\ref{sec:results} evaluates them against the detection objective. \begin{review}The main text develops the two central diagnostics alongside their economic interpretation; the appendices retain depth-weight calibration and complete technical definitions. Appendix~\ref{sec:withdrawal_diagnostics} reports sensitivity to the observation horizon and order-age weighting; the remaining appendices provide technical reconstruction details. These exploratory comparisons use the same samples, not held-out validation.\end{review}
+
+\section{Relation to the literature}
+\label{sec:existing_approaches}
+The closest studies identify spoofing-related sequences through explicit rules. Using account-level Korea Exchange data, \cite{LeeEomPark2013} examine large orders placed away from the best quote, opposite-side trading, and withdrawal. Related empirical screens study Brazilian equities \cite{MendoncaDeGenaro2020}, spot foreign exchange \cite{StenforsSusai2021}, cross-market foreign-exchange activity \cite{StenforsEtAl2023}, and Taiwan derivatives \cite{ChenHsiehYang2026}. These studies motivate linking the actions of the same participant rather than classifying an isolated cancellation. Their market-specific thresholds and data requirements also show why a rule must be interpreted in its empirical setting.
+
+Other approaches start from the state of the market rather than from one participant's sequence of actions. \cite{TaoDayLingDrapeau2022} study spoofing incentives using order-book imbalance across several price levels and propose a statistical monitoring measure. \cite{LiPolukarovaVentre2023} identify abnormal order-book momentum in cryptocurrency markets. Such measures can identify unusual market conditions, but an unusual book state does not by itself show who placed, traded against, and withdrew the relevant orders.
+
+A related question is whether an individual order could make manipulation profitable. \cite{FabreChallet2025} use interpretable probabilistic neural networks to study how a limit order changes the conditional distribution of future prices and the expected gain from a hypothetical strategy. Their order-level notion of spoofability concerns the potential effect of an order. Our question is complementary: did the same observed participant display orders, trade on the opposite side, and withdraw them, and what prices accompanied those actions? Message-level visual reconstruction of prosecuted episodes \cite{DebieEtAl2023} also illustrates the value of examining the sequence directly.
+
+Learning-based methods use richer patterns across time and participants. \cite{TuccellaNadlerSerban2021} formulate an early-warning task using cryptocurrency event streams. Graph-based studies represent traders and transactions as a network to capture related or coordinated activity \cite{KangMuNing2023,KangMuNing2024,XiangEtAl2025}. These methods address useful but different prediction problems. Without common labels, samples, and evaluation designs, their reported performance cannot serve as a direct benchmark for the descriptive reconstruction studied here.
+
+Relative to this literature, we focus on the risk of confusing a spoofing-like sequence with normal market-making activity. Our method combines the participant's liquidity profile across price levels with its evolution around an opposite-side execution. Order-level tracking explains how much of the earlier display was withdrawn; comparison with initial market depth establishes the scale of that removal. Observing several horizons avoids making one assumed withdrawal time decisive. This connects the multilevel description emphasized by market-state methods with the identifiable orders and trades used by account-level rules. The additional question is whether the participant's displayed liquidity actually recedes or is maintained through replacement. Price diagnostics then ask whether the accompanying movements match the hypothesized strategy. The contribution is that combined measurement and interpretation, not the claim that the display--trade--withdrawal sequence was previously unknown. The empirical application examines how these measurements complement one another; it does not establish superior classification accuracy.
+
+Figure~\ref{fig:method_taxonomy} summarizes the related method families; they can overlap in practice.
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[
+        font=\scriptsize,
+        root/.style={
+            draw,
+            rounded corners=2pt,
+            fill=gray!15,
+            align=center,
+            text width=0.40\textwidth,
+            minimum height=0.8cm,
+            font=\small\bfseries
+        },
+        category/.style={
+            draw,
+            rounded corners=2pt,
+            fill=gray!8,
+            align=center,
+            text width=0.16\textwidth,
+            minimum height=0.75cm,
+            font=\footnotesize\bfseries
+        },
+        detail/.style={
+            draw,
+            rounded corners=2pt,
+            fill=white,
+            align=left,
+            text width=0.17\textwidth,
+            minimum height=1.65cm
+        },
+        arrow/.style={-{Latex[length=2mm]}, thick}
+    ]
+        \node[root] (root) at (0,0) {Financial \mbox{spoofing} surveillance};
+
+        \node[category] (rules) at (-6.15,-1.45) {Rule-based\\empirical};
+        \node[category] (stat) at (-3.075,-1.45) {Statistical\\anomaly};
+        \node[category] (seq) at (0,-1.45) {Deep\\sequences};
+        \node[category] (graph) at (3.075,-1.45) {Graph-based\\learning};
+        \node[category] (expl) at (6.15,-1.45) {Explainable\\forensic};
+
+        \node[detail, below=0.25cm of rules] (rulesd) {\textbullet\ size thresholds\\\textbullet\ distance from touch\\\textbullet\ opposite-side executions\\\textbullet\ price reversal};
+        \node[detail, below=0.25cm of stat] (statd) {\textbullet\ multilevel imbalance\\\textbullet\ Wasserstein tests\\\textbullet\ physics momentum\\\textbullet\ spoofability score};
+        \node[detail, below=0.25cm of seq] (seqd) {\textbullet\ event streams\\\textbullet\ GRU early warning\\\textbullet\ short-horizon labels};
+        \node[detail, below=0.25cm of graph] (graphd) {\textbullet\ transaction graphs\\\textbullet\ community features\\\textbullet\ dynamic latent graphs};
+        \node[detail, below=0.25cm of expl] (expld) {\textbullet\ message-level views\\\textbullet\ interpretable scores\\\textbullet\ case reconstruction};
+
+        \foreach \target in {rules,stat,seq,graph,expl} {
+            \draw[arrow] (root.south) -- (\target.north);
+        }
+        \foreach \source/\target in {rules/rulesd,stat/statd,seq/seqd,graph/graphd,expl/expld} {
+            \draw[arrow] (\source.south) -- (\target.north);
+        }
+    \end{tikzpicture}
+    \caption{Method families in the spoofing-detection literature. The categories can overlap; each column identifies
+    the main object or representation used by a strand of work.}
+    \label{fig:method_taxonomy}
+\end{figure}
+\FloatBarrier
+
+\section{Economic reasoning and data}
+\label{sec:data}
+
+The same cancellation can arise from different trading motives, so its interpretation depends on the surrounding sequence. This section develops the economic contrast between ordinary liquidity management and the temporary display hypothesized in spoofing. We then describe how the available messages, participant identities, and observation windows let us examine that contrast without assuming that the records reveal intent.
+
+\subsection{What should we observe?}
+\label{sec:mm_vs_spoofing}
+\label{subsec:market_maker}
+\label{subsec:spoofing}
+A market maker offers to trade on both sides of the book. The best bid is the highest visible buying price, and the best ask is the lowest visible selling price. Their difference is the spread; their average is the midprice. A market maker seeks to earn the spread while managing inventory and the risk of trading at an unfavorable price. After buying, for example, the market maker may lower its quotes to discourage further purchases and encourage sales. Cancelling and replacing orders is part of that adjustment.
+
+In the spoofing hypothesis, by contrast, the large displayed orders serve a directional purpose: they are intended to help a trade on the other side. For a sale, the expected sequence is large buy orders, a favorable upward price movement, the sale, and withdrawal of the buy orders. A subsequent downward movement would be consistent with the displayed pressure having been temporary. This is a hypothesis about a mechanism, not a claim that every such price movement is caused by the orders.
+
+These explanations motivate different reference patterns for the displayed book. A market maker can adjust both sides as its inventory and exposure change, and may replace cancelled orders rather than remove liquidity altogether. The spoofing hypothesis instead suggests a large temporary display on one side, an execution on the other, and a rapid disappearance of that asymmetry afterward. Location also matters: a displayed order away from the best quote may remain visible while facing less immediate execution risk. We use these contrasts to construct the method. We do not assume that all market makers rebalance smoothly or that every spoofing attempt has the same shape.
+
+Table~\ref{tab:surveillance-models} summarizes the economic contrast used to motivate the measurements.
+\begin{table}[htbp]
+\centering
+\caption{Stylized differences used to construct the surveillance diagnostics. These differences describe economic
+benchmarks, not observed intent or necessary conditions for either activity.}
+\label{tab:surveillance-models}
+\renewcommand{\arraystretch}{1.4}
+\setlength{\tabcolsep}{8pt}
+\rowcolors{2}{gray!4}{white}
+
+\begin{tabularx}{\textwidth}{
+    >{\raggedright\arraybackslash\bfseries}p{0.25\textwidth}
+    >{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}X
+}
+\toprule
+\rowcolor{gray!15}
+\textbf{Microstructure Feature} & \textbf{Legitimate Market Maker} & \textbf{Hypothesized Spoofing-Compatible Mechanism} \\
+\midrule
+Primary objective
+& Earn the bid--ask spread while controlling inventory and adverse-selection risk.
+& Improve a directional execution through a displayed order-book signal. \\
+
+Order-book imbalance
+& Usually maintains two-sided liquidity, with asymmetry arising from inventory and risk management.
+& A large, short-lived asymmetry forms the candidate posture. \\
+
+Cancellation motive
+& Update quotes to track fair value, control inventory, or limit adverse selection.
+& Withdrawal after the smaller opposite-side execution is consistent with the mechanism. \\
+
+Posting-distance trade-off
+& Quote near the touch to increase execution probability and earn the spread.
+& Remain visible while reducing the risk that the displayed posture executes. \\
+
+Source of expected gain
+& Spread capture, without intentionally moving the midprice in a chosen direction.
+& A potential favorable price change for the smaller order on the opposite side. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Messages, participants, and executions}
+We use CONSOB order-level messages for three equities. Ferrari covers 13 June 2024, Nexi covers 23 April 2024, and Risanamento covers June--November 2024. The samples differ in duration and composition, so differences between them cannot be attributed to the securities alone. The messages record order submissions, changes, trades, and cancellations. Replaying them lets us reconstruct the visible book and follow individual orders.
+
+We examine the first ten occupied price levels on each side, ranked from the best quote outward. An order deeper in the book may still be visible while being less exposed to immediate execution. We therefore do not restrict the analysis to orders at the best bid or ask. The analysis concerns visible liquidity, not an estimate of all trading interest.
+
+Actions are attributed to the original client code when it is available. When it is absent, we use the firm identifier and retain that observation level separately. A firm may represent several clients. Thus, a firm-level sequence connects the firm's recorded activity, not necessarily the decisions of one economic account. Throughout the paper, ``participant'' refers to this recorded attribution unit.
+
+One order can trade in several partial fills. We group related fills into an \emph{execution cluster}, called an execution in the rest of the paper. The fills must share the participant, order, role, side, and trading partition. Consecutive fills must be no more than $100$ milliseconds apart, without an intervening lifecycle change for that order. A passive execution fills an order already resting in the book; an aggressive execution crosses the spread against resting orders. Passive fills share a resting price, whereas an aggressive order may execute at several prices. Appendix~\ref{sec:data_details} gives the complete grouping and identity rules.
+
+We use $c$ for the full canonical execution identity, which fixes the instrument, trading partition, attributed participant, and execution role. Execution-bound quantities therefore omit a redundant participant index and the fixed depth $n=10$. This convention identifies recorded activity, not an economic account. Liquidity profiles suppress the participant and instrument indices locally; the execution identity restores them whenever comparisons require it. Unless stated otherwise, execution-bound sets and quantities refer to one fixed age policy; changing that policy requires reconstructing eligibility and cancellation assignment. Horizon-dependent quantities retain $H$ unless a fixed-setting convention is stated locally.
+
+\input{sections/simple_method.tex}
+
+\section{Results}
+\label{sec:results}
+
+The main specification retains older visible orders while giving recent display greater weight. Extending observation reveals later cancellations, and $W$ places their importance on a market scale when ordering review. Prices across the full candidate population show which parts of the proposed economic sequence are observed. Grouping executions by identified client and intermediary then establishes how concentrated the reconstructed activity is.
+
+Figure~\ref{fig:results_selection_map} separates construction of the candidate population from its review order.
+
+\begin{figure}[!htbp]
+    \centering
+    \begin{singlespace}
+    \begin{tikzpicture}[
+        font=\small,
+        roadmapbox/.style={draw=black!55, rounded corners=2pt, align=center,
+            inner sep=6pt, text width=12.6cm, fill=black!3},
+        roadmaparrow/.style={-{Stealth[length=2mm]}, thick, draw=black!65}
+    ]
+        \node[roadmapbox] (all) {\textbf{48,481 executions, with original identities retained}\\[2pt]
+            Ten-second observation; all ages with a 30-second half-life};
+        \node[roadmapbox, below=4mm of all] (positive) {\textbf{Construct candidates from the physical sequence}\\[2pt]
+            Positive raw display, assigned withdrawal, and execution quantity\\
+            6,914 candidate executions in the main specification};
+        \node[roadmapbox, dashed, below=4mm of positive] (ranked) {\textbf{Order the complete population for review}\\[2pt]
+            Descending $W$ within instrument; retain zero scores};
+        \node[roadmapbox, dashed, fill=white, below=4mm of ranked] (prices) {\textbf{Read the accompanying evidence}\\[2pt]
+            $J$, timing, and price diagnostics beside each execution\\
+            No further exclusions from profile or price values};
+        \draw[roadmaparrow] (all.south) -- (positive.north);
+        \foreach \source/\target in {positive/ranked,ranked/prices} {
+            \draw[roadmaparrow,dashed] (\source.south) -- (\target.north);
+        }
+    \end{tikzpicture}
+    \end{singlespace}
+    \caption{Candidate construction and review order in the main specification ($H=10$ seconds, age half-life $30$ seconds, no age cap). The solid arrow constructs the physical sequence. Dashed arrows order its inspection and add diagnostic information without removing candidates. $W$ is ranked within instrument; $J$ does not filter or reorder it. Prices are evaluated for the full candidate population, with zero, negative, and missing outcomes retained. Unsupported scores, if any, remain explicitly unranked.}
+    \label{fig:results_selection_map}
+\end{figure}
+\FloatBarrier
+
+\subsection{Coverage depends on what we observe}
+\label{subsec:observation_attribution_results}
+\label{subsec:continuous_withdrawal_results}
+\label{subsec:cross_instrument_results}
+\label{subsec:risanamento_results}
+\label{subsec:nexi_results}
+\label{subsec:ferrari_results}
+
+The reconstruction preserves 48,481 executions and their 65,471 original fills. With ten-second observation and a 30-second age half-life, 3,526 executions in Ferrari, 2,393 in Nexi, and 995 in Risanamento satisfy the raw candidate rule: 6,914 in total (Appendix Table~\ref{tab:wmsci-j-population}).
+
+
+
+Observation time affects whether removal is recorded. Holding the main age kernel fixed, the candidate counts at one second are 2,665 in Ferrari, 1,835 in Nexi, and 545 in Risanamento. Extending observation to ten seconds increases them to the counts above. Figure~\ref{fig:multiscale-coverage} shows the intermediate horizons. Since the kernel changes scores rather than raw membership, these curves describe the timing of assigned physical removal, not a decay in the quantity displayed. The supplementary age comparisons distinguish that timing effect from exclusion by a hard age limit (Table~\ref{tab:multiscale-age-policies}).
+
+The increase is especially pronounced in Risanamento: assigned removal for many retained displays falls after the first second. This is a finding about what the reconstruction observes, not evidence that the additional cases are more suspicious. Ferrari and Nexi each cover one day, whereas Risanamento spans several months. Coverage differences therefore remain descriptive. Exclusive cancellation assignment is evaluated at each horizon, so the union across horizons is not necessarily the longest-horizon population; the appendix keeps those quantities separate.
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=\textwidth]{generated/simple_notation_20261020/coverage.pdf}
+    \caption{Candidate executions by instrument at four observation horizons, with all observable ages and a 30-second exponential half-life. Counts use a common scale. Membership uses positive raw display, assigned withdrawal, and execution quantity; age weights enter scores, not these counts. Lines connect parameter settings, not an event-time trajectory. Sample coverage differs across instruments, so counts are descriptive rather than prevalence estimates.}
+    \label{fig:multiscale-coverage}
+\end{figure}
+
+\FloatBarrier
+All primary candidates have finite $W$ and complete finite $J$ values. Zero scores and zero rapid increments remain in the candidate population, without exclusions or changes to the ranking rule. Appendix Table~\ref{tab:rank-summary} reports their distributions and zero counts.
+
+\subsection{Prices support different parts of the proposed sequence}
+\label{subsec:behavior_price_results}
+
+Jointly favorable movement and complete reversion are observed for 397 of 3,526 Ferrari candidates (11.3\%), 308 of 2,393 Nexi candidates (12.9\%), and 44 of 995 Risanamento candidates (4.4\%). Requiring nonnegative execution advantage as well retains 387, 273, and 38 candidates, respectively: 11.0\%, 11.4\%, and 3.8\% of the same full denominators. The comparison covers all 6,914 candidates, including the 17 Risanamento executions with numerically zero $W$, and does not require $J$ to be positive. These joint price features accompany a subset of the reconstructed sequences; they are not guaranteed by a large withdrawal score or rapid profile change.
+
+Figure~\ref{fig:price-evidence} separates favorable, zero, adverse, and missing price outcomes while keeping the full candidate denominator. Appendix Table~\ref{tab:candidate-prices} retains the exact counts. Jointly positive movement and complete reversion identify the executions for which both measured parts of the proposed price sequence are present. This describes the evidence available beside the ranking; it does not establish that higher-ranked executions have better price corroboration or that a profile-based filter improves discrimination.
+
+
+
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=\textwidth]{generated/simple_notation_20261020/price_evidence.pdf}
+    \caption{Price evidence for all 6,914 primary candidates, including zero $W$. Left: vertical stacked bars show favorable price movement (FPM), complete two-second reversion (REV), and execution advantage relative to the completed-display benchmark (ADV). Positive, zero, negative, and missing outcomes use the full instrument-specific candidate denominator. Hatching denotes missing FPM or ADV, or missing/incomplete REV, not zero. Right: the conjunction FPM $>0$, complete REV $>0$, and ADV $\geq0$, with count/full candidate denominator above each bar. Numerical-zero ADV is included; missing ADV is not. The panels use different percentage scales. ADV compares prices, not realized profit; marginal bars do not identify joint outcomes.}
+    \label{fig:price-evidence}
+\end{figure}
+\FloatBarrier
+
+Neither price sign determines candidature or review rank. Among finite observations, the median favorable movement and median complete reversion are zero in each instrument. Favorable movement and execution advantage are missing for 95 candidates: 14 in Ferrari, nine in Nexi, and 72 in Risanamento. Complete reversion is missing for 25 candidates: six, three, and sixteen, respectively. A candidate with incomplete reversion is not replaced by its observed-subset average, and a missing favorable-movement benchmark is not assigned zero. These distinctions keep lack of observation separate from an observed price path that does not support the hypothesized sequence.
+
+
+The ADV bars in Figure~\ref{fig:price-evidence} distinguish the execution price from the movement of the midprice. An execution price can be better than the completed-display midprice without the midprice moving favorably, because the spread also matters. Nonnegative ADV adds a separate requirement to the joint comparison: the execution price must be no worse than the completed-display benchmark under the numerical-zero convention. Missing ADV does not satisfy this requirement. This comparison does not change candidature or review rank. Appendix Table~\ref{tab:candidate-advantage} retains all advantage signs and missing observations for the same full population. The comparison is relative to the saved completed-display benchmark, not realized profit. Prices thus complement the order-level reconstruction rather than supply an automatic exclusion rule.
+
+\FloatBarrier
+\subsection{Roles and attribution}
+\label{subsec:timing_recurrence_results}
+
+The main candidate population contains both passive and aggressive executions and both original-client and firm attribution. Appendix Table~\ref{tab:multiscale-composition} reports each stratum against its execution denominator rather than pooling the roles. Firm attribution accounts for much of the candidate coverage, especially in the two single-day samples. These records connect a firm's activity and can include several clients; they should not be interpreted as decisions by one economic account.
+
+
+
+An execution can lack assigned withdrawal in a short window, or it can be a candidate placed low in the $W$ ranking. Only the former concerns physical eligibility. Keeping role, attribution level, and candidature explicit makes that distinction inspectable without treating every record as an independent economic account. Appendix Table~\ref{tab:candidate-price-strata} separates the full candidate denominators and joint price evidence by role and attribution. Differences in pooled price summaries can reflect this composition; they do not establish a role-specific behavioral mechanism.
+
+\FloatBarrier
+\subsection{From individual executions to clients and intermediaries}
+\label{subsec:participant_group_results}
+
+Execution counts can reflect repeated activity by the same participant rather than many distinct participants. We therefore group the main-specification results in two ways: by identified client and by the intermediary carrying the execution. Client groups retain the original client identity used in reconstruction. Intermediary groups use the original firm identifier for every execution, including identified-client activity as well as firm-only activity. The two views overlap and must not be added together. A firm-only record is not assigned to an invented client.
+
+Each group is compared with its own observed execution activity. The candidate fraction divides its candidate executions by all its executions in that instrument; it is not a manipulation rate. $W$ and $J$ are summarized over the group's candidates without adding execution scores into a participant score. The grouping preserves the original within-instrument execution ranking and includes zero-score and missing-price candidates. Repeated executions can share a display or nearby market conditions, so their number measures recurrence, not independent evidence.
+
+Candidate executions are concentrated among a small part of the identified-client population. Ferrari has seven clients with candidates out of 323 observed clients; Nexi has nine out of 587, and Risanamento has seventeen out of 1,041. Within these identified-client candidates, the largest client contributes 293 of 355 in Ferrari (82.5\%), 385 of 496 in Nexi (77.6\%), and 264 of 403 in Risanamento (65.5\%). Five, seven, and nine clients, respectively, have at least two candidate executions. This recurrence identifies where an account-level review can examine a sequence of decisions rather than isolated executions.
+
+The intermediary view covers all executions, including those without a usable client code. Candidates occur through twenty of 49 observed intermediaries in Ferrari, nineteen of 48 in Nexi, and eleven of 35 in Risanamento. The largest intermediary contributes 702 of 3,526 candidates in Ferrari, 385 of 2,393 in Nexi, and 316 of 995 in Risanamento (Appendix Table~\ref{tab:participant-summary}). These totals describe the activity carried through each intermediary, not a claim that the intermediary or its clients acted jointly.
+
+
+
+The cumulative curves in Figure~\ref{fig:participant-concentration} show how much of this activity is accounted for by the most frequent entities. Within each instrument and view, entities are ordered by decreasing number of candidate executions, not by $W$. At rank $k$, the vertical coordinate is the percentage of that view's candidate executions contributed by its first $k$ entities. The marker at rank one therefore gives the largest entity's share. For example, the first Ferrari client accounts for 82.5\% of the 355 candidates attributed to identified clients; this is not the percentage of that client's executions that are candidates.
+
+The left panel includes only identified-client activity, whereas the right panel groups all activity by intermediary. Their candidate denominators consequently differ: 355, 496, and 403 on the left, compared with 3,526, 2,393, and 995 on the right for Ferrari, Nexi, and Risanamento. The lower initial shares for intermediaries therefore do not contradict the client concentration: the right panel includes firm-only activity absent from the left. In the intermediary view, the first three entities account for 49.0\%, 46.3\%, and 84.9\% of candidates, respectively. Risanamento's candidates are thus concentrated among relatively few intermediaries as well as identified clients.
+
+The logarithmic horizontal axis makes both the first ranks and the many entities without candidates visible. Legend entries report entities with at least one candidate over all observed entities. Each curve reaches 100\% once every entity with candidates has been included, then remains flat as zero-candidate entities are added. This concentration motivates reviewing repeated sequences at participant level, but it does not establish a higher propensity to generate candidates: that comparison requires each entity's own execution denominator, rather than its share of all candidates. Repetition also does not supply independent corroboration of manipulation.
+
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=\textwidth]{generated/simple_notation_20261020/participant_concentration.pdf}
+    \caption{Candidate executions are concentrated, especially among identified clients. Each curve cumulates candidate executions after ordering entities by decreasing candidate count within instrument and view (stable alias ties), not by $W$ or severity. Markers indicate the largest entity. All observed entities remain on the logarithmic rank axis, including zero-candidate groups on the final plateau. Legend counts give entities with candidates/all observed entities. Candidate-share denominators are 355, 496, and 403 for identified clients and 3,526, 2,393, and 995 for intermediaries (Ferrari, Nexi, Risanamento). The overlapping views must not be added. The vertical scale is common; horizontal ranges differ. These are descriptive activity shares, not independent corroboration or manipulation rates.}
+    \label{fig:participant-concentration}
+\end{figure}
+
+The detailed client and intermediary tables in Appendix~\ref{subsec:participant_group_details} retain report-local labels that are consistent across instruments. They show how often the sequence recurs, its $W$ scale, the accompanying profile change, and joint price evidence. Intermediary totals may pool several clients and unidentified accounts; they do not describe the decisions of a single economic account. These summaries locate activity for further inspection, rather than establish intent or compare participant performance across samples with different coverage.
+
+\FloatBarrier
+\subsection{Scope of the empirical comparison}
+\label{subsec:withdrawal_sensitivity_results}
+
+The main specification fixes a 30-second half-life and ten-second observation. Shorter horizons and supplementary age treatments preserve execution identities, depth weights, the profile formula, and the rule for ordering candidates. They expose sensitivity to observation and recency, but do not establish an optimal horizon or half-life. The choices remain exploratory on the inspected samples. The ranking has no model-defined review cutoff and is not calibrated against a false-positive target. Grid resolution, comparison lag, book depth, fill-grouping gap, and alternative assignment rules have not been varied.
+
+Profile support comes from the represented message sequences, not independently certified exchange-feed completeness. Timing retains the operational common-origin assumption for trade and sequence clocks. Prices describe every primary candidate, not every parameter setting. Their retained participant states need not supply fresh global quotes at the target times. These limits leave the structural findings intact: the observed display, assigned cancellations, market scale, profile transitions, and associated prices can be inspected without treating every parameter view as new evidence.
+
+\section{Discussion and Conclusion}
+\label{sec:discussion_conclusion}
+
+Distinguishing possible spoofing from ordinary liquidity management is a surveillance problem because both can produce large visible orders followed by rapid cancellation. The economic distinction concerns the role of the display: in the hypothesized spoofing strategy, it supports an execution on the opposite side before being withdrawn, whereas a liquidity provider may cancel to manage inventory or changing market conditions. The observable sequence alone does not reveal which motive applies.
+
+Our objective is to make that distinction more tractable by reconstructing the sequence at order level and examining its economic context. The method connects the initial display, the participant's opposite-side execution, and subsequent assigned withdrawal. It then asks how substantial that removal is relative to execution and available market depth, whether the displayed profile recedes or is replenished, and whether prices follow the favorable-movement and reversion pattern suggested by the strategy. Keeping these questions separate provides an inspectable review order without treating any single measurement as proof of manipulation.
+
+The application connects physical withdrawal with its market scale. $W$ combines a display and its removal relative to execution with the share of initial opposite-side depth removed. A cancellation total alone does not retain these relationships. The score gives them a common review order, while order-level quantities remain available to explain why an execution receives priority.
+
+The main specification retains 6,914 candidate executions while making the assumptions behind coverage explicit. Gradual age weighting retains older visible orders but emphasizes recent display, and ten-second observation includes removal that follows the first second after a trade. A wider candidate population is not automatically a better detector. The substantive gain is that physical sequences remain inspectable even when their age-weighted score or relative rank is low. Alternative age treatments in the appendix expose the consequences of using a hard boundary or no recency discount.
+
+The review ranking keeps the measurements in their respective roles. $W$ orders candidates by the scale of display and withdrawal; $J$ locates a rapid profile transition to inspect, without controlling which candidates remain. Price observations then show whether favorable movement, subsequent reversion, and nonnegative execution advantage accompany the reconstructed activity. Their joint occurrence is not guaranteed by physical withdrawal, so the accompanying diagnostics refine the interpretation rather than certify or erase the behavior.
+
+The next mechanism-level test is to reconstruct the messages inside the interval attaining $J$. Its change can be separated into the imbalance-change component and the two side-reduction terms, then linked to cancellations, fills, new orders, modifications, and rank changes. The withdrawal hypothesis predicts that removal of the earlier opposite-side display dominates the transition. A replacement explanation predicts restoration of displayed quantity, possibly at other ranks. Tracking absolute participant quantity alongside market-depth denominators would distinguish these explanations; shared physical messages must be counted once.
+
+Matched windows away from executions would then test whether comparable transitions arise from general market conditions. Such controls should preserve participant, day, role, spread, depth, activity, and displayed quantity, and avoid another linked execution. Additional days are particularly important for Ferrari and Nexi. Resolving the clock-origin assumption separately would strengthen the interpretation of the observed delays.
+
+Achieved discrimination requires a separate evaluation at a fixed review budget. Analyst-reviewed outcomes and independently identified legitimate liquidity providers would permit assessment of the $W$ order and of the value of showing the accompanying profile diagnostic. Settings and depth weights should be fixed on earlier data and tested on later days, respecting participant--day and shared-order groups. That design could measure whether the combined evidence improves review yield or reduces market-making false positives. The present descriptive samples do not supply that validation.
+
+
+
+\begin{samepage}
+The contribution is an interpretable account of display, execution, and withdrawal that keeps coverage, market scale, and profile change distinct. It recovers the observable structure of sequences outside a narrow window, places their withdrawal in market context, and locates the messages needed to examine competing mechanisms. This is a positive step toward distinguishing spoofing from ordinary liquidity management: it makes the economic ambiguity inspectable, while leaving classification accuracy and manipulative intent to independent validation.
+\end{samepage}
+
+\FloatBarrier
+\bibliographystyle{abbrv}
+\bibliography{references}
+\clearpage
+\appendix
+\input{sections/simple_appendix_a.tex}
+\input{sections/simple_appendix_b.tex}
+\input{sections/simple_appendix_c.tex}
+\input{sections/simple_appendix_d.tex}
+\input{sections/simple_appendix_e.tex}
+
+\section{Supplementary empirical comparisons}
+\label{sec:withdrawal_diagnostics}
+The supplementary comparisons distinguish physical eligibility from recency weighting. They vary the age treatment and observation horizon while retaining original execution identities. Across all twenty settings, the union contains 6,924 distinct candidate executions (3,532 Ferrari, 2,396 Nexi, and 996 Risanamento), compared with 6,914 in the main setting. The 969,620 parameter cells are repeated views of 48,481 executions, not independent observations. Exclusive cancellation assignment can change with the horizon, so the union is not simply the longest-horizon population.
+
+\subsection{Exact accounting for the main specification}
+\label{subsec:main_results_accounting}
+The following tables report the exact population, score support, diagnostic cases, price signs, role composition, and participant accounting underlying the main results. They describe the full candidate population and its within-instrument $W$ order; the accompanying diagnostics do not define further selections.
+
+\input{generated/simple_notation_20261020/population.tex}
+\FloatBarrier
+\input{generated/simple_notation_20261020/ranking_summary.tex}
+\FloatBarrier
+\input{generated/simple_notation_20261020/anonymouscase_table.tex}
+\FloatBarrier
+\input{generated/simple_notation_20261020/candidate_prices.tex}
+\FloatBarrier
+\input{generated/simple_notation_20261020/composition.tex}
+\FloatBarrier
+\input{generated/simple_notation_20261020/participant_summary.tex}
+\FloatBarrier
+
+\subsection{Alternative treatments of order age}
+The first alternative imposes an abrupt eligibility boundary. It retains candidate orders satisfying
+\begin{equation}
+    0 \leq \rho_c^{\mathrm{start}}-\tau_o \leq \Theta .
+    \label{eq:deceptive_age_window}
+\end{equation}
+We use $\Theta=30$ seconds, including both endpoints, and unit weights on retained orders. The second alternative retains all observable ages with unit weights, making an old order's quantity contribute as much as a recent order's quantity. We also evaluate longer exponential half-lives of $120$ and $300$ seconds to assess weaker recency emphasis. These comparisons are exploratory, not estimates of an optimal decay.
+
+At one second, removing the hard age limit increases candidate counts from 1,912 to 2,665 in Ferrari, from 1,266 to 1,835 in Nexi, and from 100 to 545 in Risanamento. All-age unit weights and the three exponential kernels have the same raw membership at each horizon because weights do not determine physical eligibility or cancellation assignment. Their scores and review order can nevertheless differ. A numerically zero score does not erase raw membership; the supplementary tables retain candidate counts and the support of the accompanying measurements.
+
+\begingroup
+\captionsetup{hypcap=false}
+\par\medskip
+\noindent\begin{minipage}{\textwidth}
+\subsection{Candidate populations across settings}
+\input{generated/simple_notation_20261020/horizon_counts.tex}
+\end{minipage}\par\medskip
+\input{generated/simple_notation_20261020/age_policy_summary.tex}
+\FloatBarrier
+\endgroup
+
+\subsection{Scope of validation}
+The supplementary results compare observation horizon and candidate-age treatment. They do not estimate sensitivity to grid resolution, comparison lag, depth, fill-grouping gap, or alternative assignment rules. Price tables describe the full candidate population under the primary exponential specification, not the full grid. Changes to eligibility can alter assignment, so each parameter setting is reconstructed consistently rather than obtained by relabeling retained observations. Shifted execution windows would require their own exposure definition and common observation support.
+
+The tables and figures use the retained analytical inputs and their publication definitions. Event-level traces and full identity maps remain restricted material. Public-looking aggregate figures do not make their underlying sources freely distributable. The analysis does not supply independent manipulation labels, held-out temporal validation, a verified legitimate-market-maker comparison, an earliest-posting price benchmark, or a reconstruction excluding the participant's full book. These are distinct follow-up designs, not alternative interpretations of the same descriptive summaries.
+
+
+\subsection{Price advantage and role composition in the candidate population}
+The advantage comparison uses the same full candidate population as the main price table. Positive advantage means selling above or buying below the completed-display midprice, not realized profit. The role and attribution strata partition each instrument's denominator and separate its joint price evidence; they do not define new selections.
+\input{generated/simple_notation_20261020/candidate_advantage.tex}
+\FloatBarrier
+\begingroup
+\captionsetup{hypcap=false}
+\input{generated/simple_notation_20261020/candidate_price_strata.tex}
+
+\FloatBarrier
+\subsection{Client and intermediary detail}
+\label{subsec:participant_group_details}
+
+The following tables report every group with at least one primary candidate, separately by instrument. The complete companion CSV files also retain groups with no candidates and all price-sign and missing-outcome counts. C labels denote identified clients; F labels denote intermediaries and are shared by the firm-only and identified-client activity carried through that intermediary. Labels are report-local, not original identifiers. Counts of executions and candidate fractions refer to each group's observed activity, while $W$ and $J$ medians use its supported candidate observations. No cross-instrument score is constructed.
+
+\input{generated/simple_notation_20261020/client_groups.tex}
+\input{generated/simple_notation_20261020/intermediary_groups.tex}
+\endgroup
+
+\end{document}

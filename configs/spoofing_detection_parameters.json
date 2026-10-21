@@ -1,4 +1,16 @@
 {
+  "spoofing_detection_clock_policy_v3": {
+    "policy_id": "spoofing_detection_sequence_replay_trade_fill_sequence_cancel_v3_utc_provisional",
+    "contract": {
+      "replay_clock": "SEQUENCETIME",
+      "duration_clock": "SEQUENCETIME",
+      "cancellation_removal_clock": "SEQUENCETIME",
+      "fill_anchor_clock": "TRADETIME",
+      "timestamp_representation": "UTC epoch nanoseconds",
+      "semantic_fallback": "forbidden",
+      "interval_convention": "left_closed_right_open"
+    }
+  },
   "metrics": {
     "top_n": 10,
     "_comment_top_n": "Numero di livelli visibili bid e ask usati per costruire il profilo di profondità ponderato di ogni attore e calcolare DWI/MSCI.",

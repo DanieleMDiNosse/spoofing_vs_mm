@@ -1,0 +1,55 @@
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[
+        x=2.4cm,
+        y=2.3cm,
+        font=\scriptsize,
+        axis/.style={->, thick},
+        spoof/.style={very thick, red!70!black},
+        maker/.style={very thick, dashed, blue!70!black},
+        event/.style={gray!70, dashed},
+        state/.style={fill=gray!8, draw=gray!45, rounded corners=2pt, align=center}
+    ]
+        \fill[gray!5] (0,-1.05) rectangle (1.7,1.05);
+        \fill[gray!10] (1.7,-1.05) rectangle (3.0,1.05);
+        \fill[gray!5] (3.0,-1.05) rectangle (4.6,1.05);
+
+        \draw[axis] (0,-1.05) -- (0,1.1) node[above] {$I(t)$};
+        \draw[axis] (0,-1.05) -- (4.85,-1.05) node[right] {event time};
+        \draw[gray!50] (-0.05,0) -- (4.65,0);
+
+        \foreach \y/\lab in {-1/$-1$,0/$0$,1/$1$} {
+            \draw (-0.05,\y) -- (0.05,\y) node[left=0.08cm] {\lab};
+        }
+
+        \draw[event] (1.0,-1.05) -- (1.0,1.0);
+        \draw[event] (2.2,-1.05) -- (2.2,1.0);
+        \draw[event] (3.2,-1.05) -- (3.2,1.0);
+
+        \node[state, text width=1.25cm] at (0.5,0.86) {State 1\\posturing};
+        \node[state, text width=1.45cm] at (2.0,0.86) {State 2\\execution};
+        \node[state, text width=1.25cm] at (3.9,0.86) {State 3\\cancel};
+
+        \node[align=center] at (1.0,-1.25) {$S_{c,0}$\\top-ten profile};
+        \node[align=center] at (2.2,-1.25) {$[t_c^{\mathrm{start}},t_c^{\mathrm{end}}]$\\execution};
+        \node[align=center] at (3.2,-1.25) {$\rho_c^{\mathrm{end}}+H$\\profile state};
+
+        \draw[spoof] (0.15,0) -- (0.9,0)
+            -- (1.0,-0.55) -- (2.2,-0.55)
+            -- (2.2,-0.82) -- (3.2,-0.82)
+            -- (3.2,-0.03) -- (4.55,-0.03);
+
+        \draw[maker] (0.15,0) .. controls (1.0,-0.35) and (2.1,-0.45) .. (3.0,-0.25)
+            .. controls (3.7,-0.10) and (4.1,-0.03) .. (4.55,0);
+
+        \node[red!70!black, align=left, anchor=west] at (3.35,-0.72) {stylized conditional-\\withdrawal trajectory};
+        \node[blue!70!black, align=left, anchor=west] at (3.35,0.30) {stylized smooth-\\rebalancing trajectory};
+        \node[align=center] at (2.35,-1.62) {For the opposite spoofing direction, the sign pattern is mirrored.};
+    \end{tikzpicture}
+    \caption{Stylized execution-time behavior of the liquidity imbalance. The conditional-withdrawal
+    trajectory shows a large top-ten imbalance returning rapidly toward zero after the opposite-side execution. The smooth
+    trajectory illustrates gradual rebalancing. Neither trajectory is an empirical classification rule.}
+    \label{fig:topn_imbalance_dynamics}
+\end{figure}
+\FloatBarrier
+

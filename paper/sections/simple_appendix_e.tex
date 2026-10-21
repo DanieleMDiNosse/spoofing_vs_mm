@@ -1,0 +1,37 @@
+\section{Price benchmarks, observations, and numerical conventions}
+\label{sec:price_technical}
+The direction convention used by all price diagnostics is
+\begin{equation}
+    d_c=\begin{cases}+1,&\text{sell execution},\\-1,&\text{buy execution}.\end{cases}
+    \label{eq:price_response_direction}
+\end{equation}
+Multiplication by $d_c$ makes a favorable movement positive. The different letter keeps this sign distinct from the generic age half-life $h$ and bid-side label $b$.
+
+\subsection{Price benchmarks, favorable movement, and reversion}
+\label{subsec:price_response_diagnostics}
+Let $b(t)$ and $a(t)$ be best bid and ask, and $D_{1,b}(t)$ and $D_{1,a}(t)$ total depth there. Midprice is $M_{\mathrm{mid}}(t)=[a(t)+b(t)]/2$. The alternative queue microprice is $M_{\mathrm{micro}}(t)=[a(t)D_{1,b}(t)+b(t)D_{1,a}(t)]/[D_{1,b}(t)+D_{1,a}(t)]$ \cite{Stoikov02122018}. It weights quotes by opposite queues. Diagnostics are missing unless the required quotes and positive top-level depth are available. Write $M(t)$ for either price proxy; the reported price outcomes use midprice and do not enter execution selection.
+
+The placement source position $r_{c,0}$ is the largest first-observed source position among candidate postings. The benchmark $S_{c,0}$ is the exact saved state immediately after that message. The source position must precede the first execution message strictly. If it does not, or if the state is unavailable, the diagnostic is missing. Selecting by source position also resolves equal-timestamp postings. The direction convention and favorable movement are defined in equations~\eqref{eq:price_response_direction} and~\eqref{eq:favorable_price_move}. The pre-execution price is that in the retained participant state, not necessarily the exact adjacent global price.
+
+For cancellation $j$, $M_j^{\mathrm{saved}}$ is selected strictly before it in source order; $M_j^{R}$ is selected at or before $\rho_j+H_R$ with the participant's retained sequence reaching that target. Among eligible states, ties in sequence time use source order. Equation~\eqref{eq:price_reversion} requires finite observations for every assigned cancellation with positive counted quantity. Otherwise complete reversion is undefined. An average over the observed subset is retained separately, not substituted for the complete diagnostic. Neither observation status nor price sign changes execution selection.
+
+To locate this movement, denote exact global prices before and after cancellation by $M_j^-$ and $M_j^+$. With reversion sign $-d_c$, the observed change in ticks decomposes as
+\begin{equation}
+\frac{-d_c(M_j^{R}-M_j^{\mathrm{saved}})}{\mathrm{tick}}
+=\frac{-d_c(M_j^{-}-M_j^{\mathrm{saved}})}{\mathrm{tick}}
++\frac{-d_c(M_j^{+}-M_j^{-})}{\mathrm{tick}}
++\frac{-d_c(M_j^{R}-M_j^{+})}{\mathrm{tick}}.
+\label{eq:observed_rev_decomposition}
+\end{equation}
+The terms are the saved-baseline gap, immediate recorded jump, and later path. Missing components remain missing. This is an accounting identity, not a counterfactual excluding the participant's liquidity. Its components are not separately estimated in the reported results. It does not change candidature or review priority.
+
+Favorable movement, reversion, and execution advantage retain source price units, EUR per share; they are not converted to ticks. The decomposition above is already tick-scaled and serves only to locate components of the observed movement. It does not change candidature, $W$ review order, or the accompanying value of $J$.
+
+\subsection{Numerical zero in price summaries}
+\label{subsec:price_numerical_signs}
+Sign accounting uses an endpoint-scale tolerance to avoid classifying rounding residuals as economic movements. For favorable movement and advantage, the tolerance is eight times the larger spacing between adjacent binary64 values at the two endpoint prices. For reversion, it is the physical-quantity-weighted average of the individual cancellation endpoint tolerances, plus eight such spacings at the aggregate reversion. Raw diagnostic values are retained. Only sign accounting and medians treat values within the tolerance as zero; a reported median is the median of these zero-normalized observations. This is a numerical equality convention, not a minimum economically relevant movement or an adjustment to a ratio denominator.
+
+The numerical-sign comparison retains factors zero, four, eight, sixteen, and thirty-two for every instrument's full candidate population. All three summaries, including their medians, agree at factors four, eight, sixteen, and thirty-two. Factor zero uses strict signs without an endpoint tolerance and is retained separately. The comparison concerns numerical equality, not a change in economic selection: every candidate remains in every denominator, and missing values remain missing under every convention.
+
+
+Equivalently, equation~\eqref{eq:price_reversion} is defined exactly when $\mathcal C_c^{\mathrm{obs}}(H)=\mathcal C_c^+(H)\ne\varnothing$, where the observed subset contains cancellations with both required finite, supported prices. Otherwise its value is undefined. The same physical weights appear in numerator and denominator. Reversion arguments depend on the withdrawal horizon and age policy even though those arguments are suppressed in the price symbols.

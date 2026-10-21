@@ -1,0 +1,124 @@
+\section{Depth-weight calibration and uncertainty}
+\label{sec:depth_calibration}
+\subsection{Eligible snapshots and calibrated weights}
+A participant's level share in equation~\eqref{eq:weighted_topn_liquidity} uses the following zero-depth convention:
+\begin{equation}
+    \left.\frac{V_{k,s}(t)}{D_{k,s}(t)}\right|_{\text{summand}}
+    :=
+    \begin{cases}
+        V_{k,s}(t)/D_{k,s}(t),&D_{k,s}(t)>0,\\
+        0,&D_{k,s}(t)=0.
+    \end{cases}
+    \label{eq:relative_agent_depth}
+\end{equation}
+This is a convention for a summand, not ordinary division by zero or an imputation for missing depth. The full displayed vector is $(V_{1,s}(t),\ldots,V_{10,s}(t))$; only its indices, not its information, are suppressed in the main exposition.
+
+The calibration below concerns one fixed instrument, whose index $m$ we suppress locally; side $s$ and rank $k$ remain explicit. The empirical weights combine the frequency with which trading reaches each rank and the association between its depth and subsequent prices. Let $\mathcal O_{s,k}$ contain post-message snapshots where that rank exists and has positive depth.
+\begin{review}
+A snapshot is the reconstructed book immediately after a message. Its level-$k$ price on side $s$ is the reference price for the following test; it is neither the midprice nor the price of a moving future rank. In the calibration formulas below, $H_{\mathrm{cal}}$ denotes a forward interval measured from the snapshot time $t$. We evaluate these formulas at the fixed calibration horizon $H_{\mathrm{cal}}=1$ second. This is distinct from how long we later observe a participant after an execution.
+\end{review}
+The indicator $\mathbf{1}_{t,k,s}(H_{\mathrm{cal}})$ is one if an execution in $(t,t+H_{\mathrm{cal}}]$ reaches or passes the snapshot price. For an ask, the maximum execution price must be at least that price; for a bid, the minimum must be no higher. The hit frequency is
+\begin{equation}
+    \widehat p^{s}_{k}(H_{\mathrm{cal}})
+    =
+    \frac{
+        \sum_{t\in\mathcal{O}_{s,k}}\mathbf{1}_{t,k,s}(H_{\mathrm{cal}})
+    }{
+        |\mathcal{O}_{s,k}|
+    }.
+    \label{eq:empirical_hit_probability}
+\end{equation}
+Each eligible snapshot contributes once. Reaching a price does not guarantee that a particular order fills, since queue position and intervening events matter. The complement is therefore a descriptive protection measure:
+\begin{equation}
+    \widehat\rho^{s}_{k}(H_{\mathrm{cal}})=1-\widehat p^{s}_{k}(H_{\mathrm{cal}}),
+    \label{eq:empirical_protection_profile}
+\end{equation}
+\begin{review}
+Protection alone is insufficient for the proposed weighting: a level can be rarely reached without being strongly associated with subsequent prices. We therefore add a second component that asks whether the level's relative depth varies with later midprice changes. Its absolute covariance measures association strength while discarding direction. Multiplying the two components expresses the proposed trade-off rather than establishing a behavioral law.
+\end{review}
+The price-association component uses total market depth across both sides:
+\begin{equation}
+    D_{\mathrm{tot}}^{\mathrm{cal}}(t)
+    =
+    \sum_{r=1}^{10}\left(D_{r,a}(t)+D_{r,b}(t)\right).
+    \label{eq:total_topn_market_depth}
+\end{equation}
+A rank's signed share of that total is
+\begin{equation}
+    Z^{s}_{t,k}
+    =
+    \sigma_s\frac{D_{k,s}(t)}{D_{\mathrm{tot}}^{\mathrm{cal}}(t)},
+    \qquad
+    \sigma_s= \begin{cases}
+        +1, & s=a,\\
+        -1, & s=b.
+    \end{cases}
+    \label{eq:normalized_level_contribution}
+\end{equation}
+Ask and bid shares receive opposite signs. For eligible snapshots, let $M_{t,H_{\mathrm{cal}}}$ be the last finite reconstructed midprice after $t$ and no later than $t+H_{\mathrm{cal}}$, and set $\Delta M_{t,H_{\mathrm{cal}}}=M_{t,H_{\mathrm{cal}}}-M(t)$. The set $\mathcal V_{s,k}(H_{\mathrm{cal}})$ retains observations with both midprices finite. Absolute sample covariance measures the strength, not the direction, of the association:
+\begin{equation}
+    \widehat\nu^{s}_{k}(H_{\mathrm{cal}})
+    =
+    \left|
+        \frac{1}{|\mathcal{V}_{s,k}(H_{\mathrm{cal}})|}
+        \sum_{t\in\mathcal{V}_{s,k}(H_{\mathrm{cal}})}
+        \left(Z^{s}_{t,k}-\overline Z^{s}_{k}\right)
+        \left(\Delta M_{t,H_{\mathrm{cal}}}-\overline{\Delta M}^{s}_{k,H_{\mathrm{cal}}}\right)
+    \right|.
+    \label{eq:empirical_visibility_covariance}
+\end{equation}
+Overbars denote means on that observation set. The divisor is its size. We pool across distances before estimating covariance. This quantity has instrument-specific price units and is not a causal price-impact estimate. Equally strong positive and negative associations receive the same weight.
+
+The empirical product bounds protection below by zero and applies a numerical floor to covariance:
+\begin{equation}
+    \widetilde\rho^{s}_{k}(H_{\mathrm{cal}})=\max\{1-\widehat p^{s}_{k}(H_{\mathrm{cal}}),0\},
+    \qquad
+    \widetilde\nu^{s}_{k}(H_{\mathrm{cal}})=\max\{\widehat\nu^{s}_{k}(H_{\mathrm{cal}}),10^{-12}\},
+    \label{eq:empirical_kernel_floors}
+\end{equation}
+Normalizing within each instrument and side gives
+\begin{equation}
+    \widehat w_{k,s}(H_{\mathrm{cal}})
+    =
+    \frac{
+        \widetilde\nu^{s}_{k}(H_{\mathrm{cal}})\,\widetilde\rho^{s}_{k}(H_{\mathrm{cal}})
+    }{
+        \sum_{r=1}^{10}\widetilde\nu^{s}_{r}(H_{\mathrm{cal}})\,\widetilde\rho^{s}_{r}(H_{\mathrm{cal}})
+    }.
+    \label{eq:empirical_depth_kernel}
+\end{equation}
+A finite positive denominator is required; a degenerate product yields no kernel. If covariances are near or below the floor, protection can dominate relative weights. Such weights do not establish meaningful differences in price association. All reported calibrations satisfy the denominator requirement.
+
+\begin{review}
+Depth calibration uses $n=10$ and $H_{\mathrm{cal}}=1$ second, with one fixed weight for each instrument, side, and rank. The shorthand $w_{k,s}\equiv\widehat w_{k,s}(H_{\mathrm{cal}})$ applies these weights to a changing profile within the fixed instrument. We retain the same weights when observing participants over longer intervals: extending observation then changes the period followed, not the definition of the profile. This does not establish that one second is the optimal calibration horizon. The weights use the full sample of each instrument; prospective evaluation would require estimation on an earlier training period.
+\end{review}
+
+\subsection{Side averaging and uncertainty estimation}
+\label{sec:profile_details}
+The instrument- and side-specific estimates and their component profiles are displayed in Section~\ref{subsec:topn_depth_profiles}. The arithmetic average across sides is used only to summarize the calibrated weights visually; the calculations retain the side-specific estimates in Table~\ref{tab:empirical_depth_kernel_calibration}.
+
+
+Restoring the instrument index $m$ for the cross-instrument display, the arithmetic side average is
+\begin{equation}
+    \overline w^{m}_{k}(H_{\mathrm{cal}})
+    =
+    \frac{1}{2}\left(
+        \widehat w^{m}_{k,a}(H_{\mathrm{cal}})
+        +
+        \widehat w^{m}_{k,b}(H_{\mathrm{cal}})
+    \right).
+    \label{eq:side_averaged_empirical_kernel}
+\end{equation}
+Its weights sum to one. This average is for visualization only and does not replace the side-specific weights in calculations. The underlying price-association and hit-frequency profiles are shown in Figures~\ref{fig:empirical_topn_visibility_profiles} and~\ref{fig:empirical_topn_execution_risk_profiles}. The plotted association includes the numerical floor; the hit plot shows frequency, not its protection complement.
+
+For normalized kernel weights and visibility components, we estimate uncertainty by resampling time blocks rather than individual snapshots. Adjacent snapshots share overlapping one-second response windows, so treating them as independent observations would omit their temporal dependence. Separately for each instrument, we assign snapshots to non-overlapping, epoch-aligned 60-second intervals within each recorded partition and day. We retain only occupied intervals. In each bootstrap replicate, we draw the observed number of occupied blocks with replacement from each partition/day. A block may therefore contribute several times or not at all, while the number of draws within each partition/day remains fixed.
+
+Each sampled block contributes its hit and exposure counts and covariance sufficient statistics according to its draw multiplicity. We pool these quantities across blocks to recompute hit frequencies and covariances. The covariance calculation includes differences between block means; it is not an average of within-block covariances. The same block multiplicities apply jointly to both book sides and all ten ranks. Each replicate then recomputes the protection complements and absolute-covariance visibility components, retains the $10^{-12}$ numerical floor, normalizes the weights separately on each side, and calculates their arithmetic side average. This joint procedure retains cross-side and cross-rank dependence in the resampling and propagates uncertainty through normalization.
+
+We generate 500 replicates with random seed 20261012. For each plotted quantity, the standard error is the sample standard deviation of its replicate estimates, not that deviation divided by the square root of the number of replicates. The curves retain the full-sample estimates, and the bars show $\pm1$ standard error. We require finite estimates in every replicate and at least 20 supporting blocks in strata containing two or more blocks; normalized weights additionally require support for every component of their normalization. Unsupported or numerically degenerate bootstrap errors are left undefined rather than reported as zero.
+
+These exploratory errors describe within-day sampling variation conditional on the observed days and occupied periods, not between-day variation. The fixed-block approximation assumes sufficiently weak dependence beyond the block duration; it does not establish that adjacent blocks are independent. Sensitivity to the 60-second block duration has not been assessed. The hit-frequency bars in \cref{fig:empirical_topn_execution_risk_profiles} instead use the analytical independence-based standard error $s/\sqrt{N}$ specified in its caption.
+
+
+
+

@@ -19,9 +19,89 @@ import polars as pl
 
 from .actor_identity import ActorIdentity, actor_identity_from_order
 from .config import LOBConfig
+from .empirical_clock import CLOCK_POLICY_ID, resolve_empirical_clocks
 from .models import ActiveOrder
 from .panel import ReplayHooks, replay_events
 from .replay_observation import choose_event_timestamp
+
+@dataclass(frozen=True)
+class _NanoDelta:
+    value: int
+
+    @staticmethod
+    def _ns(other: object) -> int | Any:
+        if isinstance(other, _NanoDelta):
+            return other.value
+        if isinstance(other, timedelta):
+            return int(other.total_seconds() * 1_000_000_000)
+        return NotImplemented
+
+    def total_seconds(self) -> float:
+        return self.value / 1_000_000_000
+
+    def __eq__(self, other: object) -> bool:
+        value = self._ns(other)
+        return False if value is NotImplemented else self.value == value
+
+    def __lt__(self, other: object) -> bool:
+        value = self._ns(other)
+        if value is NotImplemented:
+            return NotImplemented
+        return self.value < value
+
+    def __le__(self, other: object) -> bool:
+        value = self._ns(other)
+        if value is NotImplemented:
+            return NotImplemented
+        return self.value <= value
+
+    def __gt__(self, other: object) -> bool:
+        value = self._ns(other)
+        if value is NotImplemented:
+            return NotImplemented
+        return self.value > value
+
+    def __ge__(self, other: object) -> bool:
+        value = self._ns(other)
+        if value is NotImplemented:
+            return NotImplemented
+        return self.value >= value
+
+
+@dataclass(frozen=True, order=True)
+class _NanoTimestamp:
+    value: int
+
+    def __add__(self, delta: timedelta) -> _NanoTimestamp:
+        return _NanoTimestamp(self.value + int(delta.total_seconds() * 1_000_000_000))
+
+    def __sub__(self, other: _NanoTimestamp) -> _NanoDelta:
+        return _NanoDelta(self.value - other.value)
+
+    def date(self) -> date:
+        seconds = self.value // 1_000_000_000
+        return (datetime(1970, 1, 1) + timedelta(seconds=seconds)).date()
+
+    def isoformat(self) -> str:
+        return _clock_output(self).isoformat()
+
+
+ClockValue = datetime | _NanoTimestamp
+
+
+def _clock_output(value: Any) -> Any:
+    if not isinstance(value, _NanoTimestamp):
+        return value
+    seconds, nanoseconds = divmod(value.value, 1_000_000_000)
+    return datetime(1970, 1, 1) + timedelta(seconds=seconds, microseconds=nanoseconds // 1_000)
+
+
+def _clock_ns(value: ClockValue) -> int:
+    if isinstance(value, _NanoTimestamp):
+        return value.value
+    epoch = datetime(1970, 1, 1)
+    delta = value - epoch
+    return ((delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds) * 1_000
 
 ACTOR_SCHEMA: dict[str, pl.DataType] = {
     "actor_key": pl.String, "actor_id": pl.String, "identity_level": pl.String,
@@ -30,7 +110,8 @@ ACTOR_SCHEMA: dict[str, pl.DataType] = {
 INTERVAL_SCHEMA: dict[str, pl.DataType] = {
     "risk_interval_id": pl.String, "instrument": pl.String, "partition_id": pl.String,
     "event_date": pl.Date, **ACTOR_SCHEMA, "side": pl.String, "coverage_epoch_id": pl.String,
-    "start_ts": pl.Datetime("us"), "end_ts": pl.Datetime("us"), "duration_seconds": pl.Float64,
+    "start_ts": pl.Datetime("us"), "end_ts": pl.Datetime("us"),
+    "start_ns": pl.Int64, "end_ns": pl.Int64, "duration_seconds": pl.Float64,
     "member_count": pl.Int64, "eligible_visible_qty": pl.Float64,
     "mean_member_age_seconds": pl.Float64, "oldest_member_age_seconds": pl.Float64,
     "membership_signature": pl.String,
@@ -40,13 +121,15 @@ MEMBERSHIP_SCHEMA: dict[str, pl.DataType] = {
     "partition_id": pl.String, "event_date": pl.Date, "order_id": pl.String,
     "first_seen_sort_index": pl.Int64, **ACTOR_SCHEMA, "side": pl.String,
     "coverage_epoch_id": pl.String, "eligible_start_ts": pl.Datetime("us"),
-    "eligible_end_ts": pl.Datetime("us"), "duration_seconds": pl.Float64,
+    "eligible_end_ts": pl.Datetime("us"), "eligible_start_ns": pl.Int64,
+    "eligible_end_ns": pl.Int64, "duration_seconds": pl.Float64,
     "start_reason": pl.String, "end_reason": pl.String,
 }
 WITHDRAWAL_SCHEMA: dict[str, pl.DataType] = {
     "withdrawal_event_id": pl.String, "instrument": pl.String, "physical_order_key": pl.String,
     "partition_id": pl.String, "event_date": pl.Date, "sort_index": pl.Int64,
-    "event_ts": pl.Datetime("us"), **ACTOR_SCHEMA, "side": pl.String, "coverage_epoch_id": pl.String,
+    "event_ts": pl.Datetime("us"), "event_ns": pl.Int64,
+    **ACTOR_SCHEMA, "side": pl.String, "coverage_epoch_id": pl.String,
     "order_id": pl.String,
     "first_seen_sort_index": pl.Int64, "visible_qty_removed": pl.Float64,
     "transition_reason": pl.String,
@@ -61,6 +144,7 @@ TRANSITION_SCHEMA: dict[str, pl.DataType] = {
 COVERAGE_SCHEMA: dict[str, pl.DataType] = {
     "instrument": pl.String, "partition_id": pl.String, "event_date": pl.Date,
     "coverage_epoch_id": pl.String, "start_ts": pl.Datetime("us"), "end_ts": pl.Datetime("us"),
+    "start_ns": pl.Int64, "end_ns": pl.Int64,
     "end_reason": pl.String,
 }
 DIAGNOSTIC_SCHEMA: dict[str, pl.DataType] = {
@@ -70,6 +154,7 @@ DIAGNOSTIC_SCHEMA: dict[str, pl.DataType] = {
 MARKET_SCHEMA: dict[str, pl.DataType] = {
     "instrument": pl.String, "partition_id": pl.String, "event_date": pl.Date,
     "coverage_epoch_id": pl.String, "start_ts": pl.Datetime("us"), "end_ts": pl.Datetime("us"),
+    "start_ns": pl.Int64, "end_ns": pl.Int64,
     "spread": pl.Float64, "depth": pl.Float64, "prior_event_count_60s": pl.Int64,
 }
 _TABLE_SCHEMAS = {
@@ -104,7 +189,7 @@ class _Member:
     actor: ActorIdentity
     side: str
     visible_qty: float
-    origin_ts: datetime
+    origin_ts: ClockValue
     coverage_epoch_id: str
 
     @property
@@ -122,11 +207,11 @@ class _Rows:
         self.rows: dict[str, list[dict[str, Any]]] = {name: [] for name in _TABLE_SCHEMAS}
         self.counters: dict[str, int] = {name: 0 for name in _TABLE_SCHEMAS}
 
-    def emit(self, name: str, row: dict[str, Any]) -> None:
-        self.rows[name].append(row)
-        self.counters[name] += 1
-        if self.sink is not None and len(self.rows[name]) >= self.buffer_rows:
-            self.flush(name)
+    def emit(self, table: str, row: dict[str, Any]) -> None:
+        self.rows[table].append({key: _clock_output(value) for key, value in row.items()})
+        self.counters[table] += 1
+        if self.sink is not None and len(self.rows[table]) >= self.buffer_rows:
+            self.flush(table)
 
     def flush(self, name: str) -> None:
         rows = self.rows[name]
@@ -194,29 +279,39 @@ def _validate_args(top_n: int, max_order_age_seconds: float) -> None:
 
 class _Observer:
     def __init__(self, *, instrument: str, top_n: int, max_age: float,
-                 original_sort_indices: Mapping[int, int] | None, writer: _Rows) -> None:
+                 original_sort_indices: Mapping[int, int] | None, writer: _Rows,
+                 clock_policy_id: str | None = None) -> None:
         self.instrument, self.top_n, self.max_age = instrument, top_n, timedelta(seconds=max_age)
         self.original = original_sort_indices
         self.writer = writer
+        self.clock_policy_id = clock_policy_id
         self.partition_id: str | None = None
         self.event_date: date | None = None
-        self.last_ts: datetime | None = None
-        self.high_water: datetime | None = None
+        self.last_ts: ClockValue | None = None
+        self.high_water: ClockValue | None = None
         self.quarantine = False
         self.epoch: str | None = None
-        self.epoch_start: datetime | None = None
+        self.epoch_start: ClockValue | None = None
         self.epoch_counter = 0
-        self.origins: dict[str, datetime] = {}
+        self.origins: dict[str, ClockValue] = {}
         self.state: dict[str, _Member] = {}
-        self.membership_open: dict[str, tuple[_Member, datetime, str]] = {}
-        self.group_open: dict[tuple[str, date, str, str, str], tuple[datetime, dict[str, _Member]]] = {}
-        self.expiries: list[tuple[datetime, str]] = []
+        self.membership_open: dict[str, tuple[_Member, ClockValue, str]] = {}
+        self.group_open: dict[tuple[str, date, str, str, str], tuple[ClockValue, dict[str, _Member]]] = {}
+        self.expiries: list[tuple[ClockValue, str]] = []
         self.scheduled_expiries: set[str] = set()
         self.emitted_withdrawal_messages: set[tuple[Any, ...]] = set()
         self.point_member: _Member | None = None
-        self.activity: deque[datetime] = deque()
-        self.market_open: tuple[datetime, tuple[Any, ...]] | None = None
+        self.activity: deque[ClockValue] = deque()
+        self.market_open: tuple[ClockValue, tuple[Any, ...]] | None = None
         self.interval_id = self.membership_id = self.withdrawal_id = self.transition_id = self.market_id = 0
+
+    def clock(self, event: Mapping[str, Any]) -> tuple[ClockValue | None, tuple[str, ...]]:
+        if self.clock_policy_id is None:
+            return choose_event_timestamp(event), ()
+        decision = resolve_empirical_clocks(event)
+        if decision.replay_time_ns is None:
+            return None, decision.incompatibilities
+        return _NanoTimestamp(decision.replay_time_ns), decision.incompatibilities
 
     def source_index(self, local: int) -> int:
         if self.original is None:
@@ -242,7 +337,8 @@ class _Observer:
         self._close_market(self.last_ts)
         self.writer.emit("coverage_epochs", {"instrument": self.instrument, "partition_id": self.partition_id,
             "event_date": self.event_date, "coverage_epoch_id": self.epoch, "start_ts": self.epoch_start,
-            "end_ts": self.last_ts, "end_reason": reason})
+            "end_ts": self.last_ts, "start_ns": _clock_ns(self.epoch_start), "end_ns": _clock_ns(self.last_ts),
+            "end_reason": reason})
         self.clear_risk()
 
     def clear_risk(self) -> None:
@@ -303,6 +399,7 @@ class _Observer:
         self.writer.emit("intervals", {"risk_interval_id": f"compact-risk-{self.interval_id}",
             "instrument": self.instrument, "partition_id": group[0], "event_date": group[1], **_identity(first.actor),
             "side": group[3], "coverage_epoch_id": group[4], "start_ts": start, "end_ts": end,
+            "start_ns": _clock_ns(start), "end_ns": _clock_ns(end),
             "duration_seconds": (end - start).total_seconds(), "member_count": len(members),
             "eligible_visible_qty": sum(item.visible_qty for item in members.values()),
             "mean_member_age_seconds": sum(ages) / len(ages), "oldest_member_age_seconds": max(ages),
@@ -330,7 +427,9 @@ class _Observer:
             "instrument": self.instrument, "physical_order_key": key, "partition_id": item.partition_id,
             "event_date": item.event_date, "order_id": item.order_id, "first_seen_sort_index": item.first_seen_sort_index,
             **_identity(item.actor), "side": item.side, "coverage_epoch_id": item.coverage_epoch_id,
-            "eligible_start_ts": start, "eligible_end_ts": at, "duration_seconds": (at-start).total_seconds(),
+            "eligible_start_ts": start, "eligible_end_ts": at,
+            "eligible_start_ns": _clock_ns(start), "eligible_end_ns": _clock_ns(at),
+            "duration_seconds": (at-start).total_seconds(),
             "start_reason": start_reason, "end_reason": reason})
 
     def _transition(self, item: _Member, ts: datetime, local: int, reason: str, post: float | None = None) -> None:
@@ -389,7 +488,8 @@ class _Observer:
         assert self.partition_id is not None and self.event_date is not None and self.epoch is not None
         self.writer.emit("market_intervals", {"instrument": self.instrument,
             "partition_id": self.partition_id, "event_date": self.event_date, "coverage_epoch_id": self.epoch,
-            "start_ts": start, "end_ts": at, "spread": values[0], "depth": values[1],
+            "start_ts": start, "end_ts": at, "start_ns": _clock_ns(start), "end_ns": _clock_ns(at),
+            "spread": values[0], "depth": values[1],
             "prior_event_count_60s": values[2]})
         self.market_open = None
 
@@ -423,7 +523,7 @@ class _Observer:
         # Validate every canonical event, including events that never produce an
         # output row.  A supplied map must be a total local-to-original mapping.
         self.source_index(local)
-        ts = choose_event_timestamp(event)
+        ts, incompatibilities = self.clock(event)
         if (self.epoch is None or self.quarantine or ts is None or self.high_water is None
                 or ts < self.high_water or _partition(event) != self.partition_id):
             return
@@ -439,12 +539,15 @@ class _Observer:
                                       if item.order_id == str(event.get("ORDERID"))), None)
 
     def post(self, event: dict[str, Any], active: dict[str, ActiveOrder], partition_id: str | None, flags: list[str]) -> None:
-        ts = choose_event_timestamp(event); current_partition = _partition(event); current_date = _event_date(event, ts)
+        ts, incompatibilities = self.clock(event); current_partition = _partition(event); current_date = _event_date(event, ts)
         local = int(event["sort_index"])
         if self.partition_id is not None and current_partition != self.partition_id:
             self.close_epoch("partition_boundary")
             self.high_water = None; self.quarantine = False
         self.partition_id, self.event_date = current_partition, current_date
+        for reason in incompatibilities:
+            if reason != "missing_sequencetime":
+                self.diagnostic(event, ts, reason)
         if ts is None:
             self.diagnostic(event, None, "missing_event_timestamp", "coverage interrupted")
             if self.last_ts is not None:
@@ -469,17 +572,24 @@ class _Observer:
         self._expire_to(ts, active, local)
         event_order = str(event.get("ORDERID")) if event.get("ORDERID") is not None else None
         if event.get("event_class") == "cancel":
+            decision = resolve_empirical_clocks(event) if self.clock_policy_id is not None else None
+            endpoint_ns = (
+                decision.cancellation_removal_ns
+                if decision is not None else _clock_ns(ts)
+            )
             pre = self.point_member
             if pre is not None:
                 message_key: tuple[Any, ...] = (pre.physical_key, event.get("EVENTID"), event.get("event_class"),
                     event.get("LEAVESQTY"), event.get("DISPLAYEDQTY"), ts)
             else:
                 message_key = ()
-            if pre is not None and message_key not in self.emitted_withdrawal_messages:
+            if pre is not None and endpoint_ns is not None and message_key not in self.emitted_withdrawal_messages:
                 self.withdrawal_id += 1; self.emitted_withdrawal_messages.add(message_key)
                 self.writer.emit("withdrawal_events", {"withdrawal_event_id": f"compact-withdrawal-{self.withdrawal_id}",
                     "instrument": self.instrument, "physical_order_key": pre.physical_key, "partition_id": pre.partition_id,
-                    "event_date": pre.event_date, "sort_index": self.source_index(local), "event_ts": ts, **_identity(pre.actor),
+                    "event_date": pre.event_date, "sort_index": self.source_index(local),
+                    "event_ts": _NanoTimestamp(endpoint_ns), "event_ns": endpoint_ns,
+                    **_identity(pre.actor),
                     "side": pre.side, "coverage_epoch_id": pre.coverage_epoch_id, "order_id": pre.order_id,
                     "first_seen_sort_index": pre.first_seen_sort_index,
                     "visible_qty_removed": pre.visible_qty, "transition_reason": "cancellation"})
@@ -522,6 +632,7 @@ def compute_compact_risk(
     original_sort_indices: Mapping[int, int] | None = None,
     sink: Callable[[str, list[dict]], None] | None = None,
     buffer_rows: int = 10_000,
+    clock_policy_id: str | None = None,
 ) -> CompactRiskResult:
     """Compute compact actor-side top-N risk using canonical ``ReplayHooks``.
 
@@ -533,10 +644,23 @@ def compute_compact_risk(
     if not isinstance(instrument, str) or not instrument:
         raise ValueError("instrument must be nonempty text")
     _validate_args(top_n, max_order_age_seconds)
+    if clock_policy_id not in {None, CLOCK_POLICY_ID}:
+        raise ValueError(f"unknown clock policy: {clock_policy_id}")
+    replay_input = raw_events
+    if clock_policy_id is not None:
+        native_ns = [
+            name for name in ("SEQUENCETIME", "BOOKIN", "BOOKOUTTIME", "TRADETIME")
+            if name in raw_events.columns and raw_events.schema[name] == pl.Datetime("ns")
+        ]
+        if native_ns:
+            replay_input = raw_events.with_columns(
+                pl.col(name).cast(pl.Int64).alias(name) for name in native_ns
+            )
     writer = _Rows(sink, buffer_rows)
     observer = _Observer(instrument=instrument, top_n=top_n, max_age=max_order_age_seconds,
-                         original_sort_indices=original_sort_indices, writer=writer)
-    replay_events(raw_events, config=config or LOBConfig(), hooks=ReplayHooks(
+                         original_sort_indices=original_sort_indices, writer=writer,
+                         clock_policy_id=clock_policy_id)
+    replay_events(replay_input, config=config or LOBConfig(), hooks=ReplayHooks(
         on_pre_event=observer.pre, on_post_event=observer.post, on_partition_end=observer.partition_end,
     ), retain_events=False)
     return observer.result()

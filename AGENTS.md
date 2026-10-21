@@ -1,0 +1,19 @@
+# Obiettivo scientifico e regole di lavoro
+
+Questo repository sostiene un paper scientifico su un detector di sequenze del limit order book compatibili con spoofing. L'obiettivo è produrre un'analisi empirica corretta, riproducibile e ispezionabile, non costruire una piattaforma generale di sorveglianza o dimostrare l'intento manipolativo. Il manoscritto principale è `paper/spoofing_new.tex`; per la sua prosa valgono anche le istruzioni specifiche in `paper/AGENTS.md`.
+
+## Priorità scientifiche
+
+- Trattare gli output come segnali per il triage: distinguere messaggi, execution cluster, candidate-posture episodes e segnali che superano il gate strict. Non chiamarli manipolazioni confermate, non inferire intento o prevalenza e non attribuire causalità a un semplice confronto descrittivo.
+- Conservare identità originali e livello di attribuzione (client o firm fallback), partizione e ordinamento canonico degli eventi. Dichiarare lato, ruolo passive/aggressive, finestra temporale e denominatore di ogni risultato. Per l'analisi episodica non sostituire le coppie `(episode_id, execution_cluster_id)` con i soli cluster.
+- Prima di interpretare risultati distinti per ruolo, verificare il significato dei flag passive/aggressive nei dati e nel codice; in mancanza di una verifica, qualificare la classificazione come derivata dai flag sorgente.
+- Non mescolare versioni del detector o delle policy temporali: bundle, config, audit degli alert, generatore di tabelle, macro, figure e testo del paper devono riferirsi alla stessa analisi. Verificare manifest e provenance prima di riutilizzare output; non correggere discrepanze cambiando solo un numero nel manoscritto.
+- Mantenere timestamp e confronti in nanosecondi interi. La griglia osservata di `TRADETIME` a 1 ms non implica precisione effettiva al ns; l'origine UTC comune di `TRADETIME` e `SEQUENCETIME` è un'assunzione operativa per i run esplorativi, non una garanzia documentale. Se questa assunzione è contraddetta dai dati, fermare l'interpretazione e definire una nuova policy/versione.
+- Riportare limiti, incertezza e sensibilità quando possono cambiare una conclusione. Gli alert esterni non sono etichette indipendenti di manipolazione; i confronti tra strumenti con coperture diverse sono descrittivi.
+
+## Modo di lavorare
+
+- Prima di modificare codice o testo, leggere implementazione, test, configurazione e provenance pertinenti; fare la modifica minima che risolve il problema scientifico e verificare con test mirati e controlli sulle quantità effettivamente riportate. Per risultati destinati al paper, validare anche bundle e artefatti generati, non solo l'esito dei test.
+- Preservare input grezzi e output validati. Creare nuove directory per i run; eseguire strumenti pesanti uno per volta con supervisione e limiti pratici di risorse, poi validare ciascun bundle separatamente. Riutilizzare il bundle NEXI v3 già validato per il workflow v3; non ripiegare silenziosamente su v2/legacy. Percorsi e stato corrente sono nel piano `.hermes/plans/2026-09-27_213628-v3-detector-safety-and-empirical-completion.md`: verificarli prima dell'uso, perché un piano non certifica lo stato live.
+- Bloccare un risultato se cambiano significato di ruolo/clock, identità, denominatore, gate, versione degli input o claim del paper. Chiedere una decisione quando sono possibili interpretazioni scientifiche diverse; non bloccare automaticamente il lavoro per hardening opzionale. Scegliere salvaguardie proporzionate al rischio reale, senza nuovi audit, framework o prove infrastrutturali privi di una domanda scientifica concreta.
+- Non sovrascrivere modifiche altrui, non includere segreti nei report e non fare commit o push senza richiesta esplicita. Al termine distinguere fatti verificati, assunzioni e questioni aperte, indicando comandi e artefatti usati.

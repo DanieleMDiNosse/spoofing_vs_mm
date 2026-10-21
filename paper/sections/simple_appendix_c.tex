@@ -1,0 +1,34 @@
+\section{Technical definitions of profile change and the rapid increment}
+\label{sec:profile_technical}
+\subsection{Baseline, reductions, and profile shift}
+The states $t_c^-$ and $t_c^+$ follow Appendix~\ref{sec:data_details}. The profile includes all displayed orders at the first ten occupied levels, irrespective of age. The fixed depth weights remain calibrated at $H_{\mathrm{cal}}=1$ second. Age policies for candidate orders do not restrict the complete profile.
+
+The unscaled imbalance-change component is
+\begin{equation}
+    \left|I(t_c^-)-I(t_c^+)\right|\in[0,2],
+    \label{eq:topn_sci}
+\end{equation}
+when both imbalance values are defined. Multiplying this component by one half gives the first term of equation~\eqref{eq:signed_msci}, on the same $[0,1]$ scale as each side reduction in equation~\eqref{eq:side_collapse}. Reversing the order inside the absolute value has no effect. Substituting the two reductions gives exactly the profile shift in that equation; no clipping is applied. Positive shifts mean imbalance change and opposite-side reduction outweigh execution-side reduction; negative shifts mean execution-side reduction dominates.
+
+For an observed initial side with zero weighted liquidity, its reduction is zero. Otherwise it is the positive part of the liquidity decrease divided by the initial share. A required profile state being unavailable makes the comparison missing; the zero-initial branch is not permission to invent an absent state. A valid profile with both sides absent has an undefined imbalance, except for the single disappearance marker retained in the reconstructed series. Other undefined values stay missing. A reduction of one denotes disappearance of an initially present side; increases and unchanged shares give zero. These are reductions in weighted shares, not quantities of cancelled orders. Fills, new orders, rank changes, and changing market-depth denominators can affect them.
+
+\subsection{Grid and maximizing intervals}
+Let $u$ be elapsed sequence time after $\rho_c^{\mathrm{end}}$. We evaluate $\Phi_c(u)$ by using the profile at $\rho_c^{\mathrm{end}}+u$ instead of $t_c^+$ in equation~\eqref{eq:signed_msci}, holding $t_c^-$ and both initial-side denominators fixed. At zero, the state is the exact post-final-execution-message state. The complete grid and admissible comparisons are
+\begin{equation}
+    u_k=k\Delta,\quad k=0,\ldots,K,\quad K\Delta=H,
+    \qquad \Delta=10\ \mathrm{ms},\quad
+    \lambda=\frac{\delta}{\Delta}=5,\quad\delta=50\ \mathrm{ms}.
+    \label{eq:profile_grid_definition}
+\end{equation}
+The maximum in equation~\eqref{eq:msci_grid_increment} runs over $k=\lambda,\ldots,K$ and includes both horizon endpoints in the grid. The integer lag $\lambda$ is distinct from the weighted share $\ell_s(t)$. For horizons one, two, five, and ten seconds, $K$ is respectively 100, 200, 500, and 1,000. Only the available observation period changes. We select the first maximizing interval when positive increments tie; $J=0$ has no positive-change interval. Complete $J$ requires the valid baseline, exact post-state, and every node on the closed grid. Missing nodes do not produce a shorter-window surrogate or a zero value.
+
+A constant shift has $J=0$. A sharp positive increase can have a large $J$ even if the profile later returns; persistence is not determined by this maximum. For comparisons on common horizon support, we retain executions that are candidates in at least one setting and have valid profiles at all four horizons, not only executions with positive withdrawal at every horizon. Missing $J$ never removes a physical candidate.
+
+\subsection{Canonical ordering and observation support}
+\label{subsec:msci_grid_support}
+The trajectory uses the last retained participant state whose source position strictly precedes the first execution message as its fixed reference. No additional maximum age is imposed on that retained state. The state at $u=0$ must coincide with the source position of the final execution message and its sequence time. Thus a later message at the same timestamp does not replace the execution's exact post-state. For $u>0$, only states at or after the final execution message in source order are eligible. Among them, we select the last state in canonical order whose sequence time is no later than the target. When later messages share a target timestamp, the last such message supplies the state. This convention retains the distinction between source order and clock time.
+
+A valid node requires finite profile components and represented-event support from the fixed reference through its target. Sequence times must be nondecreasing in canonical order over the relevant segment. The support evidence comes from saved normalized message sequences linked to the same analytical inputs. It covers the trading partition and checks recorded invalid intervals; a pause between messages is not, by itself, classified as missing coverage. This supports carrying an unchanged state forward within the represented sequence, not certifying that the external feed contains every exchange message. Unsupported targets, invalid profiles, clock regressions, and missing reference or exact post-states remain explicitly invalid. Complete $J$ requires every node on the closed grid, so an incomplete execution is not assigned zero or compared using only its observed fragments.
+
+The profile weights and before-execution reference remain fixed throughout each trajectory. Selection and price joins preserve the full execution identity, including instrument, trading partition, and participant. To assess persistence, we compare endpoint profile shift with the highest profile-shift level observed anywhere on its trajectory, not with the endpoint of the interval maximizing $J$. Numerically negligible peak-to-endpoint differences within $10^{-12}$ are treated as equal only for this diagnostic.
+

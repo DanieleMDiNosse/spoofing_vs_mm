@@ -14,6 +14,8 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import polars as pl
 
+from .empirical_clock import CLOCK_POLICY_ID
+
 HORIZON = timedelta(seconds=2)
 SHIFT_OFFSETS = (-60, -30, 0, 30, 60)
 STATES = ("no_own_observed", "own_passive_only", "own_aggressive_only", "own_mixed")
@@ -73,9 +75,54 @@ CLUSTER_REQUIRED = {"instrument", "partition_id", "event_date", *IDENTITY, "even
 COVERAGE_REQUIRED = {"instrument", "partition_id", "event_date", "coverage_epoch_id", "start_ts", "end_ts", "end_reason"}
 MARKET_REQUIRED = {"instrument", "partition_id", "event_date", "coverage_epoch_id", "start_ts", "end_ts", "spread", "depth", "prior_event_count_60s"}
 MARKET_FIELDS = ("spread", "depth", "prior_event_count_60s")
-WindowRow = tuple[datetime, datetime, int]
-WindowIndex = tuple[Sequence[datetime], Sequence[WindowRow]]
-MarketIndex = tuple[Sequence[datetime], Sequence[dict[str, Any]]]
+_NANOSECONDS_PER_SECOND = 1_000_000_000
+
+
+@dataclass(frozen=True)
+class _NanoDelta:
+    value: int
+
+    def total_seconds(self) -> float:
+        return self.value / _NANOSECONDS_PER_SECOND
+
+    def __truediv__(self, divisor: int) -> _NanoDelta:
+        return _NanoDelta(self.value // divisor)
+
+
+@dataclass(frozen=True, order=True)
+class _NanoTimestamp:
+    value: int
+
+    def __add__(self, delta: timedelta | _NanoDelta) -> _NanoTimestamp:
+        if isinstance(delta, _NanoDelta):
+            return _NanoTimestamp(self.value + delta.value)
+        return _NanoTimestamp(self.value + int(delta.total_seconds() * _NANOSECONDS_PER_SECOND))
+
+    def __sub__(self, other: _NanoTimestamp | timedelta) -> _NanoDelta | _NanoTimestamp:
+        if isinstance(other, _NanoTimestamp):
+            return _NanoDelta(self.value - other.value)
+        return _NanoTimestamp(self.value - int(other.total_seconds() * _NANOSECONDS_PER_SECOND))
+
+    def _display(self) -> datetime:
+        seconds, nanoseconds = divmod(self.value, _NANOSECONDS_PER_SECOND)
+        return datetime(1970, 1, 1) + timedelta(seconds=seconds, microseconds=nanoseconds // 1_000)
+
+    def replace(self, **kwargs: int) -> _NanoTimestamp:
+        value = self._display().replace(**kwargs)
+        delta = value - datetime(1970, 1, 1)
+        return _NanoTimestamp(((delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds) * 1_000)
+
+    def strftime(self, format: str) -> str:
+        return self._display().strftime(format)
+
+    def date(self) -> date:
+        return self._display().date()
+
+
+ClockValue = datetime | _NanoTimestamp
+WindowRow = tuple[ClockValue, ClockValue, int]
+WindowIndex = tuple[Sequence[ClockValue], Sequence[WindowRow]]
+MarketIndex = tuple[Sequence[ClockValue], Sequence[dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -103,12 +150,45 @@ def _require(frame: pl.DataFrame, fields: set[str], name: str) -> list[dict[str,
     return frame.to_dicts()
 
 
-def _band_start(value: datetime) -> datetime:
-    return value.replace(minute=(value.minute // 30) * 30, second=0, microsecond=0)
+def _exact_ns_rows(
+    rows: list[dict[str, Any]], *, table: str, fields: Mapping[str, str],
+) -> list[dict[str, Any]]:
+    """Replace display clocks with exact policy clocks after strict validation."""
+    result = []
+    for row in rows:
+        normalized = dict(row)
+        for display, exact in fields.items():
+            value = row.get(exact)
+            if type(value) is not int:
+                raise ValueError(f"selected clock policy requires integer {exact} in {table}")
+            normalized[display] = _NanoTimestamp(value)
+        result.append(normalized)
+    return result
 
 
-def _band_id(value: datetime) -> str:
+def _is_clock(value: Any) -> bool:
+    return isinstance(value, (datetime, _NanoTimestamp))
+
+
+def _band_start(value: ClockValue) -> ClockValue:
+    display = value._display() if isinstance(value, _NanoTimestamp) else value
+    return value.replace(minute=(display.minute // 30) * 30, second=0, microsecond=0)
+
+
+def _band_id(value: ClockValue) -> str:
     return _band_start(value).strftime("%H:%M")
+
+
+def _cluster_anchor(row: Mapping[str, Any]) -> ClockValue:
+    if row.get("clock_policy_id") == CLOCK_POLICY_ID:
+        value = row.get("fill_anchor_ns")
+        if type(value) is not int:
+            raise ValueError("selected clock policy requires integer fill_anchor_ns")
+        return _NanoTimestamp(value)
+    anchor = row.get("cluster_end_ts")
+    if not isinstance(anchor, datetime):
+        raise ValueError("legacy cluster requires datetime cluster_end_ts")
+    return anchor
 
 
 def _opposite(side: str) -> str:
@@ -135,15 +215,16 @@ def _row_group(row: Mapping[str, Any], key: tuple[Any, ...]) -> dict[str, Any]:
     return dict(zip(GROUP_FIELDS, key, strict=True))
 
 
-def _clip(start: datetime, end: datetime, lower: datetime, upper: datetime) -> tuple[datetime, datetime] | None:
+def _clip(start: ClockValue, end: ClockValue, lower: ClockValue, upper: ClockValue) -> tuple[ClockValue, ClockValue] | None:
     left, right = max(start, lower), min(end, upper)
     return (left, right) if right > left else None
 
 
-def _contains_piece(pieces: list[dict[str, Any]], point: datetime) -> bool:
+def _contains_piece_index(
+    starts: Sequence[ClockValue], pieces: Sequence[dict[str, Any]], point: ClockValue,
+) -> bool:
     # Intervals are indexed/sorted; a point belongs to a positive half-open
     # interval, or to the explicitly retained zero-duration risk boundary.
-    starts = [piece["start"] for piece in pieces]
     i = bisect_right(starts, point) - 1
     for candidate in (i, i + 1):
         if 0 <= candidate < len(pieces):
@@ -151,6 +232,39 @@ def _contains_piece(pieces: list[dict[str, Any]], point: datetime) -> bool:
             if piece["start"] <= point <= piece["end"]:
                 return True
     return False
+
+
+def _contains_piece(pieces: list[dict[str, Any]], point: ClockValue) -> bool:
+    return _contains_piece_index([piece["start"] for piece in pieces], pieces, point)
+
+
+def _index_withdrawal_pieces(
+    pieces: Sequence[dict[str, Any]],
+) -> dict[Any, list[tuple[tuple[ClockValue, ClockValue], tuple[list[ClockValue], list[dict[str, Any]]]]]]:
+    """Index pieces by the exact epoch/block filter used for withdrawal points."""
+    grouped: dict[tuple[Any, tuple[ClockValue, ClockValue]], list[dict[str, Any]]] = defaultdict(list)
+    for piece in pieces:
+        grouped[(piece["raw"]["coverage_epoch_id"], piece["block"])].append(piece)
+    result: dict[Any, list[tuple[tuple[ClockValue, ClockValue], tuple[list[ClockValue], list[dict[str, Any]]]]]] = defaultdict(list)
+    for (epoch, block), rows in grouped.items():
+        rows.sort(key=lambda row: (row["start"], row["end"]))
+        result[epoch].append((block, ([row["start"] for row in rows], rows)))
+    for entries in result.values():
+        entries.sort(key=lambda item: item[0])
+    return dict(result)
+
+
+def _withdrawal_risk_block(
+    indexed: Mapping[Any, Sequence[tuple[tuple[ClockValue, ClockValue], tuple[Sequence[ClockValue], Sequence[dict[str, Any]]]]]],
+    *, coverage_epoch_id: Any, point: ClockValue, history: timedelta, tail: timedelta,
+) -> tuple[ClockValue, ClockValue] | None:
+    """Match legacy candidate selection without scanning every group piece."""
+    for block, (starts, pieces) in indexed.get(coverage_epoch_id, ()):
+        start: Any = block[0]
+        end: Any = block[1]
+        if start + history <= point < end - tail and _contains_piece_index(starts, pieces, point):
+            return block
+    return None
 
 
 def _state(passive: bool, aggressive: bool) -> str:
@@ -163,7 +277,11 @@ def _state(passive: bool, aggressive: bool) -> str:
     return "no_own_observed"
 
 
-def _mode_at_time(windows: Mapping[str, WindowIndex], point: datetime, *, observed: bool, sort_index: int | None) -> tuple[bool, bool, bool]:
+def _mode_at_time(
+    windows: Mapping[str, WindowIndex], point: ClockValue, *, observed: bool,
+    sort_index: int | None, window_horizon: timedelta = HORIZON, duration_left_closed: bool = False,
+    point_window_half_open: bool = False,
+) -> tuple[bool, bool, bool]:
     """Return passive/aggressive membership and opening-equality audit flag.
 
     The bisect start bounds make point attribution O(log W + local overlaps), not
@@ -174,7 +292,7 @@ def _mode_at_time(windows: Mapping[str, WindowIndex], point: datetime, *, observ
     equality = False
     for mode in ("passive", "aggressive"):
         starts, rows = windows[mode]
-        lo = bisect_left(starts, point - HORIZON)
+        lo = bisect_left(starts, point - window_horizon)
         hi = bisect_right(starts, point)
         present = False
         for index in range(lo, hi):
@@ -182,35 +300,45 @@ def _mode_at_time(windows: Mapping[str, WindowIndex], point: datetime, *, observ
             if anchor == point and (not observed or sort_index is None or sort_index <= anchor_sort):
                 equality = True
             if observed:
-                if anchor <= point <= anchor + HORIZON and sort_index is not None and sort_index > anchor_sort:
+                upper_ok = point < anchor + window_horizon if point_window_half_open else point <= anchor + window_horizon
+                if anchor <= point and upper_ok and sort_index is not None and sort_index > anchor_sort:
                     present = True
-            elif anchor < point <= anchor + HORIZON:
-                present = True
+            elif duration_left_closed:
+                if anchor <= point < anchor + window_horizon:
+                    present = True
+            else:
+                upper_ok = point < anchor + window_horizon if point_window_half_open else point <= anchor + window_horizon
+                if anchor < point and upper_ok:
+                    present = True
         active.append(present)
     return active[0], active[1], equality
 
 
-def _segments(piece: dict[str, Any], lower: datetime, upper: datetime, windows: Mapping[str, WindowIndex]) -> Iterable[tuple[datetime, datetime, str]]:
+def _segments(
+    piece: dict[str, Any], lower: ClockValue, upper: ClockValue, windows: Mapping[str, WindowIndex], *,
+    window_horizon: timedelta = HORIZON,
+) -> Iterable[tuple[ClockValue, ClockValue, str]]:
     clipped = _clip(piece["start"], piece["end"], lower, upper)
     if clipped is None:
         return ()
     start, end = clipped
     boundaries = {start, end}
     for starts, rows in windows.values():
-        first = bisect_left(starts, start - HORIZON)
+        first = bisect_left(starts, start - window_horizon)
         last = bisect_left(starts, end)
         for index in range(first, last):
             anchor, _, _ = rows[index]
             if start < anchor < end:
                 boundaries.add(anchor)
-            finish = anchor + HORIZON
+            finish = anchor + window_horizon
             if start < finish < end:
                 boundaries.add(finish)
     ordered = sorted(boundaries)
     result = []
     for left, right in zip(ordered, ordered[1:]):
-        midpoint = left + (right - left) / 2
-        passive, aggressive, _ = _mode_at_time(windows, midpoint, observed=False, sort_index=None)
+        passive, aggressive, _ = _mode_at_time(
+            windows, left, observed=False, sort_index=None, window_horizon=window_horizon, duration_left_closed=True,
+        )
         result.append((left, right, _state(passive, aggressive)))
     return result
 
@@ -223,6 +351,19 @@ def _finite(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _api_duration(value: Any, *, name: str) -> timedelta:
+    """Validate finite API seconds at the public microsecond resolution."""
+    if type(value) not in (int, float):
+        raise ValueError(f"{name} must be a finite positive number")
+    number = _finite(value)
+    if number is None or number <= 0:
+        raise ValueError(f"{name} must be a finite positive number")
+    microseconds = number * 1_000_000
+    if not microseconds.is_integer():
+        raise ValueError(f"{name} must be representable at microsecond resolution")
+    return timedelta(microseconds=int(microseconds))
 
 
 def _shifted_windows(schedule: Mapping[str, WindowIndex], offset_seconds: int) -> dict[str, WindowIndex]:
@@ -238,7 +379,7 @@ def _shifted_windows(schedule: Mapping[str, WindowIndex], offset_seconds: int) -
     }
 
 
-def _market_values(index: MarketIndex, start: datetime, end: datetime) -> Iterable[tuple[float, dict[str, float]]]:
+def _market_values(index: MarketIndex, start: ClockValue, end: ClockValue) -> Iterable[tuple[float, dict[str, float]]]:
     """Yield finite market covariate overlaps from one sorted epoch index."""
     starts, rows = index
     first = max(0, bisect_right(starts, start) - 1)
@@ -260,6 +401,10 @@ def analyze_controls_v2(
     coverage: pl.DataFrame,
     *,
     market_intervals: pl.DataFrame | None = None,
+    clock_policy_id: str | None = None,
+    window_seconds: float = 2.0,
+    support_horizon_seconds: float | None = None,
+    point_window_half_open: bool = False,
 ) -> EmpiricalControlsV2Result:
     """Account observed and fixed-shift empirical controls without replaying data.
 
@@ -267,18 +412,40 @@ def analyze_controls_v2(
     boundaries; all subsequent interval operations use sorted sweep boundaries or
     bisection over per-group schedules.
     """
+    if type(point_window_half_open) is not bool:
+        raise ValueError("point_window_half_open must be boolean")
+    window_horizon = _api_duration(window_seconds, name="window_seconds")
+    support_horizon = window_horizon if support_horizon_seconds is None else _api_duration(
+        support_horizon_seconds, name="support_horizon_seconds",
+    )
+    if support_horizon < window_horizon:
+        raise ValueError("support_horizon_seconds must be at least window_seconds")
+    if clock_policy_id not in {None, CLOCK_POLICY_ID}:
+        raise ValueError("unknown clock policy")
     interval_rows = _require(intervals, INTERVAL_REQUIRED, "intervals")
     withdrawal_rows = _require(withdrawals, WITHDRAWAL_REQUIRED, "withdrawals")
     cluster_rows = _require(clusters, CLUSTER_REQUIRED, "clusters")
     coverage_rows = _require(coverage, COVERAGE_REQUIRED, "coverage")
-    market_by_epoch: dict[tuple[Any, ...], tuple[list[datetime], list[dict[str, Any]]]] = {}
+    selected_policy = clock_policy_id == CLOCK_POLICY_ID
+    if selected_policy:
+        interval_rows = _exact_ns_rows(interval_rows, table="intervals", fields={"start_ts": "start_ns", "end_ts": "end_ns"})
+        withdrawal_rows = _exact_ns_rows(withdrawal_rows, table="withdrawals", fields={"event_ts": "event_ns"})
+        coverage_rows = _exact_ns_rows(coverage_rows, table="coverage", fields={"start_ts": "start_ns", "end_ts": "end_ns"})
+        for row in cluster_rows:
+            if row.get("clock_policy_id") != CLOCK_POLICY_ID or type(row.get("fill_anchor_ns")) is not int:
+                raise ValueError("selected clock policy requires matching cluster policy and integer fill_anchor_ns")
+    elif "clock_policy_id" in clusters.columns and any(row.get("clock_policy_id") is not None for row in cluster_rows):
+        raise ValueError("legacy accounting rejects clock-policy cluster rows")
+    market_by_epoch: dict[tuple[Any, ...], MarketIndex] = {}
     market_present = market_intervals is not None
     if market_intervals is not None:
         raw_market = _require(market_intervals, MARKET_REQUIRED, "market_intervals")
+        if selected_policy:
+            raw_market = _exact_ns_rows(raw_market, table="market_intervals", fields={"start_ts": "start_ns", "end_ts": "end_ns"})
         grouped_market: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
         for row in raw_market:
-            if not isinstance(row["start_ts"], datetime) or not isinstance(row["end_ts"], datetime) or row["end_ts"] <= row["start_ts"]:
-                raise ValueError("market_intervals rows must have positive datetime intervals")
+            if not _is_clock(row["start_ts"]) or not _is_clock(row["end_ts"]) or row["end_ts"] <= row["start_ts"]:
+                raise ValueError("market_intervals rows must have positive clock intervals")
             grouped_market[(row["instrument"], row["partition_id"], row["event_date"], row["coverage_epoch_id"])].append(row)
         for epoch, rows in grouped_market.items():
             rows.sort(key=lambda row: (row["start_ts"], row["end_ts"]))
@@ -288,8 +455,8 @@ def analyze_controls_v2(
     coverage_by_epoch: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
     coverage_by_clock: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
     for row in coverage_rows:
-        if not isinstance(row["start_ts"], datetime) or not isinstance(row["end_ts"], datetime) or row["end_ts"] < row["start_ts"]:
-            raise ValueError("coverage rows must have non-negative datetime intervals")
+        if not _is_clock(row["start_ts"]) or not _is_clock(row["end_ts"]) or row["end_ts"] < row["start_ts"]:
+            raise ValueError("coverage rows must have non-negative clock intervals")
         coverage_by_epoch[(row["instrument"], row["partition_id"], row["event_date"], row["coverage_epoch_id"])].append(row)
         coverage_by_clock[(row["instrument"], row["partition_id"], row["event_date"])].append(row)
     for values in coverage_by_epoch.values():
@@ -306,8 +473,8 @@ def analyze_controls_v2(
         if raw["side"] not in {"bid", "ask"}:
             raise ValueError("interval side must be bid or ask")
         start, end = raw["start_ts"], raw["end_ts"]
-        if not isinstance(start, datetime) or not isinstance(end, datetime) or end < start:
-            raise ValueError("interval rows must have non-negative datetime intervals")
+        if not _is_clock(start) or not _is_clock(end) or end < start:
+            raise ValueError("interval rows must have non-negative clock intervals")
         risk_by_domain[_domain_key(raw)].append(raw)
     for values in risk_by_domain.values():
         values.sort(key=lambda row: (row["start_ts"], row["end_ts"]))
@@ -318,8 +485,8 @@ def analyze_controls_v2(
         if raw["side"] not in {"bid", "ask"}:
             raise ValueError("interval side must be bid or ask")
         start, end = raw["start_ts"], raw["end_ts"]
-        if not isinstance(start, datetime) or not isinstance(end, datetime) or end < start:
-            raise ValueError("interval rows must have non-negative datetime intervals")
+        if not _is_clock(start) or not _is_clock(end) or end < start:
+            raise ValueError("interval rows must have non-negative clock intervals")
         cov_key = (raw["instrument"], raw["partition_id"], raw["event_date"], raw["coverage_epoch_id"])
         for cov in coverage_by_epoch.get(cov_key, []):
             cursor = _band_start(max(start, cov["start_ts"]))
@@ -354,11 +521,11 @@ def analyze_controls_v2(
     # a point from crossing an observer coverage gap into another epoch's risk.
     for row in withdrawal_rows:
         point = row["event_ts"]
-        if not isinstance(point, datetime):
+        if not _is_clock(point):
             continue
         cov_key = (row["instrument"], row["partition_id"], row["event_date"], row["coverage_epoch_id"])
         for cov in coverage_by_epoch.get(cov_key, []):
-            if not cov["start_ts"] + HORIZON <= point < cov["end_ts"]:
+            if not cov["start_ts"] + support_horizon <= point < cov["end_ts"]:
                 continue
             band_start = _band_start(point)
             block = (max(cov["start_ts"], band_start), min(cov["end_ts"], band_start + timedelta(minutes=30)))
@@ -374,16 +541,17 @@ def analyze_controls_v2(
     for key in sorted(groups, key=str):
         group = groups[key]
         source, pieces = group["source"], sorted(group["pieces"], key=lambda item: (item["start"], item["end"]))
+        withdrawal_piece_index = _index_withdrawal_pieces(pieces)
         blocks = sorted(group["blocks"].values())
         domain = key[:-1]
         own = [row for row in clusters_by_domain.get(domain[:-1] + (_opposite(source["side"]),), []) if _identity_key(row) == tuple(source[f] for f in IDENTITY)]
-        schedules: dict[tuple[datetime, datetime], dict[str, WindowIndex]] = {}
+        schedules: dict[tuple[ClockValue, ClockValue], dict[str, WindowIndex]] = {}
         for block in blocks:
             schedule_rows: dict[str, list[WindowRow]] = {mode: [] for mode in ("passive", "aggressive")}
             for row in own:
-                anchor = row["cluster_end_ts"]
+                anchor = _cluster_anchor(row)
                 if block[0] <= anchor < block[1]:
-                    schedule_rows[row["execution_anchor_mode"]].append((anchor, anchor + HORIZON, int(row["cluster_last_sort_index"])))
+                    schedule_rows[row["execution_anchor_mode"]].append((anchor, anchor + window_horizon, int(row["cluster_last_sort_index"])))
             for rows in schedule_rows.values():
                 rows.sort()
             schedules[block] = {
@@ -396,17 +564,17 @@ def analyze_controls_v2(
             for offset in SHIFT_OFFSETS
         }
         total = sum((piece["end"] - piece["start"]).total_seconds() for piece in pieces)
-        observed_possible = sum(max(0.0, (b - (a + HORIZON)).total_seconds()) for a, b in blocks)
-        shift_possible = sum(max(0.0, (b - (a + HORIZON + timedelta(seconds=60))).total_seconds()) for a, b in blocks)
-        observed_risk = sum(max(0.0, (_clip(p["start"], p["end"], a + HORIZON, b) or (a, a))[1].__sub__((_clip(p["start"], p["end"], a + HORIZON, b) or (a, a))[0]).total_seconds()) for p in pieces for a, b in [p["block"]])
-        shift_risk = sum(max(0.0, (_clip(p["start"], p["end"], a + HORIZON + timedelta(seconds=60), b - timedelta(seconds=60)) or (a, a))[1].__sub__((_clip(p["start"], p["end"], a + HORIZON + timedelta(seconds=60), b - timedelta(seconds=60)) or (a, a))[0]).total_seconds()) for p in pieces for a, b in [p["block"]])
+        observed_possible = sum(max(0.0, (b - (a + support_horizon)).total_seconds()) for a, b in blocks)
+        shift_possible = sum(max(0.0, (b - (a + support_horizon + timedelta(seconds=60))).total_seconds()) for a, b in blocks)
+        observed_risk = sum(max(0.0, (_clip(p["start"], p["end"], a + support_horizon, b) or (a, a))[1].__sub__((_clip(p["start"], p["end"], a + support_horizon, b) or (a, a))[0]).total_seconds()) for p in pieces for a, b in [p["block"]])
+        shift_risk = sum(max(0.0, (_clip(p["start"], p["end"], a + support_horizon + timedelta(seconds=60), b - timedelta(seconds=60)) or (a, a))[1].__sub__((_clip(p["start"], p["end"], a + support_horizon + timedelta(seconds=60), b - timedelta(seconds=60)) or (a, a))[0]).total_seconds()) for p in pieces for a, b in [p["block"]])
         coverage_out.append({**source, "coverage_block_count": len(blocks), "total_risk_seconds": total,
             "observed_domain_seconds": observed_risk, "shift_common_domain_seconds": shift_risk,
             "excluded_initial_history_seconds": total - observed_risk, "excluded_shift_margin_seconds": total - shift_risk,
             "observed_exclusion_reason": None if observed_possible else "insufficient_clock_coverage",
             "shift_exclusion_reason": None if shift_possible else "insufficient_shift_coverage"})
 
-        analyses = [("observed_full", 0, HORIZON, timedelta(0))] + [("timing_shift_common_support", offset, HORIZON + timedelta(seconds=60), timedelta(seconds=60)) for offset in SHIFT_OFFSETS]
+        analyses = [("observed_full", 0, support_horizon, timedelta(0))] + [("timing_shift_common_support", offset, support_horizon + timedelta(seconds=60), timedelta(seconds=60)) for offset in SHIFT_OFFSETS]
         events = withdrawal_by_domain.get(domain, [])
         for kind, offset, history, tail in analyses:
             values = {state: {"time": 0.0, "count": 0, "opening": 0, "cov": defaultdict(float), "covtime": defaultdict(float)} for state in STATES}
@@ -415,7 +583,7 @@ def analyze_controls_v2(
                 lower, upper = a + history, b - tail
                 windows = shifted_schedules[(piece["block"], offset)]
                 market_index = market_by_epoch.get((piece["raw"]["instrument"], piece["raw"]["partition_id"], piece["raw"]["event_date"], piece["raw"]["coverage_epoch_id"]))
-                for left, right, state in _segments(piece, lower, upper, windows):
+                for left, right, state in _segments(piece, lower, upper, windows, window_horizon=window_horizon):
                     seconds = (right - left).total_seconds()
                     values[state]["time"] += seconds
                     for field in ("member_count", "eligible_visible_qty"):
@@ -436,14 +604,23 @@ def analyze_controls_v2(
                                 values[state]["covtime"][field] += market_seconds
             for event in events:
                 point = event["event_ts"]
-                if not isinstance(point, datetime):
+                if not _is_clock(point):
                     continue
-                candidate = [p for p in pieces if p["raw"]["coverage_epoch_id"] == event["coverage_epoch_id"] and p["block"][0] + history <= point < p["block"][1] - tail]
-                if not candidate or not _contains_piece(candidate, point):
+                block = _withdrawal_risk_block(
+                    withdrawal_piece_index,
+                    coverage_epoch_id=event["coverage_epoch_id"],
+                    point=point,
+                    history=history,
+                    tail=tail,
+                )
+                if block is None:
                     continue
-                block = candidate[0]["block"]
                 windows = shifted_schedules[(block, offset)]
-                passive, aggressive, equality = _mode_at_time(windows, point, observed=(kind == "observed_full"), sort_index=event["sort_index"])
+                passive, aggressive, equality = _mode_at_time(
+                    windows, point, observed=(kind == "observed_full"), sort_index=event["sort_index"],
+                    window_horizon=window_horizon,
+                    point_window_half_open=point_window_half_open,
+                )
                 state = _state(passive, aggressive)
                 values[state]["count"] += 1
                 if equality:

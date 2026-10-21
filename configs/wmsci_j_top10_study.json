@@ -1,0 +1,21 @@
+{
+  "schema": "wmsci_j_conditional_double_top_decile_v1",
+  "cohort": "per_instrument_ceil_top10_finite_positive_WMSCI_then_ceil_top10_complete_finite_J_no_UQ_no_price_gate",
+  "first_fraction": 0.1,
+  "second_fraction": 0.1,
+  "tie_break": "execution_cluster_id_ascending",
+  "source_root": "outputs/spoofing_detection_h1_checkpointed_20261007_231228/runs",
+  "quantity_root": "outputs/h1_age30_withdrawal1_wmsci_price_20261008",
+  "preflight": "outputs/msci_grid_study_v1_preflight_final_20261009/preflight.json",
+  "coverage_witness": "outputs/msci_grid_final_coverage_report_integrated/coverage_witness.json",
+  "grid_step_ns": 10000000,
+  "lag_ns": 50000000,
+  "horizon_ns": 1000000000,
+  "complete_grid_required": true,
+  "reference": "latest_canonical_actor_state_strictly_before_first_fill_fixed_for_entire_1s_path",
+  "t0": "exact_state_at_cluster_last_sort_index_and_cluster_end_replay_time_ns",
+  "price_selection": false,
+  "uq_selection": false,
+  "sensitivity": "none_new_cohort",
+  "kernel_adapter_note": "The unchanged validated numerical kernel requires its legacy config cohort token. A separately named numerical_kernel_compatibility_config is used only as a numerical API adapter, never as the actual selection or consumer contract. No historical consumer is invoked or weakened."
+}

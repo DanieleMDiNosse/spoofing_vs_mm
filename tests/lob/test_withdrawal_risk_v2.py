@@ -41,6 +41,21 @@ def test_no_fill_actor_has_time_at_risk_and_compact_schema():
     assert out.withdrawal_events.is_empty()
 
 
+def test_v3_membership_preserves_native_nanosecond_endpoints():
+    from spoofing_detection.lob.empirical_clock import CLOCK_POLICY_ID
+
+    start_ns = 1_704_187_800_000_000_100
+    end_ns = start_ns + 800
+    out = compute([
+        event(1, 1, "B", 1, 100, 10, 10, ts=start_ns),
+        event(2, 4, "B", 1, 100, 0, 0, ts=end_ns),
+    ], clock_policy_id=CLOCK_POLICY_ID)
+
+    row = out.membership.row(0, named=True)
+    assert row["eligible_start_ns"] == start_ns
+    assert row["eligible_end_ns"] == end_ns
+
+
 def test_top_n_exit_reentry_preserves_old_lifecycle_origin():
     out = compute([
         event(1, 1, "B", 1, 100, 10, 10, ts="2024-01-02 09:30:00"),
@@ -218,6 +233,7 @@ def test_market_intervals_use_standard_schema_and_expiry_keeps_prior_book_snapsh
     ])
     assert list(SCHEMAS["market_intervals"]) == [
         "instrument", "partition_id", "event_date", "coverage_epoch_id", "start_ts", "end_ts",
+        "start_ns", "end_ns",
         "spread", "depth", "prior_event_count_60s",
     ]
     rows = out.market_intervals.sort("start_ts").to_dicts()

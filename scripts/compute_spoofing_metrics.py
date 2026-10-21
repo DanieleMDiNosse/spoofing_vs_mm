@@ -36,6 +36,10 @@ from spoofing_detection.lob.spoofing_metrics import (
     compute_mcps_scores,
     infer_tick_size_from_best_quotes,
 )
+from spoofing_detection.lob.spoofing_clock import (
+    SPOOFING_DETECTION_CLOCK_CONTRACT,
+    SPOOFING_DETECTION_CLOCK_POLICY_ID,
+)
 from spoofing_detection.lob.spoofing_config import (
     DEFAULT_SPOOFING_CONFIG_PATH,
     load_spoofing_config_defaults,
@@ -91,6 +95,7 @@ def _population_metadata() -> dict[str, str]:
 
 
 OUTPUT_SCHEMA_VERSION = "actor_execution_anchor_v2"
+V3_OUTPUT_SCHEMA_VERSION = "actor_execution_anchor_v3_clocked"
 SCORE_GROUPING = ["actor_key", "execution_anchor_mode"]
 FIRM_FALLBACK_SEMANTICS = "aggregate only when client_original_id is missing"
 
@@ -104,6 +109,31 @@ def _parse_float_grid(text: str) -> list[float]:
 
 def _parse_execution_anchor_modes(text: str) -> tuple[str, ...]:
     return parse_execution_anchor_modes(text)
+
+
+def _ensure_new_output_dir(output_dir: Path) -> None:
+    """Create an isolated output directory before any expensive computation."""
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise ValueError(
+            f"refusing to overwrite non-empty output directory: {output_dir}. "
+            "Choose a new, isolated output directory."
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _require_v3_clock_contract(config_path: Path) -> None:
+    """Fail closed unless the selected config declares exactly the v3 clock policy."""
+    payload = json.loads(config_path.read_text())
+    configured = payload.get("spoofing_detection_clock_policy_v3")
+    expected = {
+        "policy_id": SPOOFING_DETECTION_CLOCK_POLICY_ID,
+        "contract": SPOOFING_DETECTION_CLOCK_CONTRACT,
+    }
+    if configured != expected:
+        raise ValueError(
+            "--clock-policy-v3 requires the exact `spoofing_detection_clock_policy_v3` "
+            "contract in the selected configuration"
+        )
 
 
 def _normalized_enum_code(column: str) -> pl.Expr:
@@ -148,6 +178,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Reconstructed lob_event_state_panel.parquet used only for tick-size inference",
     )
     parser.add_argument("--output-dir", type=Path, required=True, help="Output directory")
+    parser.add_argument(
+        "--clock-policy-v3",
+        action="store_true",
+        help=(
+            "Require SEQUENCETIME epoch-ns replay/cancellation clocks and TRADETIME epoch-ns fill anchors; "
+            "missing clocks are rejected without semantic fallback."
+        ),
+    )
     parser.add_argument("--top-n", type=int, help="Market top-N levels used for actor depth profiles")
 
     parser.add_argument("--window-seconds", type=float, help="Clock-time post-execution window")
@@ -209,6 +247,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parameter_options=_CONFIG_PARAMETER_OPTIONS,
     )
     args = parser.parse_args(argv)
+    if args.clock_policy_v3:
+        try:
+            _require_v3_clock_contract(args.config)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            parser.error(str(exc))
     try:
         args.actor_identity_mode = validate_actor_identity_mode(args.actor_identity_mode)
         args.execution_anchor_modes = _parse_execution_anchor_modes(args.execution_anchor_modes)
@@ -640,6 +683,7 @@ def _write_summary_report(
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    _ensure_new_output_dir(args.output_dir)
     if args.empirical_depth_kernel is None:
         raise ValueError("empirical_depth_kernel must be configured; the parametric kernel fallback has been removed")
     gamma_grid = _parse_float_grid(args.gamma_grid)
@@ -674,10 +718,10 @@ def main(argv: list[str] | None = None) -> None:
         state_actor_keys=state_actor_keys,
         execution_anchor_modes=args.execution_anchor_modes,
         empirical_kernel_weights=empirical_kernel_weights,
+        use_v3_clocks=args.clock_policy_v3,
     )
     mcps_scores = compute_mcps_scores(result.execution_metrics, gamma_grid=gamma_grid)
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     paths = {
         "state_time_series": args.output_dir / "actor_metric_time_series.parquet",
         "execution_metrics": args.output_dir / "execution_metrics.parquet",
@@ -715,8 +759,12 @@ def main(argv: list[str] | None = None) -> None:
         "input": str(args.input),
         "quote_panel": str(args.quote_panel) if args.quote_panel is not None else None,
         "output_dir": str(args.output_dir),
+        "clock_policy_id": SPOOFING_DETECTION_CLOCK_POLICY_ID if args.clock_policy_v3 else None,
+        "clock_contract": SPOOFING_DETECTION_CLOCK_CONTRACT if args.clock_policy_v3 else None,
         **spoofing_config_provenance(args.config, section="metrics"),
-        "output_schema_version": OUTPUT_SCHEMA_VERSION,
+        "output_schema_version": (
+            V3_OUTPUT_SCHEMA_VERSION if args.clock_policy_v3 else OUTPUT_SCHEMA_VERSION
+        ),
         "actor_identity_mode": args.actor_identity_mode,
         "execution_anchor_modes": list(args.execution_anchor_modes),
         "observed_execution_anchor_modes": _observed_execution_anchor_modes(result.execution_metrics),

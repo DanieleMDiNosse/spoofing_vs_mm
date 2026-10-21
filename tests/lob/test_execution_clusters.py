@@ -130,6 +130,27 @@ def test_gap_uses_utc_instants_for_timezone_aware_timestamps():
     assert clusters[0]["child_fill_count"] == 2
 
 
+def test_explicit_v3_fill_anchor_ns_controls_gap_not_display_timestamp():
+    first = event(15, offset_ms=0, leaves_qty=10, passive_order="Y", aggressive_order="N")
+    second = event(16, offset_ms=500, leaves_qty=0, passive_order="Y", aggressive_order="N")
+    first["fill_anchor_ns"] = 1_704_186_000_000_000_123
+    second["fill_anchor_ns"] = 1_704_186_000_099_999_999
+    first["replay_time_ns"] = 1_704_186_000_000_000_456
+    second["replay_time_ns"] = 1_704_186_000_100_000_456
+
+    clusters, members = cluster_execution_fills([first, second], max_gap_ms=100)
+
+    assert len(clusters) == 1
+    assert clusters[0]["cluster_start_fill_anchor_ns"] == 1_704_186_000_000_000_123
+    assert clusters[0]["cluster_end_fill_anchor_ns"] == 1_704_186_000_099_999_999
+    assert clusters[0]["cluster_start_replay_time_ns"] == 1_704_186_000_000_000_456
+    assert clusters[0]["cluster_end_replay_time_ns"] == 1_704_186_000_100_000_456
+    assert [member["child_fill_anchor_ns"] for member in members] == [
+        1_704_186_000_000_000_123,
+        1_704_186_000_099_999_999,
+    ]
+
+
 @pytest.mark.parametrize("lifecycle_class", ["modify_order", "cancel"])
 def test_incompatible_lifecycle_event_on_same_order_closes_cluster(lifecycle_class):
     clusters, _ = cluster_passive_execution_fills(

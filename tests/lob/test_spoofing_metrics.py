@@ -10,6 +10,7 @@ from polars.testing import assert_frame_equal
 import spoofing_detection.lob.spoofing_metrics as spoofing_metrics_module
 from spoofing_detection.lob.models import ActiveOrder
 from spoofing_detection.lob.spoofing_metrics import (
+    _candidate_deceptive_order_rows,
     _collapse,
     _finite_signed_msci,
     assign_cancellations_to_clusters,
@@ -101,6 +102,38 @@ def order(order_id, side, price, qty, client, *, firm="F1"):
         last_update_sort_index=1,
         last_event_class="new_order",
     )
+
+
+def test_v3_candidate_rows_exclude_unknown_first_seen_replay_clock():
+    execution = {
+        "partition_id": "P",
+        "sort_index": 10,
+        "event_ts": datetime(2024, 1, 2, 9, 30, 10),
+        "replay_time_ns": 1_704_186_610_000_000_000,
+        "actor_key": "client_original:C1",
+        "actor_id": "C1",
+        "identity_level": "client_original",
+        "identity_source": "NMSC_ORIGINALCLIENTIDSHORTCODE",
+        "identity_fallback_flag": False,
+        "execution_anchor_mode": "passive",
+        "ORDERID": "EXEC",
+        "execution_side": "bid",
+        "deceptive_side": "ask",
+    }
+    active_orders = {"D": order("D", "ask", 101.0, 10.0, "C1")}
+
+    rows = _candidate_deceptive_order_rows(
+        execution,
+        active_orders,
+        top_n=10,
+        tick_size=1.0,
+        order_first_seen_ts={"D": datetime(2024, 1, 2, 9, 30)},
+        order_first_seen_ns={"D": None},
+        empirical_kernel_weights=EMPIRICAL_KERNEL_WEIGHTS,
+        require_v3_clocks=True,
+    )
+
+    assert rows == []
 
 
 def raw_event(
@@ -229,6 +262,24 @@ def test_actor_exposures_reject_malformed_empirical_kernel(weights, message):
         )
 
 
+def test_actor_exposure_rows_preserve_exact_replay_time_ns():
+    rows = compute_actor_top_n_exposures(
+        {
+            "B": order("B", "bid", 100.0, 10.0, "C1"),
+            "A": order("A", "ask", 100.1, 10.0, "C1"),
+        },
+        top_n=1,
+        tick_size=0.1,
+        partition_id="P",
+        sort_index=10,
+        event_ts=datetime(2024, 1, 2, 9, 30),
+        replay_time_ns=1_704_186_000_000_000_123,
+        empirical_kernel_weights={"bid": {1: 1.0}, "ask": {1: 1.0}},
+    )
+
+    assert rows[0]["replay_time_ns"] == 1_704_186_000_000_000_123
+
+
 def test_compute_client_top_n_exposures_uses_paper_aligned_dwi():
     active = {
         "B1": order("B1", "bid", 100.0, 10.0, "C1"),
@@ -319,7 +370,7 @@ def test_compute_client_top_n_exposures_can_filter_to_clients_of_interest():
 
 def test_compute_client_top_n_exposures_filters_numeric_client_ids_as_strings():
     active = {
-        "A1": order("A1", "ask", 100.2, 5.0, 17295),
+        "A1": order("A1", "ask", 100.2, 5.0, 900000000000664),
         "A2": order("A2", "ask", 100.3, 15.0, 999),
     }
 
@@ -331,10 +382,10 @@ def test_compute_client_top_n_exposures_filters_numeric_client_ids_as_strings():
         partition_id="P",
         sort_index=10,
         event_ts=None,
-        client_ids={"17295"},
+        client_ids={'900000000000664'},
     )
 
-    assert [row["client_id"] for row in rows] == ["17295"]
+    assert [row["client_id"] for row in rows] == ['900000000000664']
 
 
 def test_compute_actor_top_n_exposures_keeps_client_and_firm_namespaces_distinct():
@@ -389,17 +440,17 @@ def test_compute_actor_top_n_exposures_emits_explicit_zero_profile_by_actor_key(
 def test_firm_fallback_passive_execution_is_attributed_end_to_end():
     rows = [
         raw_event(1, 1, "B0", 1, 100.0, 100, 100, None, firm="OTHER"),
-        raw_event(2, 1, "BD", 1, 99.9, 50, 50, None, firm="157922_3"),
-        raw_event(3, 1, "A1", 2, 100.2, 5, 5, None, firm="157922_3"),
+        raw_event(2, 1, "BD", 1, 99.9, 50, 50, None, firm='900000000000633_3'),
+        raw_event(3, 1, "A1", 2, 100.2, 5, 5, None, firm='900000000000633_3'),
         raw_event(4, 1, "A0", 2, 100.3, 100, 100, None, firm="OTHER"),
         raw_event(
             5, 3, "A1", 2, 100.2, 0, 0, None,
-            firm="157922_3", last_shares=5,
+            firm='900000000000633_3', last_shares=5,
             bookout="2024-01-02 09:30:05.000000",
         ),
         raw_event(
             6, 4, "BD", 1, 99.9, 0, 0, None,
-            firm="157922_3", bookout="2024-01-02 09:30:05.500000",
+            firm='900000000000633_3', bookout="2024-01-02 09:30:05.500000",
         ),
     ]
 
@@ -414,13 +465,13 @@ def test_firm_fallback_passive_execution_is_attributed_end_to_end():
     assert result.rejected_executions.height == 0
     assert result.rejected_executions.schema["reject_reason"] == pl.String
     execution = result.execution_metrics.row(0, named=True)
-    assert execution["actor_key"] == "firm:157922_3"
+    assert execution["actor_key"] == 'firm:900000000000633_3'
     assert execution["identity_level"] == "firm"
     assert execution["identity_fallback_flag"] is True
     assert execution["execution_anchor_mode"] == "passive"
     assert execution["has_matched_deceptive_cancel_window"] is True
     cancel_candidate = result.execution_cancel_candidates.row(0, named=True)
-    assert cancel_candidate["actor_key"] == "firm:157922_3"
+    assert cancel_candidate["actor_key"] == 'firm:900000000000633_3'
     assert cancel_candidate["identity_level"] == "firm"
     assert cancel_candidate["execution_anchor_mode"] == "passive"
     assert "client_id" not in result.execution_cancel_candidates.columns
@@ -795,6 +846,52 @@ def test_attach_sci_window_metrics_computes_side_collapse_and_signed_msci():
     assert "imbalance_pre_window" not in out.columns
 
 
+def test_v3_sci_window_uses_sequence_ns_not_display_timestamp(monkeypatch: pytest.MonkeyPatch):
+    states = pl.DataFrame(
+        {
+            "partition_id": ["P", "P", "P"],
+            "actor_key": ["client_original:C1"] * 3,
+            "sort_index": [8, 9, 11],
+            # Deliberately incompatible display chronology: this must not drive v3 lookup.
+            "event_ts": [
+                datetime(2024, 1, 2, 9, 31),
+                datetime(2024, 1, 2, 9, 32),
+                datetime(2024, 1, 2, 9, 30),
+            ],
+            "replay_time_ns": [8_000_000_000, 9_000_000_000, 11_000_000_000],
+            "DWI": [-0.2, -0.8, -0.1],
+            "L_bid_topN": [0.4, 0.9, 0.2],
+            "L_ask_topN": [0.2, 0.4, 0.3],
+        }
+    )
+    executions = pl.DataFrame(
+        {
+            "partition_id": ["P"],
+            "actor_key": ["client_original:C1"],
+            "sort_index": [10],
+            "cluster_last_sort_index": [10],
+            "event_ts": [datetime(2024, 1, 2, 9, 30)],
+            "cluster_start_replay_time_ns": [10_000_000_000],
+            "cluster_end_replay_time_ns": [10_000_000_000],
+            "execution_side": ["ask"],
+            "deceptive_side": ["bid"],
+            "event_price": [100.12],
+            "candidate_deceptive_first_seen_sort_index_min": [8],
+        }
+    )
+
+    monkeypatch.setattr(
+        spoofing_metrics_module,
+        "_group_state_rows",
+        lambda _: (_ for _ in ()).throw(AssertionError("legacy state index must not be built in v3")),
+    )
+    out = attach_sci_window_metrics(executions, states, window_seconds=1.0, use_v3_clocks=True)
+
+    assert out.item(0, "has_post_window_state") is True
+    assert out.item(0, "DWI_pre_window") == pytest.approx(-0.8)
+    assert out.item(0, "DWI_post_window") == pytest.approx(-0.1)
+
+
 def test_attach_sci_window_metrics_does_not_impute_missing_post_state_as_zero():
     states = pl.DataFrame(
         {
@@ -1116,9 +1213,9 @@ def test_multilevel_metrics_detect_deceptive_profile_collapse_after_execution():
     assert row["matched_deceptive_cancel_order_ids_window"] == "BD"
     assert row["matched_deceptive_cancel_fraction_window"] == pytest.approx(1.0)
     assert row["matched_deceptive_cancel_min_delay_seconds"] == pytest.approx(0.5)
-    assert row["weighted_net_withdrawal_qty_window"] == pytest.approx(50.0 * math.exp(-0.5 / 10.0))
+    assert row["weighted_net_withdrawal_qty_window"] == pytest.approx(50.0)
     assert row["withdrawal_to_fill_ratio"] == pytest.approx(50.0 / 5.0)
-    assert row["weighted_withdrawal_to_fill_ratio"] == pytest.approx(50.0 * math.exp(-0.5 / 10.0) / 5.0)
+    assert row["weighted_withdrawal_to_fill_ratio"] == pytest.approx(50.0 / 5.0)
     assert row["WMSCI_event"] > 0
     assert row["MSCI_resting_profile"] == row["MSCI"]
     assert row["withdrawal_profile_scale_event"] == row["WMSCI_event"]
@@ -1202,7 +1299,7 @@ def test_matched_withdrawal_is_capped_at_pre_execution_candidate_quantity():
     assert candidate["attributed_cancel_visible_qty"] == pytest.approx(50.0)
     assert row["matched_deceptive_cancel_visible_qty_window"] == pytest.approx(50.0)
     assert row["matched_deceptive_cancel_fraction_window"] == pytest.approx(1.0)
-    assert row["weighted_net_withdrawal_qty_window"] == pytest.approx(50.0 * math.exp(-0.5 / 10.0))
+    assert row["weighted_net_withdrawal_qty_window"] == pytest.approx(50.0)
 
 
 def test_fragmented_passive_fills_become_one_cluster_with_raw_members_and_single_cancellation():
@@ -1432,3 +1529,184 @@ def test_broad_opposite_cancel_is_not_a_matched_deceptive_profile_cancel():
     assert row["matched_deceptive_cancel_count_window"] == 0
     assert row["matched_deceptive_cancel_visible_qty_window"] == pytest.approx(0.0)
     assert row["matched_deceptive_cancel_fraction_window"] == pytest.approx(0.0)
+
+
+def test_v3_direct_cancellation_window_uses_sequence_ns_not_display_timestamp():
+    executions = pl.DataFrame(
+        {
+            "partition_id": ["P"],
+            "actor_key": ["client_original:C1"],
+            "execution_cluster_id": ["cluster"],
+            "sort_index": [10],
+            "cluster_last_sort_index": [10],
+            # Display time is deliberately incompatible with the native sequence clock.
+            "cluster_end_ts": [datetime(2030, 1, 1)],
+            "cluster_end_fill_anchor_ns": [1_000_000_000],
+            "deceptive_side": ["bid"],
+            "execution_side": ["ask"],
+            "candidate_deceptive_visible_qty_pre": [5.0],
+            "execution_quantity": [5.0],
+            "execution_anchor_mode": ["passive"],
+        }
+    )
+    cancellations = pl.DataFrame(
+        {
+            "partition_id": ["P"],
+            "actor_key": ["client_original:C1"],
+            "side": ["bid"],
+            "sort_index": [11],
+            "event_ts": [datetime(2024, 1, 1)],
+            "cancellation_removal_ns": [1_500_000_000],
+            "ORDERID": ["D"],
+            "visible_qty_pre_cancel": [5.0],
+        }
+    )
+    assigned = pl.DataFrame(
+        {
+            "execution_cluster_id": ["cluster"],
+            "assigned_flag": [True],
+            "ORDERID": ["D"],
+            "attributed_cancel_visible_qty": [5.0],
+            "cancellation_removal_ns": [1_500_000_000],
+            "cluster_end_fill_anchor_ns": [1_000_000_000],
+        }
+    )
+
+    out = spoofing_metrics_module._attach_direct_cancellation_window(
+        executions,
+        cancellations,
+        window_seconds=1.0,
+        assigned_candidates=assigned,
+        use_v3_clocks=True,
+    )
+
+    assert out.item(0, "direct_opposite_cancel_order_ids_window") == "D"
+    assert out.item(0, "matched_deceptive_cancel_order_ids_window") == "D"
+    assert out.item(0, "matched_deceptive_cancel_min_delay_seconds") == pytest.approx(0.5)
+
+
+def test_v3_cancellation_windows_reject_negative_sequence_delay():
+    executions = pl.DataFrame(
+        {
+            "partition_id": ["P"],
+            "actor_key": ["client_original:C1"],
+            "execution_cluster_id": ["cluster"],
+            "sort_index": [10],
+            "cluster_last_sort_index": [10],
+            # Legacy display time would accept this cancellation.
+            "cluster_end_ts": [datetime(2024, 1, 1)],
+            "cluster_end_fill_anchor_ns": [2_000_000_000],
+            "deceptive_side": ["bid"],
+            "execution_side": ["ask"],
+            "candidate_deceptive_visible_qty_pre": [5.0],
+            "execution_quantity": [5.0],
+            "execution_anchor_mode": ["passive"],
+        }
+    )
+    cancellations = pl.DataFrame(
+        {
+            "partition_id": ["P"],
+            "actor_key": ["client_original:C1"],
+            "side": ["bid"],
+            "sort_index": [11],
+            "event_ts": [datetime(2024, 1, 1, 0, 0, 0, 500_000)],
+            "cancellation_removal_ns": [1_500_000_000],
+            "ORDERID": ["D"],
+            "visible_qty_pre_cancel": [5.0],
+        }
+    )
+    assigned = pl.DataFrame(
+        {
+            "execution_cluster_id": ["cluster"],
+            "assigned_flag": [True],
+            "ORDERID": ["D"],
+            "attributed_cancel_visible_qty": [5.0],
+            "cancellation_removal_ns": [1_500_000_000],
+            "cluster_end_fill_anchor_ns": [2_000_000_000],
+        }
+    )
+
+    out = spoofing_metrics_module._attach_direct_cancellation_window(
+        executions,
+        cancellations,
+        window_seconds=1.0,
+        assigned_candidates=assigned,
+        use_v3_clocks=True,
+    )
+
+    assert out.item(0, "has_direct_opposite_cancel_window") is False
+    assert out.item(0, "has_matched_deceptive_cancel_window") is False
+    assert out.item(0, "matched_deceptive_cancel_min_delay_seconds") is None
+    assert out.item(0, "weighted_net_withdrawal_qty_window") == pytest.approx(0.0)
+
+
+def test_v3_cancel_reversion_uses_sequence_ns_not_display_timestamp(monkeypatch: pytest.MonkeyPatch):
+    executions = pl.DataFrame(
+        {
+            "execution_cluster_id": ["cluster"],
+            "partition_id": ["P"],
+            "actor_key": ["client_original:C1"],
+        }
+    )
+    states = pl.DataFrame(
+        {
+            "partition_id": ["P", "P", "P"],
+            "actor_key": ["client_original:C1"] * 3,
+            "sort_index": [8, 11, 12],
+            "event_ts": [datetime(2040, 1, 1), datetime(1990, 1, 1), datetime(1980, 1, 1)],
+            "replay_time_ns": [1_000_000_000, 2_900_000_000, 3_100_000_000],
+            "market_mid": [100.0, 99.0, 98.0],
+            "market_microprice": [100.0, 99.0, 98.0],
+        }
+    )
+    candidates = pl.DataFrame(
+        {
+            "assigned_flag": [True],
+            "execution_cluster_id": ["cluster"],
+            "partition_id": ["P"],
+            "actor_key": ["client_original:C1"],
+            "cancel_sort_index": [10],
+            "cancel_event_ts": [datetime(1970, 1, 1)],
+            "cancellation_removal_ns": [2_000_000_000],
+            "cluster_end_ts": [datetime(2030, 1, 1)],
+            "cluster_end_fill_anchor_ns": [1_500_000_000],
+            "execution_side": ["ask"],
+            "attributed_cancel_visible_qty": [10.0],
+        }
+    )
+
+    monkeypatch.setattr(
+        spoofing_metrics_module,
+        "_group_state_rows",
+        lambda _: (_ for _ in ()).throw(AssertionError("legacy state index must not be built in v3")),
+    )
+    _, enriched = spoofing_metrics_module.attach_cancel_anchored_reversion(
+        executions,
+        states,
+        candidates,
+        reversion_horizon_seconds=1.0,
+        use_v3_clocks=True,
+    )
+
+    row = enriched.to_dicts()[0]
+    assert row["cancel_reversion_target_removal_ns"] == 3_000_000_000
+    assert row["cancel_pre_state_sort_index"] == 8
+    assert row["cancel_post_state_sort_index"] == 11
+    assert row["cancel_economic_delay_seconds"] == pytest.approx(0.5)
+
+
+def test_v3_state_index_is_compact_and_preserves_causal_order():
+    states = pl.DataFrame({
+        "partition_id": ["P", "P", "Q", "P"],
+        "actor_key": ["A", "A", "A", "B"],
+        "sort_index": [3, 1, 2, 4],
+        "replay_time_ns": [30, 10, 20, 40],
+        "DWI": [0.3, 0.1, 0.2, 0.4],
+        "market_mid": [103.0, 101.0, 102.0, 104.0],
+    })
+    grouped = spoofing_metrics_module._group_state_rows_v3(states)
+    assert set(grouped) == {("P", "A"), ("Q", "A"), ("P", "B")}
+    assert [row.sort_index for row in grouped[("P", "A")]] == [1, 3]
+    assert [row.replay_time_ns for row in grouped[("P", "A")]] == [10, 30]
+    assert [row.market_mid for row in grouped[("P", "A")]] == [101.0, 103.0]
+    assert not hasattr(grouped[("P", "A")][0], "__dict__")

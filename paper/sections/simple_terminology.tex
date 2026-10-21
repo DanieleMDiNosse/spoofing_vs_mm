@@ -1,0 +1,26 @@
+\begin{table}[!htbp]
+\centering
+\caption{Terms used in the main specification. Candidate orders need not be cancelled, whereas a candidate execution requires positive assigned withdrawal. Executions, not orders or episodes, are the unit of the main comparisons.}
+\label{tab:simple-terminology}
+\begin{singlespace}
+\renewcommand{\arraystretch}{1.18}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.25\textwidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Term & Meaning in this paper \\
+\midrule
+Message or fill & An individual source record. Related partial fills can be grouped into one execution. \\
+Execution (execution cluster) & Fills of the same order grouped under the participant, role, side, partition, lifecycle, price, and time-gap rules. Called an execution after its definition. \\
+Participant & The original client where identified, or a separately retained firm fallback. Firm fallback can pool several clients; it is not the complete intermediary view below. \\
+Candidate orders or initial display & The participant's opposite-side orders active within the first ten market price levels immediately before execution. The main setting retains all observable nonnegative ages; later orders do not enter this display. \\
+Assigned withdrawal & Cancellation of initial orders assigned exclusively to an execution within the observation window and capped at their initial quantity. This is gross removal, without subtracting replacements. \\
+Candidate execution & An execution with positive executed quantity, eligible raw initial display, and assigned raw withdrawal in the stated setting. No $W$, profile, or price-sign threshold is required. \\
+Withdrawal-score rank & The position obtained by ordering candidates by decreasing withdrawal score within instrument and setting. Finite zero scores remain; unavailable scores are explicitly unranked. \\
+Profile diagnostic $J$ & The largest positive profile-shift increment over the specified short comparison interval. It accompanies the ranking without selecting candidates or changing their order. \\
+Shared-order episode & Executions connected, directly or indirectly, through shared candidate-order lifecycles within participant, execution side, partition, and recorded date. This grouping supplies context, not a further selection. \\
+Identified-client and intermediary views & Client groups use executions with an identified client. Intermediary groups use the original firm on every execution, including client-identified and firm-only activity. The views overlap and are not additive. \\
+\bottomrule
+\end{tabularx}
+\end{singlespace}
+\end{table}
+\FloatBarrier
+

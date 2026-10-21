@@ -1,0 +1,66 @@
+\begin{figure}[htbp]
+    \centering
+    \resizebox{0.95\textwidth}{!}{%
+    \begin{tikzpicture}[
+        x=0.95cm,
+        y=0.95cm,
+        font=\small,
+        book/.style={->, very thick},
+        quote/.style={very thick},
+        bid/.style={green!65!black},
+        ask/.style={orange!85!black},
+        fake/.style={fill=green!70!black, draw=green!70!black},
+        real/.style={fill=red!80!black, draw=red!80!black},
+        layer/.style={draw=black!45, fill=gray!8, rounded corners=2pt, minimum width=0.40cm},
+        dist/.style={<->, black!70, very thick}
+    ]
+        \foreach \xshift/\step in {0/State 1: posturing,7.0/State 2: execution,14.0/State 3: cancellation} {
+            \node[font=\large\bfseries] at (\xshift+3.0,3.15) {\step};
+            \draw[book] (\xshift,0) -- (\xshift+6.0,0);
+            \draw[quote,bid] (\xshift+2.25,-0.12) -- (\xshift+2.25,0.12)
+                node[below=0.08cm, align=center, font=\scriptsize\bfseries] {best\\bid};
+            \draw[quote] (\xshift+3.00,-0.10) -- (\xshift+3.00,0.10)
+                node[above=0.10cm, font=\scriptsize\bfseries] {mid};
+            \draw[quote,ask] (\xshift+3.85,-0.12) -- (\xshift+3.85,0.12)
+                node[below=0.08cm, align=center, font=\scriptsize\bfseries] {best\\ask};
+        }
+
+        % State 1: layered bid-side deceptive profile and small ask-side bona fide order.
+        \foreach \x/\h/\lab in {0.75/1.10/{$V_{4,b}$},1.10/1.55/{$V_{3,b}$},1.45/1.85/{$V_{2,b}$},1.80/0.45/{$V_{1,b}$}} {
+            \draw[fake] (\x,0) rectangle +(0.24,\h);
+            \node[above, font=\scriptsize] at (\x+0.12,\h+0.05) {\lab};
+        }
+        \draw[real] (4.22,0) rectangle +(0.24,0.45);
+        \node[right, font=\scriptsize] at (4.48,0.30) {$V_{1,a}$};
+        \node[align=center, font=\scriptsize] at (0.85,2.55) {large opposite-side\\top-ten profile};
+        \node[align=center, font=\scriptsize] at (4.70,1.15) {smaller execution-side\\order};
+
+        % State 2.
+        \foreach \x/\h in {7.75/1.10,8.10/1.55,8.45/1.85,8.80/0.45} {
+            \draw[fake] (\x,0) rectangle +(0.24,\h);
+        }
+        \draw[real] (11.22,0) rectangle +(0.24,0.45);
+        \draw[orange!85!black, very thick] (11.12,0.06) -- (11.55,0.50);
+        \draw[orange!85!black, very thick] (11.55,0.06) -- (11.12,0.50);
+
+
+        % State 3.
+        \foreach \x/\h in {14.75/1.10,15.10/1.55,15.45/1.85,15.80/0.45} {
+            \draw[fake] (\x,0) rectangle +(0.24,\h);
+        }
+        \draw[black, very thick] (14.60,0.05) -- (16.20,1.95);
+        \draw[black, very thick] (16.20,0.05) -- (14.60,1.95);
+
+
+        \draw[-{Latex[length=3mm]}, thick, black!75] (6.2,1.4) -- (6.8,1.4);
+        \draw[-{Latex[length=3mm]}, thick, black!75] (13.2,1.4) -- (13.8,1.4);
+    \end{tikzpicture}%
+    }
+    \caption{Schematic top-ten timeline for the hypothesized spoofing mechanism. The large candidate posture forms an
+    participant-specific depth profile over several bid levels, while the smaller order rests near the opposite best quote. The
+    construction applies symmetrically to candidate buy- and sell-intent episodes. The figure shows the passive execution
+    route; the operational reconstruction also admits an aggressive execution by the same actor.}
+    \label{fig:topn_spoofing_timeline}
+\end{figure}
+\FloatBarrier
+

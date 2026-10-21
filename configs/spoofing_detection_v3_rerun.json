@@ -1,0 +1,20 @@
+{
+  "policy_id": "spoofing_detection_sequence_replay_trade_fill_sequence_cancel_v3_utc_provisional",
+  "clock_contract": {
+    "replay_clock": "SEQUENCETIME",
+    "duration_clock": "SEQUENCETIME",
+    "cancellation_removal_clock": "SEQUENCETIME",
+    "fill_anchor_clock": "TRADETIME",
+    "timestamp_representation": "UTC epoch nanoseconds",
+    "semantic_fallback": "forbidden",
+    "interval_convention": "left_closed_right_open"
+  },
+  "source_registry": "configs/spoofing_empirical_controls.json",
+  "detector_config": "configs/spoofing_detection_parameters.json",
+  "instruments": ["NEXI", "FERRARI", "RISANAMENTO"],
+  "resource_budgets": {
+    "NEXI": {"max_rss_mb": 10240, "timeout_seconds": 14400},
+    "FERRARI": {"max_rss_mb": 10240, "timeout_seconds": 14400},
+    "RISANAMENTO": {"max_rss_mb": 10240, "timeout_seconds": 21600}
+  }
+}

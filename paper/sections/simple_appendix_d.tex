@@ -1,0 +1,100 @@
+\section{Candidate orders, assignment, and withdrawal accounting}
+\label{sec:withdrawal_technical}
+\subsection{Candidate orders and cancellation assignment}
+\label{subsec:canonical_matched_withdrawal}
+The main-text reconstruction fixes the candidate orders and their quantities before execution. Here we specify how one eligible physical cancellation is assigned when it could follow more than one execution. The source positions and separate trade and sequence clocks are defined in Appendix~\ref{sec:data_details}.
+
+Order age is the time for which an order's current lifecycle has been observed before the first execution message. We retain all observable nonnegative ages in the main specification. A modification does not restart the age of an active order. Where the first observed message is a reload, age refers to that observed lifecycle rather than a claimed original submission time. Candidate orders' pre-execution quantities and first-observed times remain fixed throughout the comparison. Age affects their importance through weights, not their membership in the main specification. Candidate membership and quantities use the exact adjacent pre-execution book, whereas the complete-profile comparison uses retained participant states that need not be immediately adjacent global states.
+
+Let $j$ be a physical cancellation of lifecycle $o(j)$. Eligibility requires membership in the execution's fixed candidate set for the stated age policy, the same participant, opposite execution side, source-order precedence after the final execution message, and delay $0\leq\rho_j-t_c^{\mathrm{end}}<H$. This delay combines the sequence clock of cancellation and trade clock of execution under the common-origin assumption. For each horizon and policy, let $\mathcal E(j)$ be the eligible executions. Assignment is
+\begin{equation}
+    a(j)=\underset{c\in\mathcal E(j)}{\arg\min}\,
+    \left(-r_c^{\mathrm{last}},\;r_c^{\mathrm{first}},\;\operatorname{id}_c\right),
+    \label{eq:canonical_cancel_assignment}
+\end{equation}
+Lexicographic comparison gives priority to the latest final source position, then the earliest first source position, then a stable identifier. It does not minimize economic delay. Assignment is an accounting convention, not a causal attribution. Physical cancellations are identified by partition, source index, and order identifier. All eligible links remain inspectable, but only the assigned link contributes to totals.
+
+Within a given setting, the unique-assignment convention prevents a physical cancellation from contributing to more than one execution-level score. All eligible links remain inspectable. Across settings, the same message may enter different candidate descriptions and is not counted as new evidence.
+
+For the fixed horizon and age policy, the assigned set is $\mathcal C_c(H)=\{j:a(j)=c\}$. The eligible set $\mathcal E(j)$ and assignment $a(j)$ suppress these same setting arguments; they are recomputed whenever the setting changes. In particular, a changed age restriction can change which execution receives a cancellation. Executions sharing orders can be grouped for reporting without treating common messages as independent evidence.
+
+An order may also increase in size between execution and cancellation. To avoid counting that increase as part of the earlier display, let $q^{\mathrm{pre}}_{c,o(j)}$ be its pre-execution quantity and $q_j^{\mathrm{cancel}}$ its quantity just before cancellation. We count only
+\begin{equation}
+    \bar q_{c,j}
+    =
+    \min\!\left\{\left[q^{\mathrm{pre}}_{c,o(j)}-
+        \sum_{j'\in\mathcal C_c(H):\,j'\prec j,\,o(j')=o(j)}\bar q_{c,j'}\right]_+,
+        q^{\mathrm{cancel}}_j\right\}.
+    \label{eq:attributed_cancel_quantity}
+\end{equation}
+Here $j'\prec j$ means an earlier assigned cancellation in source order for the same order lifecycle. The quantity $\bar q_{c,j}$ is evaluated within the fixed horizon and age setting, so it follows that setting's assignment. The minimum caps cumulative withdrawal at the quantity already displayed before execution. With only one cancellation it reduces to the minimum of initial and cancelled quantity. Later increases cannot inflate the attributed removal of the initial display. Modifications alone are not counted as cancellations. The physical quantities and their two denominators are defined below.
+
+
+\subsection{Physical display and withdrawal}
+For the fixed age policy, $\mathcal P_c$ contains the participant's opposite-side orders active in the first ten market levels immediately before the first execution message. Later submissions do not enter it. With $q^{\mathrm{pre}}_{c,o}$ the initial quantity, the display is
+\begin{equation}
+    P_c=\sum_{o\in\mathcal P_c}q^{\mathrm{pre}}_{c,o}.
+    \label{eq:age_conditioned_candidate_quantity}
+\end{equation}
+An empty set gives $P_c=0$. Total executed quantity is $Q_c>0$. Assigned cancellation quantities from equation~\eqref{eq:attributed_cancel_quantity} give
+\begin{equation}
+    U_c(H)=\sum_{j\in\mathcal C_c(H)}\bar q_{c,j},
+    \qquad \text{withdrawal relative to execution}=\frac{U_c(H)}{Q_c}.
+    \label{eq:assigned_withdrawal}
+\end{equation}
+An empty assigned set gives $U_c(H)=0$. This counts gross cancellation once, without subtracting replacement orders. Withdrawal as a proportion of initial display is
+\begin{equation}
+    \begin{cases}
+        U_c(H)/P_c,&P_c>0,\\
+        \text{undefined},&P_c=0.
+    \end{cases}
+    \label{eq:assigned_withdrawal_share}
+\end{equation}
+The proportion lies in $[0,1]$ when defined. Holding withdrawal fixed while reducing executed quantity raises $U_c(H)/Q_c$ without changing $U_c(H)/P_c$. Every eligible assigned cancellation within $0\leq\rho_j-t_c^{\mathrm{end}}<H$ contributes its capped quantity once, with no cancellation-delay discount. These quantities determine candidature before weighting.
+
+\subsection{Frozen order ages and alternative policies}
+Initial order age is $a_o=\rho_c^{\mathrm{start}}-\tau_o$, where $\tau_o$ is the lifecycle's first-observed sequence time. The main specification retains every observable nonnegative age and uses equation~\eqref{eq:shared_order_age_weight}. For a generic exponential half-life $h>0$, the equivalent representations are
+\begin{equation}
+    g_h(a)=2^{-a/h}=\exp[-\log(2)a/h],\qquad a\geq0.
+    \label{eq:generic_age_half_life}
+\end{equation}
+At $h=30$ seconds this is exactly the main age policy, not a discount on time to cancellation. The alternatives use unit weights at all ages, a hard 30-second eligibility cutoff with unit weights, or all ages with exponential half-lives 120 and 300 seconds. A changed eligibility policy requires recomputing candidate orders and exclusive cancellation assignment; changing only exponential weights does not.
+
+For the chosen policy, write $g$ for its frozen weight. Weighted initial display and withdrawal are
+\begin{equation}
+    P_c^{\mathrm{age}}=\sum_{o\in\mathcal P_c}g(a_o)q^{\mathrm{pre}}_{c,o},
+    \qquad
+    U_c^{\mathrm{age}}(H)=\sum_{j\in\mathcal C_c(H)}g(a_{o(j)})\bar q_{c,j}.
+    \label{eq:shared_age_display_withdrawal}
+\end{equation}
+Both sums use the same order's initial age. Raw display and withdrawal use unit weights and remain separate. Execution quantity, initial market depth, and the profile shift are not discounted. The same caps and nonnegative weights imply $0\leq U_c^{\mathrm{age}}(H)\leq P_c^{\mathrm{age}}\leq D_c$ when the exact initial depth is measured. $D_c$ is total opposite-side top-ten depth, distinct from the two-sided calibration denominator $D_{\mathrm{tot}}^{\mathrm{cal}}(t)$.
+
+\subsection{The continuous withdrawal score}
+Setting the age weights to one gives the corresponding score without a recency discount, denoted $W_c^{(1)}(H)$ for $g\equiv1$. For $Q_c>0$, it combines display and withdrawal relative to execution with removal relative to initial market depth:
+\begin{equation}
+    W_c^{(1)}(H)
+    =
+    \begin{cases}
+    \displaystyle
+    \log\!\left(1+\frac{P_c}{Q_c}\right)
+    \log\!\left(1+\frac{U_c(H)}{Q_c}\right)
+    \frac{U_c(H)}{D_c},
+    & D_c>0,\\[5pt]
+    \text{undefined},&\text{otherwise}.
+    \end{cases}
+    \label{eq:wmsci}
+\end{equation}
+The first logarithm describes display size relative to execution; the second describes removal relative to execution. The final factor places the removal within available market depth. With a supported positive market denominator, no candidate quantity or no assigned withdrawal gives zero without an undefined removal-share multiplication.
+
+For positive unweighted quantities at the fixed setting, write $P=P_c$, $Q=Q_c$, and $U=U_c(H)$. The components are related: $U/D_c=(U/P)(P/D_c)$ combines physical removal completeness with the display's initial market share. Age-weighted quantities obey the analogous relation. Scaling $P$, $U$, $Q$, and $D$ together leaves $W$ unchanged; changing the execution denominator or cancellation assignment need not. Execution review uses descending score, not a participant-level severity ranking.
+
+
+The domain of the score is $Q_c>0$ with a finite positive market-depth denominator. Zero weighted display or withdrawal then gives zero directly. Missing or zero depth is unsupported, not a denominator floor. Age-weight or score underflow leaves raw $P_c$, $U_c(H)$ and candidature unchanged. The logarithms and multiplicative structure of equation~\eqref{eq:wmsci_market_age} are retained for every age policy.
+\subsection{Shared-order context and review settings}
+\label{subsec:event_reconstruction}
+Executions belong to the same episode when they are connected by shared candidate-order lifecycles within participant, execution side, trading partition, and recorded event date. A connection may be indirect. Each execution retains its role; episodes can contain both roles. Original identifiers and message links remain available. Changes in rank alone do not count as cancellation.
+
+For member set $\mathcal E_e$, total execution quantity is $Q_e=\sum_{c\in\mathcal E_e}Q_c$. Withdrawal $U_e$ sums counted quantity over unique physical cancellations. Episode favorable movement is an execution-quantity-weighted mean, missing if any member lacks the required observation. Episode reversion uses quantity weights over unique assigned cancellations, missing if any assigned cancellation lacks its required observation.
+
+Episode grouping is a reporting view; executions remain the unit of the comparisons. For each instrument and setting, finite $W$ orders all candidates from largest to smallest, including zero, with deterministic identity-based tie resolution. $J$ is an accompanying diagnostic, not another selection or ordering rule. Missing scores remain explicitly unranked and missing diagnostics remain distinct from zero. The main setting uses $H=10$ seconds and exponential age half-life $h=30$ seconds, without an age cap. Shorter observation horizons and the supplementary age settings reuse the same execution identities. Depth weights remain calibrated at one second. Price reversion uses its separate two-second horizon after each cancellation attributed within the main ten-second withdrawal window.
+

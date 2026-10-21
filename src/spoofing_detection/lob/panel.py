@@ -25,6 +25,8 @@ SORT_COLUMNS = [
     "TRADETIME",
     "ROW_NUMBER",
 ]
+SOURCE_CLOCK_FIELDS = ("SEQUENCETIME", "BOOKIN", "BOOKOUTTIME", "TRADETIME")
+_NANOSECONDS_PER_SOURCE_UNIT = {"ms": 1_000_000, "us": 1_000, "ns": 1}
 
 MUTATING_UPDATE_CLASSES = {
     "new_order",
@@ -47,6 +49,22 @@ def sort_events(df: pl.DataFrame) -> pl.DataFrame:
     if not available:
         return df
     return df.sort(available, nulls_last=True)
+
+
+def _preserve_source_clock_nanoseconds(events: pl.DataFrame) -> pl.DataFrame:
+    """Attach native clock integers before ``iter_rows`` truncates datetimes."""
+
+    expressions: list[pl.Expr] = []
+    for field in SOURCE_CLOCK_FIELDS:
+        dtype = events.schema.get(field)
+        if not isinstance(dtype, pl.Datetime):
+            continue
+        value = pl.col(field).cast(pl.Int64, strict=True)
+        factor = _NANOSECONDS_PER_SOURCE_UNIT[dtype.time_unit]
+        if factor != 1:
+            value = value * factor
+        expressions.append(value.alias(f"__source_{field}_ns"))
+    return events.with_columns(expressions) if expressions else events
 
 
 def _make_active_order(event: dict[str, Any], *, first_seen_sort_index: int | None = None) -> ActiveOrder:
@@ -570,6 +588,7 @@ def replay_events(
     sorted_events = sort_events(raw_events)
     if max_rows is not None:
         sorted_events = sorted_events.head(max_rows)
+    sorted_events = _preserve_source_clock_nanoseconds(sorted_events)
     event_iterator = (
         normalize_event(raw_row, sort_index=index, config=config)
         for index, raw_row in enumerate(sorted_events.iter_rows(named=True), start=1)

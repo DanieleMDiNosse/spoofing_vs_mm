@@ -188,6 +188,37 @@ def test_parse_args_uses_signed_msci_gamma_grid_from_config(tmp_path: Path):
     assert args.execution_anchor_modes == ("passive", "aggressive")
 
 
+def test_v3_clock_mode_requires_the_exact_configured_clock_contract(tmp_path: Path):
+    module = load_module()
+    payload = json.loads(CONFIG_PATH.read_text())
+    payload.pop("spoofing_detection_clock_policy_v3", None)
+    config_path = tmp_path / "missing_v3_clock.json"
+    config_path.write_text(json.dumps(payload))
+
+    with pytest.raises(SystemExit):
+        module.parse_args(
+            [
+                "--config",
+                str(config_path),
+                "--input",
+                str(tmp_path / "input.parquet"),
+                "--output-dir",
+                str(tmp_path / "out"),
+                "--clock-policy-v3",
+            ]
+        )
+
+
+def test_output_directory_is_rejected_before_expensive_detector_work(tmp_path: Path):
+    module = load_module()
+    output_dir = tmp_path / "existing"
+    output_dir.mkdir()
+    (output_dir / "legacy.parquet").write_text("do not overwrite")
+
+    with pytest.raises(ValueError, match="refusing to overwrite"):
+        module._ensure_new_output_dir(output_dir)
+
+
 def test_parse_args_validates_and_canonicalizes_execution_anchor_modes(tmp_path: Path):
     module = load_module()
     config_path = write_config(tmp_path, execution_anchor_modes=["aggressive", "passive"])
@@ -444,12 +475,17 @@ def test_main_versions_actor_anchor_artifacts_and_audit_metadata(tmp_path: Path,
             str(input_path),
             "--output-dir",
             str(output_dir),
+            "--clock-policy-v3",
         ]
     )
 
     metadata = json.loads((output_dir / "metadata.json").read_text())
     assert compute_kwargs["execution_anchor_modes"] == ("passive", "aggressive")
-    assert metadata["output_schema_version"] == "actor_execution_anchor_v2"
+    assert metadata["output_schema_version"] == "actor_execution_anchor_v3_clocked"
+    assert set(metadata["artifact_hashes"]) == set(metadata["paths"]) - {
+        "metadata",
+        "summary_report",
+    }
     assert metadata["actor_identity_mode"] == "client_then_firm"
     assert metadata["execution_anchor_modes"] == ["passive", "aggressive"]
     assert metadata["observed_execution_anchor_modes"] == ["passive", "aggressive"]

@@ -1,0 +1,29 @@
+{
+  "schema": "withdrawal_multiscale_v1",
+  "sources": "outputs/new_kernel_h1_verified_sources/verified_sources.json",
+  "baseline_manifest": "outputs/new_kernel_h1_top10_study/prelaunch_manifest.json",
+  "top_n": 10,
+  "source_clock_policy": "spoofing_detection_sequence_replay_trade_fill_sequence_cancel_v3_utc_provisional",
+  "depth_denominator": "opposite_market_top10_exact_pre_first_fill_all_participants",
+  "age_clock": "first_fill_sequence_minus_lifecycle_first_seen_sequence_ns",
+  "age_weight_policy": "frozen_baseline_shared_P_and_U_half_life_v1",
+  "horizons_ns": [1000000000, 2000000000, 5000000000, 10000000000],
+  "grid_step_ns": 10000000,
+  "lag_ns": 50000000,
+  "age_policies": [
+    {"id": "legacy_age30", "max_age_ns": 30000000000, "half_life_ns": null},
+    {"id": "all_ages_unweighted", "max_age_ns": null, "half_life_ns": null},
+    {"id": "exp_h30", "max_age_ns": null, "half_life_ns": 30000000000},
+    {"id": "exp_h120", "max_age_ns": null, "half_life_ns": 120000000000},
+    {"id": "exp_h300", "max_age_ns": null, "half_life_ns": 300000000000}
+  ],
+  "review_fraction": 0.1,
+  "priority_policy": "separate_W_deciles_with_conditional_J_flags_not_candidate_gate",
+  "candidate_policy": "positive_raw_candidate_and_attributed_withdrawal_no_percentile_no_price_gate",
+  "kernel_policy": "retain_verified_H1_depth_weights_no_recalibration",
+  "assignment_policy": "native_latest_prior_cluster_sort_index_per_cell",
+  "withdrawal_semantics": "gross_capped_explicit_cancel_same_observed_lifecycle",
+  "price_selection": false,
+  "uq_selection": false,
+  "publication_status": "exploratory_not_promoted"
+}

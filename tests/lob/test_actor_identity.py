@@ -36,22 +36,22 @@ def active_order(*, client_original_id, firm_id) -> ActiveOrder:
 
 
 def test_client_identity_has_priority_over_firm():
-    actor = resolve_actor_identity(client_original_id="31425", firm_id="130358")
+    actor = resolve_actor_identity(client_original_id='900000000001520', firm_id='900000000000582')
 
     assert actor is not None
-    assert actor.actor_key == "client_original:31425"
-    assert actor.actor_id == "31425"
+    assert actor.actor_key == 'client_original:900000000001520'
+    assert actor.actor_id == '900000000001520'
     assert actor.identity_level == "client_original"
     assert actor.identity_source == "NMSC_ORIGINALCLIENTIDSHORTCODE"
     assert actor.identity_fallback_flag is False
 
 
 def test_missing_client_falls_back_to_firm_without_calling_it_client():
-    actor = resolve_actor_identity(client_original_id=None, firm_id="157922_3")
+    actor = resolve_actor_identity(client_original_id=None, firm_id='900000000000633_3')
 
     assert actor is not None
-    assert actor.actor_key == "firm:157922_3"
-    assert actor.actor_id == "157922_3"
+    assert actor.actor_key == 'firm:900000000000633_3'
+    assert actor.actor_id == '900000000000633_3'
     assert actor.identity_level == "firm"
     assert actor.identity_source == "FIRMID"
     assert actor.identity_fallback_flag is True
@@ -110,11 +110,11 @@ def test_normalize_identity_value_treats_missing_and_sentinel_forms_as_none(valu
 
 
 def test_normalize_identity_value_trims_text_and_removes_spurious_integral_float_suffix():
-    assert normalize_identity_value("  C-31425  ") == "C-31425"
-    assert normalize_identity_value(31425) == "31425"
-    assert normalize_identity_value(31425.0) == "31425"
-    assert normalize_identity_value(31425.5) == "31425.5"
-    assert normalize_identity_value("31425.0") == "31425.0"
+    assert normalize_identity_value('  C-900000000001520  ') == 'C-900000000001520'
+    assert normalize_identity_value(900000000001520) == '900000000001520'
+    assert normalize_identity_value(900000000001520.0) == '900000000001520'
+    assert normalize_identity_value(900000000001520.5) == '900000000001520.5'
+    assert normalize_identity_value('900000000001520.0') == '900000000001520.0'
 
 
 def test_event_extraction_uses_normalized_event_identity_fields():

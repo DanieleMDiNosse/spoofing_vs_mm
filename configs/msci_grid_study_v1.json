@@ -1,0 +1,14 @@
+{
+  "schema": "msci_grid_study_v1",
+  "source_clock_policy": "spoofing_detection_sequence_replay_trade_fill_sequence_cancel_v3_utc_provisional",
+  "grid_policy": "fixed_pre_exact_post_execution_closed_grid_v1",
+  "grid_step_ns": 10000000,
+  "lag_ns": 50000000,
+  "horizon_ns": 1000000000,
+  "complete_grid_required": true,
+  "cohort": "exact_top_positive_W_5pct_then_U_over_Q_gt_1_before_prices",
+  "grid_sensitivity_ns": [5000000, 10000000, 25000000],
+  "lag_sensitivity_ns": [25000000, 50000000, 100000000],
+  "lag_sensitivity_grid_ns": 5000000,
+  "selection_threshold": null
+}

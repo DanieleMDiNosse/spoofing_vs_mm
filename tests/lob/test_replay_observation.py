@@ -317,6 +317,34 @@ def test_choose_event_timestamp_uses_exported_event_timestamp_precedence():
     assert choose_event_timestamp(event_with_all_clock_values) == datetime(2024, 1, 2, 9, 30, 1)
 
 
+def test_observation_carries_exact_sequence_clock_alongside_legacy_display_timestamp():
+    raw_event = event(1, 3, "FILL", 1, 100.0, 0, 0, passive="Y", last_shares=1, last_px=100.0)
+    observations = []
+    raw_events = pl.DataFrame([raw_event]).with_columns(
+        pl.lit(1_704_186_000_579_000_456).cast(pl.Datetime("ns")).alias("SEQUENCETIME"),
+        pl.lit(1_704_186_000_579_000_123).cast(pl.Datetime("ns")).alias("TRADETIME"),
+    )
+
+    replay_lob(raw_events, observer=observations.append)
+
+    assert observations[0].replay_time_ns == 1_704_186_000_579_000_456
+
+
+def test_v3_replay_rejects_missing_sequence_clock_before_book_mutation():
+    raw_event = event(1, 1, "NEW", 1, 100.0, 5, 5)
+    raw_event.pop("SEQUENCETIME")
+    observed = []
+
+    with pytest.raises(ValueError, match="v3 clock incompatibilities"):
+        replay_lob(
+            pl.DataFrame([raw_event]),
+            observer=observed.append,
+            require_v3_clocks=True,
+        )
+
+    assert observed == []
+
+
 def test_canonical_replay_can_skip_retaining_normalized_events_for_streaming_consumers():
     observed = []
 
